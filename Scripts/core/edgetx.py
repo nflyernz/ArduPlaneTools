@@ -25,6 +25,7 @@ class EdgeTxRow:
     gps: tuple[float, float] | None
     fm: str
     availability: str  # active, partial, unavailable, ambiguous
+    ele: float | None = None  # Radio-local elevator control, independent of RF telemetry.
 
     def observed(self, field: str) -> float | None:
         """Return a usable observation; placeholders and absent antennas stay absent."""
@@ -105,6 +106,8 @@ def read_edgetx_csv(path: str | Path) -> EdgeTxSession:
         for name in ("GPS", "FM", "TRSS(dB)", "TQly(%)", "TSNR(dB)"):
             if header.count(name) == 1:
                 index[name] = header.index(name)
+        if header.count("Ele") == 1:
+            index["Ele"] = header.index("Ele")
         rows = []
         for line_number, cells in enumerate(reader, start=2):
             if len(cells) != len(header):
@@ -119,7 +122,8 @@ def read_edgetx_csv(path: str | Path) -> EdgeTxSession:
             if rows and clock <= rows[-1].clock:
                 raise ValueError(f"EdgeTX CSV row {line_number} is not time-ordered")
             values = {name: _number(cells[position]) for name, position in index.items()
-                      if name not in ("Date", "Time", "GPS", "FM")}
+                      if name not in ("Date", "Time", "GPS", "FM", "Ele")}
+            ele = _number(cells[index["Ele"]]) if "Ele" in index else None
             gps = _gps_coordinate(cells[index["GPS"]]) if "GPS" in index else None
             fm = cells[index["FM"]].strip() if "FM" in index else ""
             quality, rssi = values["RQly(%)"], values["1RSS(dB)"]
@@ -134,7 +138,7 @@ def read_edgetx_csv(path: str | Path) -> EdgeTxSession:
                 availability = "unavailable"
             else:
                 availability = "ambiguous"
-            rows.append(EdgeTxRow(clock, values, gps, fm, availability))
+            rows.append(EdgeTxRow(clock, values, gps, fm, availability, ele))
     if not rows:
         raise ValueError("EdgeTX CSV has no data rows")
     return EdgeTxSession(path, header, rows, _runs(rows), len(rows))
