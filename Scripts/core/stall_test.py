@@ -133,6 +133,11 @@ class StallRules:
     endpoint_nearness_fraction: float
     approximately_level_bank_deg: float
     idle_throttle_percent: float
+    recovery_followup_us: int
+    recovery_power_increase_percent: float
+    recovery_speed_increase_m_s: float
+    airspeed_health_probability_min: float
+    airspeed_excursion_factor: float
 
     @classmethod
     def from_config(cls, config):
@@ -172,6 +177,15 @@ class StallRules:
             endpoint_nearness_fraction=value("endpoint_nearness_fraction"),
             approximately_level_bank_deg=value("approximately_level_bank_deg"),
             idle_throttle_percent=value("idle_throttle_percent"),
+            recovery_followup_us=seconds("recovery_followup_s"),
+            recovery_power_increase_percent=value(
+                "recovery_power_increase_percent"
+            ),
+            recovery_speed_increase_m_s=value("recovery_speed_increase_m_s"),
+            airspeed_health_probability_min=value(
+                "airspeed_health_probability_min"
+            ),
+            airspeed_excursion_factor=value("airspeed_excursion_factor"),
         )
         if not rules.version or any(
             value <= 0 for value in (
@@ -181,9 +195,14 @@ class StallRules:
                 rules.fall_window_us,
                 rules.local_peak_lookback_us,
                 rules.aetr_full_scale,
+                rules.recovery_followup_us,
+                rules.recovery_power_increase_percent,
+                rules.recovery_speed_increase_m_s,
             )
         ) or not 0 < rules.endpoint_nearness_fraction < 1 or not (
             0 < rules.partial_reset_fraction < 1
+        ) or not (0 <= rules.airspeed_health_probability_min <= 1) or (
+            rules.airspeed_excursion_factor <= 1
         ):
             raise ValueError("Invalid stall-test prototype rules")
         return rules
@@ -271,6 +290,78 @@ class StallResponseEvidence:
     confirmation_pilot_association_gap_us: int
 
 
+class AirspeedQuality(str, Enum):
+    USABLE = "usable"
+    SUSPECT = "suspect"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True, slots=True)
+class SavedAirspeedParameters:
+    """Saved PARM state at a named reference, not in-memory calibration."""
+
+    reference_us: int
+    values: dict[str, float | None]
+
+
+@dataclass(frozen=True, slots=True)
+class AirspeedMeasurement:
+    """One native ARSP sample associated with a named event reference."""
+
+    reference_us: int
+    sample: EvidencePoint | None
+    association_gap_us: int | None
+    sensor_instance: int | None
+    primary_instance: int | None
+    quality: AirspeedQuality
+    warnings: tuple[str, ...]
+    corrected_diff_pressure: EvidencePoint | None = None
+    logged_offset: EvidencePoint | None = None
+    health: EvidencePoint | None = None
+    in_use: EvidencePoint | None = None
+    health_probability: EvidencePoint | None = None
+    consistency_ratio: EvidencePoint | None = None
+    saved_parameters: SavedAirspeedParameters | None = None
+    saved_parameters_at_sample: SavedAirspeedParameters | None = None
+    effective_ratio: float | None = None
+    effective_ratio_formula: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StallAirspeedEvidence:
+    raw_airspeed_at_pre_fall_pitch_peak: AirspeedMeasurement | None
+    raw_airspeed_at_first_opposed_fall_observation: AirspeedMeasurement | None
+    lowest_usable_raw_airspeed_in_attempt: AirspeedMeasurement | None
+    raw_airspeed_at_recovery_start: AirspeedMeasurement | None
+    raw_airspeed_at_observed_recovery_milestone: AirspeedMeasurement | None
+    selected_ctun_airspeed_at_peak: EvidencePoint | None = None
+    selected_ctun_source_at_peak: EvidencePoint | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class StallRecovery:
+    """Independent observed milestones; none implies a completed recovery."""
+
+    control_start: EvidencePoint
+    pilot_demand_reduction: EvidencePoint | None
+    target_reduction: EvidencePoint | None
+    commanded_power_increase: EvidencePoint | None
+    pitch_minimum: EvidencePoint | None
+    target_at_pitch_minimum: EvidencePoint | None
+    pitch_limit_min_deg: float | None
+    attitude_below_target_limit: bool | None
+    nose_up_elevator_command: EvidencePoint | None
+    nose_up_elevator_pwm_command: EvidencePoint | None
+    first_sustained_airspeed_increase: EvidencePoint | None
+    sink_arrest: EvidencePoint | None
+    altitude_at_departure_reference: EvidencePoint | None
+    altitude_at_recovery_start: EvidencePoint | None
+    lowest_altitude_after_departure: EvidencePoint | None
+    altitude_loss_from_departure_reference_m: float | None
+    altitude_loss_from_recovery_start_m: float | None
+    stabilization: EvidencePoint | None = None
+
+
 @dataclass(frozen=True, slots=True)
 class StallAttemptResult:
     attempt: StallAttempt
@@ -279,6 +370,8 @@ class StallAttemptResult:
     context: StallAttemptContext | None
     response: StallResponseEvidence | None = None
     departure: StallDepartureEvent | None = None
+    airspeed: StallAirspeedEvidence | None = None
+    recovery: StallRecovery | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,3 +379,5 @@ class StallFlightResult:
     flight_window: FlightWindow
     results: tuple[StallAttemptResult, ...]
     rule_version: str
+    log_file: str | None = None
+    firmware_version: str | None = None

@@ -50,3 +50,9 @@ stall:
   endpoint_nearness_fraction: 0.03
   approximately_level_bank_deg: 10.0
   idle_throttle_percent: 5.0
+  # Characterization only; these never enter attempt/departure classification.
+  recovery_followup_s: 8.0
+  recovery_power_increase_percent: 10.0
+  recovery_speed_increase_m_s: 0.5
+  airspeed_health_probability_min: 0.5
+  airspeed_excursion_factor: 2.0

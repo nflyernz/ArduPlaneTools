@@ -1,9 +1,11 @@
 """Classify ordered FBWA command/response evidence inside extracted pulls."""
 
 from bisect import bisect_left, bisect_right
+from dataclasses import replace
 from statistics import median
 
 from .stall_attempt_extractor import StallAttemptExtractor, usable_airspeed
+from .stall_characterization import StallCharacterizer
 from .modes import mode_name
 from .stall_test import (
     StallAttemptContext, StallAttemptResult, StallDepartureEvent,
@@ -314,9 +316,24 @@ class StallTestAnalyzer:
 
     def analyse(self, flight_log, flight_window):
         attempts = self.extractor.extract(flight_log, flight_window)
+        classified = [self.classifier.analyse(flight_log, attempt)
+                      for attempt in attempts]
+        characterizer = StallCharacterizer(flight_log, self.extractor.rules)
+        results = []
+        for index, result in enumerate(classified):
+            next_start = (classified[index + 1].attempt.start_us
+                          if index + 1 < len(classified) else None)
+            recovery = characterizer.recovery(
+                result, flight_window.end_us, next_start,
+            )
+            results.append(replace(
+                result, recovery=recovery,
+                airspeed=characterizer.airspeed(result, recovery),
+            ))
         return StallFlightResult(
             flight_window=flight_window,
-            results=tuple(self.classifier.analyse(flight_log, attempt)
-                          for attempt in attempts),
+            results=tuple(results),
             rule_version=self.extractor.rules.version,
+            log_file=flight_log.metadata.get("log_file"),
+            firmware_version=(flight_log.firmware_version() or {}).get("version"),
         )
