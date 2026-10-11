@@ -32,7 +32,7 @@ def _with_peak_speed(result, speed, **changes):
 def test_probable_attempt_uses_conservative_response_and_distinct_speed_labels():
     result, _ = _probable()
     report = presentation.format_stall_attempt(result, 3)
-    assert "Attempt 3:" in report
+    assert "Attempt 3 |" in report
     assert "Probable demand-opposed attitude departure" in report
     assert "FBWA" in report
     assert "pilot nose-up RCIN" in report
@@ -43,6 +43,10 @@ def test_probable_attempt_uses_conservative_response_and_distinct_speed_labels()
     assert "First opposed-fall airspeed" in report
     assert "Minimum usable airspeed" in report
     assert "Recovery-control-start airspeed" in report
+    assert "raw ARSP" in report
+    assert "event/sample gap" in report
+    assert "logged " not in next(line for line in report.splitlines()
+                                 if "Pre-fall pitch-peak airspeed" in line)
     assert "Stall speed" not in report
     assert "servo saturation" not in report.casefold()
 
@@ -55,6 +59,7 @@ def test_negative_ambiguous_rejected_and_unavailable_attempts():
     assert "No demonstrated departure" in presentation.format_stall_attempt(negative, 1)
     assert "Minimum usable airspeed" in presentation.format_stall_attempt(negative, 1)
     assert "Ambiguous" in presentation.format_stall_attempt(ambiguous, 2)
+    assert "Attempt 2 |" in presentation.format_stall_attempt(ambiguous, 2)
     assert "Rejected candidate" in presentation.format_stall_attempt(rejected, 3)
     assert "short movement" in presentation.format_stall_attempt(rejected, 3)
     text = presentation.format_stall_attempt(absent, 4)
@@ -65,9 +70,11 @@ def test_negative_ambiguous_rejected_and_unavailable_attempts():
 def test_saved_effective_and_unsupported_ratio_warning_are_distinct():
     result, _ = _probable()
     report = presentation.format_stall_attempt(result, 1)
-    assert "saved ARSPD_RATIO 2.6500" in report
-    assert "effective airspeed ratio 2.0000" in report
+    assert "Saved airspeed ratio 2.6500" in report
+    assert "Effective airspeed ratio 2.0000" in report
     assert "AUTOCAL off" in report
+    assert report.count("Calibration:") == 1
+    assert "Airspeed note:" not in report
     air = result.airspeed
     peak = replace(
         air.raw_airspeed_at_pre_fall_pitch_peak,
@@ -78,9 +85,9 @@ def test_saved_effective_and_unsupported_ratio_warning_are_distinct():
         air, raw_airspeed_at_pre_fall_pitch_peak=peak,
     ))
     text = presentation.format_stall_attempt(unsupported, 1)
-    assert "effective airspeed ratio unavailable (unsupported)" in text
+    assert "Effective airspeed ratio unavailable (unsupported)" in text
     assert "Airspeed note:" in text
-    assert "effective airspeed ratio 2.6500" not in text
+    assert "Effective airspeed ratio 2.6500" not in text
 
 
 def test_suspect_event_speed_is_unavailable_and_not_printed_as_stall_speed():
@@ -94,14 +101,14 @@ def test_suspect_event_speed_is_unavailable_and_not_printed_as_stall_speed():
     report = presentation.format_stall_attempt(result, 1)
     assert "Pre-fall pitch-peak airspeed: unavailable" in report
     assert "sensor not logged healthy" in report
-    assert "effective airspeed ratio unavailable (unusable ARSP evidence)" in report
+    assert "Effective airspeed ratio unavailable (unusable ARSP evidence)" in report
     assert "Stall speed" not in report
 
 
 def test_recovery_reports_observations_without_claiming_completion():
     result, _ = _probable()
     report = presentation.format_stall_attempt(result, 1)
-    assert "Recovery-control observation" in report
+    assert "Recovery control at" in report
     assert "Minimum measured pitch after control action" in report
     assert "Recovered successfully" not in report
     assert "Recovery complete" not in report
@@ -128,7 +135,7 @@ def test_pitch_limit_interaction_is_neutral_and_missing_recovery_is_explicit():
     report = presentation.format_stall_attempt(
         replace(result, recovery=recovery), 1,
     )
-    assert "Measured attitude exceeded the configured negative target limit" in report
+    assert "Attitude exceeded negative target limit" in report
     assert "nose-up correction" in report
     assert "prevented recovery" not in report
     absent = presentation.format_stall_attempt(
@@ -148,7 +155,9 @@ def test_same_flight_summary_mean_median_range_and_numbered_members():
             summary.minimum_m_s, summary.maximum_m_s) == (3, 10, 10, 8, 12)
     report = presentation.format_stall_flight_report(flight, 1)
     assert "Comparable clean-idle probable departures: 3" in report
-    assert "mean 10.00 m/s; median 10.00 m/s; range 8.00–12.00 m/s" in report
+    assert "Mean pre-fall pitch-peak airspeed: 10.00 m/s" in report
+    assert "Median: 10.00 m/s; range: 8.00–12.00 m/s" in report
+    assert "Stall speed =" not in report
     assert "non-departure bookend" not in report
 
 
@@ -178,7 +187,8 @@ def test_powered_banked_ambiguous_negative_and_unusable_are_excluded():
     assert "Probable departures: 4" in report
     assert "No demonstrated departures: 1" in report
     assert "Ambiguous attempts: 1" in report
-    assert "excluded from clean-idle mean" in report
+    assert "Summary exclusion: powered/variable or unknown throttle, banked/unknown attitude" in report
+    assert "Summary exclusion: event-linked airspeed or calibration unavailable" in report
 
 
 def test_one_event_or_zero_eligible_events_has_no_average():
@@ -189,7 +199,7 @@ def test_one_event_or_zero_eligible_events_has_no_average():
     )) is None
     report = presentation.format_stall_flight_report(_flight(window, result), 1)
     assert "no mean reported" in report
-    assert "Raw pre-fall pitch-peak airspeed: mean" not in report
+    assert "Mean pre-fall pitch-peak airspeed" not in report
 
 
 def test_material_runtime_ratio_change_suppresses_single_flight_mean():
@@ -202,6 +212,8 @@ def test_material_runtime_ratio_change_suppresses_single_flight_mean():
     assert presentation.summarize_clean_idle_airspeed(
         _flight(window, result, changed),
     ) is None
+    report = presentation.format_stall_flight_report(_flight(window, result, changed), 1)
+    assert "incompatible airspeed provenance/calibration; no mean reported" in report
 
 
 def test_empty_and_rejected_only_flights_do_not_claim_no_stalls():
@@ -250,7 +262,7 @@ def test_presentation_uses_shared_selector_and_existing_core(monkeypatch, capsys
     presentation.StallAnalysisPresentation().run()
     assert calls[0][0] == selected
     output = capsys.readouterr().out
-    assert "FBWA Stall-Test Prototype" in output
+    assert "Stall Analysis | FBWA slow-flight evidence" in output
     assert "Log: synthetic.bin" in output
     assert "Flight 1" in output
     assert "Probable demand-opposed attitude departure" in output
