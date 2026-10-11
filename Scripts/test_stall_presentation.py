@@ -49,6 +49,8 @@ def test_probable_attempt_uses_conservative_response_and_distinct_speed_labels()
     assert "FBWA target" in report and "actual pitch" in report
     assert "target−actual error" in report
     assert "Logged elevator command/output endpoint" in report
+    assert "command 4500; output 1900 PWM (channel 2)" in report
+    assert "AETR.Elev" not in report and "RCOU.C" not in report
     assert "Pre-fall pitch-peak airspeed" in report
     assert "First opposed-fall airspeed" in report
     assert "Minimum usable airspeed" in report
@@ -113,6 +115,9 @@ def test_suspect_event_speed_is_unavailable_and_not_printed_as_stall_speed():
     assert "sensor not logged healthy" in report
     assert "Effective airspeed ratio unavailable (unusable ARSP evidence)" in report
     assert "Stall speed" not in report
+    compact = presentation.format_stall_attempt(result, 1, compact_notable=True)
+    assert "pre-fall peak unavailable (sensor not logged healthy)" in compact
+    assert "Airspeed note: sensor not logged healthy" not in compact
 
 
 def test_recovery_reports_observations_without_claiming_completion():
@@ -187,6 +192,20 @@ def test_routine_flight_counts_negatives_and_rejections_but_expands_notable_even
     assert "Attempt 1 |" in report and "Attempt 2 |" in report
     assert "Attempt 3 |" not in report and "Candidate 4 |" not in report
     assert "Minimum usable airspeed" in report
+    assert "Recovery observations" not in report
+    assert "Later recovery speed milestone" not in report
+    assert "Recovery observation: control at" in report
+    assert "AETR.Elev" not in report and "RCOU.C" not in report
+    probable_lines = presentation.format_stall_attempt(
+        result, 1, compact_notable=True,
+    ).splitlines()
+    ambiguous_lines = presentation.format_stall_attempt(
+        ambiguous, 2, compact_notable=True,
+    ).splitlines()
+    assert len(probable_lines) <= 10
+    assert len(ambiguous_lines) <= 6
+    assert not any(line.strip() in {"Departure", "Airspeed", "Recovery observations"}
+                   for line in probable_lines + ambiguous_lines)
 
 
 def test_series_keeps_negative_evidence_and_hoists_unchanged_calibration():
@@ -204,11 +223,47 @@ def test_series_keeps_negative_evidence_and_hoists_unchanged_calibration():
     assert "Attempt 2 |" in report and "No demonstrated departure" in report
     assert "Minimum usable airspeed" in report
     assert "Evidence notes: evidence gap" in report
+    assert "  Departure\n" in report
+    assert "  Airspeed\n" in report
+    assert "  Recovery observations\n" in report
+    assert "First opposed-fall airspeed" in report
+    assert "Minimum measured pitch after control action" in report
     assert "Candidate 4 |" not in report
     assert "Rejected candidates: 1" in report
     assert report.count("Calibration:") == 1
     assert "Comparable clean-idle probable departures: 2 (attempts 1, 3)" in report
     assert f"Mean pre-fall pitch-peak airspeed: {summary.mean_m_s:.2f} m/s" in report
+
+
+def test_departure_reference_altitude_is_reported_only_when_core_provides_it():
+    result, window = _probable()
+    altitude = replace(
+        result.response.pitch_peak, source="BARO", field="Alt", value=85.5,
+    )
+    with_altitude = replace(result, recovery=replace(
+        result.recovery, altitude_at_departure_reference=altitude,
+    ))
+    detailed = presentation.format_stall_flight_report(
+        _flight(window, with_altitude, with_altitude), 1,
+    )
+    compact = presentation.format_stall_flight_report(
+        _flight(window, with_altitude), 1,
+    )
+    expected = "Altitude at departure reference: 85.50 m BARO (sample 00:01.900)"
+    assert expected in detailed and expected in compact
+    unavailable = replace(result, recovery=replace(
+        result.recovery, altitude_at_departure_reference=None,
+    ))
+    assert "Altitude at departure reference" not in presentation.format_stall_attempt(
+        unavailable, 1,
+    )
+    assert "Altitude at departure reference" not in presentation.format_stall_flight_report(
+        _flight(window, unavailable), 1,
+    )
+    ambiguous = replace(result, status=StallStatus.AMBIGUOUS, recovery=None)
+    assert "Altitude at departure reference" not in presentation.format_stall_attempt(
+        ambiguous, 1, compact_notable=True,
+    )
 
 
 def test_series_calibration_change_remains_visible_on_compact_negative():
