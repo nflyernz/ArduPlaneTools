@@ -203,28 +203,47 @@ def _summary_context_exclusion(context):
     return ", ".join(reasons) or "context not comparable"
 
 
+def _altitude_line(result, indent="  "):
+    recovery = result.recovery
+    point = recovery.altitude_at_departure_reference if recovery else None
+    if point is None or point.source != "BARO":
+        return None
+    return (f"{indent}Altitude at departure reference: {point.value:.2f} m "
+            f"BARO (sample {_time(point.time_us)})")
+
+
+def _elevator_line(result, indent="  "):
+    event = result.departure
+    if event is None:
+        return None
+    return (f"{indent}Logged elevator command/output endpoint: "
+            f"command {event.aetr_endpoint.value:.0f}; "
+            f"output {event.rcou_endpoint.value:.0f} PWM "
+            f"(channel {event.elevator_channel})")
+
+
 def _format_response(result):
     response = result.response
     if response is None:
         return []
     error = response.target_at_peak.value - response.pitch_peak.value
     lines = [
-        f"  Departure evidence: pitch peak {_time(response.pitch_peak.time_us)}; "
-        f"first opposed fall {_time(response.first_opposed_fall.time_us)}",
-        f"  Peak: pilot nose-up RCIN {response.pilot_at_peak.value:.0f} PWM; "
+        "  Departure",
+        f"    Pitch peak: {_time(response.pitch_peak.time_us)}; "
+        f"first opposed fall: {_time(response.first_opposed_fall.time_us)}",
+        f"    pilot nose-up RCIN {response.pilot_at_peak.value:.0f} PWM; "
         f"FBWA target {response.target_at_peak.value:.1f}°; "
         f"actual pitch {response.pitch_peak.value:.1f}°; "
         f"target−actual error {error:+.1f}°",
-        f"  Opposed pitch fall {response.pitch_fall_deg:.1f}°; "
+        f"    Opposed pitch fall {response.pitch_fall_deg:.1f}°; "
         f"error growth {response.error_growth_deg:.1f}° by confirmation",
     ]
-    if result.departure is not None:
-        event = result.departure
-        lines.append(
-            "  Logged elevator command/output endpoint: "
-            f"AETR.Elev {event.aetr_endpoint.value:.0f}; "
-            f"RCOU.C{event.elevator_channel} {event.rcou_endpoint.value:.0f} PWM"
-        )
+    endpoint = _elevator_line(result, "    ")
+    if endpoint:
+        lines.append(endpoint)
+    altitude = _altitude_line(result, "    ")
+    if altitude:
+        lines.append(altitude)
     return lines
 
 
@@ -277,8 +296,89 @@ def _format_recovery(result):
     return lines
 
 
+def _compact_speed(measurement):
+    if measurement is None or measurement.sample is None:
+        return "unavailable"
+    if measurement.quality is not AirspeedQuality.USABLE:
+        detail = "; ".join(measurement.warnings) or measurement.quality.value
+        return f"unavailable ({detail})"
+    return f"{measurement.sample.value:.2f}"
+
+
+def _format_notable(result):
+    """Concise evidence for probable/ambiguous events outside a test series."""
+    lines = []
+    context = result.context
+    if context is not None:
+        throttle = {
+            "idle_command": "idle throttle command",
+            "powered_or_variable_command": "powered/variable throttle command",
+        }.get(context.throttle_class, context.throttle_class.replace("_", " "))
+        if context.median_commanded_throttle_percent is not None:
+            throttle += f" {context.median_commanded_throttle_percent:.1f}%"
+        details = [context.mode, throttle, context.bank_class.replace("_", " ")]
+        if context.flap_command is not None:
+            details.append(f"flap command {context.flap_command:.1f}")
+        lines.append("  Context: " + ", ".join(details))
+    if result.reasons:
+        lines.append("  Evidence notes: " + ", ".join(
+            reason.value.replace("_", " ") for reason in result.reasons
+        ))
+    response = result.response
+    if response is not None:
+        lines.append(
+            f"  Pitch: FBWA target {response.target_at_peak.value:.1f}°; "
+            f"actual peak {response.pitch_peak.value:.1f}°; "
+            f"opposed fall {response.pitch_fall_deg:.1f}°"
+        )
+    air = result.airspeed
+    if air is not None:
+        if result.status is StallStatus.PROBABLE_DEPARTURE:
+            lines.append(
+                "  Airspeed (raw ARSP): pre-fall peak "
+                f"{_compact_speed(air.raw_airspeed_at_pre_fall_pitch_peak)}; "
+                "first fall "
+                f"{_compact_speed(air.raw_airspeed_at_first_opposed_fall_observation)}; "
+                "minimum usable "
+                f"{_compact_speed(air.lowest_usable_raw_airspeed_in_attempt)} m/s"
+            )
+        else:
+            lines.append(
+                "  Minimum usable airspeed: "
+                f"{_compact_speed(air.lowest_usable_raw_airspeed_in_attempt)} m/s "
+                "(raw ARSP)"
+            )
+    endpoint = _elevator_line(result)
+    if endpoint and result.status is StallStatus.PROBABLE_DEPARTURE:
+        lines.append(endpoint)
+    altitude = _altitude_line(result)
+    if altitude:
+        lines.append(altitude)
+    reference = _reference_airspeed(result)
+    calibration = _calibration_line(reference)
+    if calibration:
+        lines.append(calibration)
+    if (reference is not None and reference.warnings
+        and reference.quality is AirspeedQuality.USABLE):
+        lines.append("  Airspeed note: " + "; ".join(reference.warnings))
+    if result.status is StallStatus.PROBABLE_DEPARTURE:
+        if context is None or not context.clean_idle_context:
+            lines.append("  Summary exclusion: " + _summary_context_exclusion(context))
+        elif _cohort_measurement(result) is None:
+            lines.append("  Summary exclusion: event-linked airspeed or calibration unavailable")
+        recovery = result.recovery
+        if recovery is None:
+            lines.append("  Recovery-control action: not observed; no completion inferred")
+        else:
+            detail = f"  Recovery observation: control at {_time(recovery.control_start.time_us)}"
+            if recovery.pitch_minimum is not None:
+                detail += f"; minimum pitch {recovery.pitch_minimum.value:.2f}°"
+            lines.append(detail)
+    return lines
+
+
 def format_stall_attempt(result, number, calibration_context=None,
-                         compact_negative=False):
+                         compact_negative=False, compact_notable=False):
     """Format one retained attempt/candidate without changing its status."""
     attempt = result.attempt
     noun = "Candidate" if result.status is StallStatus.REJECTED else "Attempt"
@@ -314,15 +414,20 @@ def format_stall_attempt(result, number, calibration_context=None,
                  or reference.quality is AirspeedQuality.USABLE)):
             lines.append("  Airspeed note: " + "; ".join(reference.warnings))
         return "\n".join(lines)
+    if compact_notable:
+        return "\n".join((*lines, *_format_notable(result)))
     lines.append(_format_context(result))
     if result.reasons:
         lines.append(
             "  Evidence notes: "
             + ", ".join(reason.value.replace("_", " ") for reason in result.reasons)
         )
-    lines.extend(_format_response(result))
+    departure = _format_response(result)
+    if departure:
+        lines.extend(("", *departure))
     air = result.airspeed
     if air is not None:
+        lines.extend(("", "  Airspeed"))
         measurements = (
             ("Pre-fall pitch-peak airspeed", air.raw_airspeed_at_pre_fall_pitch_peak),
             ("First opposed-fall airspeed", air.raw_airspeed_at_first_opposed_fall_observation),
@@ -332,14 +437,14 @@ def format_stall_attempt(result, number, calibration_context=None,
         )
         for label, measurement in measurements:
             if measurement is not None or label == "Minimum usable airspeed":
-                lines.append(_airspeed_line(label, measurement))
+                lines.append("  " + _airspeed_line(label, measurement))
         reference = _reference_airspeed(result)
         calibration = _calibration_line(reference)
         if calibration and calibration != calibration_context:
-            lines.append(calibration)
+            lines.append("  " + calibration)
         if (reference is not None and reference.warnings
             and reference.quality is AirspeedQuality.USABLE):
-            lines.append("  Airspeed note: " + "; ".join(reference.warnings))
+            lines.append("    Airspeed note: " + "; ".join(reference.warnings))
     if result.status is StallStatus.PROBABLE_DEPARTURE:
         if result.context is None or not result.context.clean_idle_context:
             lines.append(
@@ -349,7 +454,10 @@ def format_stall_attempt(result, number, calibration_context=None,
             lines.append(
                 "  Summary exclusion: event-linked airspeed or calibration unavailable"
             )
-    lines.extend(_format_recovery(result))
+    recovery = _format_recovery(result)
+    if recovery:
+        lines.extend(("", "  Recovery observations"))
+        lines.extend("  " + line for line in recovery)
     return "\n".join(lines)
 
 
@@ -415,7 +523,7 @@ def format_stall_flight_report(flight_result, flight_number):
     for number, result in visible:
         lines.extend(("", format_stall_attempt(
             result, number, calibration_context=calibration_context,
-            compact_negative=series,
+            compact_negative=series, compact_notable=not series,
         )))
     if series:
         lines.extend(("", *summary_lines))
