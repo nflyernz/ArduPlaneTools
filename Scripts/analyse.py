@@ -113,7 +113,7 @@ def menu():
 
         elif choice == "12":
 
-            from analyses.stall_test import StallAnalysisPresentation
+            from analyses.stall import StallAnalysisPresentation
 
             StallAnalysisPresentation().run()
 

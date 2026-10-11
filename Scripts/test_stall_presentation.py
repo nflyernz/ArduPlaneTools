@@ -5,7 +5,7 @@ from pathlib import Path
 
 import analyse
 
-from analyses import stall_test as presentation
+from analyses import stall as presentation
 from core.stall_test import AirspeedQuality, StallFlightResult, StallStatus
 from test_stall_characterization import _matched
 from test_stall_test import _log, _one
