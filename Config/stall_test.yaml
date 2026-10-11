@@ -1,0 +1,52 @@
+# Exploratory FBWA stall-test prototype rules, version 1. These values are
+# calibration defaults for the reviewed Ranger logs, not validated stall limits.
+analysis:
+  name: FBWA Stall-Test Prototype
+  rule_version: fbwa-prototype-1
+
+messages:
+  - VER
+  - MODE
+  - ARM
+  - STAT
+  - RCIN
+  - ATT
+  - AETR
+  - RCOU
+  - ARSP
+  - CTUN
+  - BARO
+  - GPS
+  - IMU
+  - XKF2
+  - MSG
+
+stall:
+  # ATT/RCIN/AETR/RCOU are about 25 Hz in the reviewed logs; ARSP about 10 Hz.
+  association_max_s: 0.20
+  attitude_max_gap_s: 0.20
+  airspeed_max_gap_s: 0.35
+  minimum_pull_s: 0.60
+  release_reset_s: 0.35
+  partial_reset_s: 0.10
+  partial_reset_fraction: 0.35
+  reapply_input_rise_pwm: 80
+  reapply_target_rise_deg: 5.0
+  nose_up_input_pwm: 80
+  nose_up_target_deg: 3.0
+  minimum_relative_speed_drop_m_s: 0.5
+  speed_lookback_s: 3.0
+  fall_window_s: 1.60
+  local_peak_lookback_s: 0.25
+  local_peak_tolerance_deg: 0.15
+  minimum_pitch_fall_deg: 6.0
+  minimum_error_growth_deg: 3.0
+  maximum_target_relax_deg: 2.0
+  maximum_input_relax_pwm: 60
+  endpoint_window_before_s: 0.40
+  endpoint_window_after_s: 1.40
+  # AETR is a firmware scaled command (+/-4500), not physical surface angle.
+  aetr_full_scale: 4500
+  endpoint_nearness_fraction: 0.03
+  approximately_level_bank_deg: 10.0
+  idle_throttle_percent: 5.0
