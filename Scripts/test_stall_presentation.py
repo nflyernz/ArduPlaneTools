@@ -6,7 +6,7 @@ from pathlib import Path
 import analyse
 
 from analyses import stall as presentation
-from core.stall_test import AirspeedQuality, StallFlightResult, StallStatus
+from core.stall_test import AirspeedQuality, StallFlightResult, StallReason, StallStatus
 from test_stall_characterization import _matched
 from test_stall_test import _log, _one
 
@@ -27,6 +27,16 @@ def _with_peak_speed(result, speed, **changes):
     return replace(result, airspeed=replace(
         air, raw_airspeed_at_pre_fall_pitch_peak=peak,
     ))
+
+
+def test_elapsed_time_uses_minutes_and_hours_without_losing_milliseconds():
+    assert presentation._time(0) == "00:00.000"
+    assert presentation._time(59_999_000) == "00:59.999"
+    assert presentation._time(60_000_000) == "01:00.000"
+    assert presentation._time(3_599_999_000) == "59:59.999"
+    assert presentation._time(3_599_999_500) == "1:00:00.000"
+    assert presentation._time(3_600_000_000) == "1:00:00.000"
+    assert presentation._time(3_804_125_000) == "1:03:24.125"
 
 
 def test_probable_attempt_uses_conservative_response_and_distinct_speed_labels():
@@ -159,6 +169,83 @@ def test_same_flight_summary_mean_median_range_and_numbered_members():
     assert "Median: 10.00 m/s; range: 8.00–12.00 m/s" in report
     assert "Stall speed =" not in report
     assert "non-departure bookend" not in report
+
+
+def test_routine_flight_counts_negatives_and_rejections_but_expands_notable_events():
+    result, window = _probable()
+    ambiguous = replace(result, status=StallStatus.AMBIGUOUS)
+    negative = replace(result, status=StallStatus.NO_DEMONSTRATED_DEPARTURE)
+    rejected = replace(result, status=StallStatus.REJECTED)
+    flight = _flight(window, result, ambiguous, negative, rejected)
+    report = presentation.format_stall_flight_report(flight, 2)
+    assert "Stall-test series detected" not in report
+    assert "Probable departures: 1" in report
+    assert "Ambiguous attempts: 1" in report
+    assert "No demonstrated departures: 1" in report
+    assert "Rejected candidates: 1" in report
+    assert "Notable events:" in report
+    assert "Attempt 1 |" in report and "Attempt 2 |" in report
+    assert "Attempt 3 |" not in report and "Candidate 4 |" not in report
+    assert "Minimum usable airspeed" in report
+
+
+def test_series_keeps_negative_evidence_and_hoists_unchanged_calibration():
+    result, window = _probable()
+    negative = replace(
+        result, status=StallStatus.NO_DEMONSTRATED_DEPARTURE,
+        reasons=(StallReason.EVIDENCE_GAP,),
+    )
+    rejected = replace(result, status=StallStatus.REJECTED)
+    flight = _flight(window, result, negative, result, rejected)
+    summary = presentation.summarize_clean_idle_airspeed(flight)
+    report = presentation.format_stall_flight_report(flight, 3)
+    assert summary.attempt_numbers == (1, 3)
+    assert "Stall-test series detected" in report
+    assert "Attempt 2 |" in report and "No demonstrated departure" in report
+    assert "Minimum usable airspeed" in report
+    assert "Evidence notes: evidence gap" in report
+    assert "Candidate 4 |" not in report
+    assert "Rejected candidates: 1" in report
+    assert report.count("Calibration:") == 1
+    assert "Comparable clean-idle probable departures: 2 (attempts 1, 3)" in report
+    assert f"Mean pre-fall pitch-peak airspeed: {summary.mean_m_s:.2f} m/s" in report
+
+
+def test_series_calibration_change_remains_visible_on_compact_negative():
+    result, window = _probable()
+    changed = _with_peak_speed(result, 9.0, effective_ratio=2.2)
+    changed = replace(changed, status=StallStatus.NO_DEMONSTRATED_DEPARTURE)
+    report = presentation.format_stall_flight_report(
+        _flight(window, result, changed, result), 1,
+    )
+    assert "Stall-test series detected" in report
+    assert "Attempt 2 |" in report
+    assert "Effective airspeed ratio 2.2000" in report
+    assert "Effective airspeed ratio 2.0000" in report
+    assert report.count("Calibration:") == 3
+
+
+def test_matching_ratio_does_not_hoist_changed_airspeed_provenance():
+    result, window = _probable()
+    peak = result.airspeed.raw_airspeed_at_pre_fall_pitch_peak
+    sample_parameters = replace(
+        peak.saved_parameters_at_sample,
+        values={**peak.saved_parameters_at_sample.values, "ARSPD_OFFSET": 3.0},
+    )
+    changed = replace(
+        result, status=StallStatus.NO_DEMONSTRATED_DEPARTURE,
+        airspeed=replace(
+            result.airspeed,
+            raw_airspeed_at_pre_fall_pitch_peak=replace(
+                peak, saved_parameters_at_sample=sample_parameters,
+            ),
+        ),
+    )
+    report = presentation.format_stall_flight_report(
+        _flight(window, result, changed, result), 1,
+    )
+    assert "Stall-test series detected" in report
+    assert report.count("Calibration:") == 3
 
 
 def test_powered_banked_ambiguous_negative_and_unusable_are_excluded():
