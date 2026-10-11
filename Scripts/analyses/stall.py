@@ -8,7 +8,7 @@ from statistics import mean, median
 from core.config import Config
 from core.log_reader import FlightReader, UnsupportedFirmwareError
 from core.stall_departure_detector import StallTestAnalyzer
-from core.stall_test import AirspeedQuality, StallStatus
+from core.stall_test import AirspeedQuality, StallReason, StallStatus
 
 from .log_selector import select_log_input
 from .presentation_text import wrap_report
@@ -95,7 +95,12 @@ def summarize_clean_idle_airspeed(flight_result):
 
 
 def _time(time_us):
-    return f"{time_us / 1_000_000:.3f} s"
+    total_seconds, milliseconds = divmod((time_us + 500) // 1_000, 1_000)
+    hours, remainder = divmod(total_seconds, 3_600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
+    return f"{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
 
 
 def _point(point, unit=""):
@@ -141,6 +146,30 @@ def _calibration_line(measurement):
         sampled_label = f"{sampled:.4f}" if sampled is not None else "unavailable"
         line += f"; saved ratio at sample {sampled_label}"
     return line
+
+
+def _reference_airspeed(result):
+    air = result.airspeed
+    if air is None:
+        return None
+    return (air.raw_airspeed_at_pre_fall_pitch_peak
+            or air.lowest_usable_raw_airspeed_in_attempt)
+
+
+def _shared_calibration(visible):
+    """Hoist calibration only when every displayed value is identical."""
+    calibrations = []
+    for _, result in visible:
+        measurement = _reference_airspeed(result)
+        if (measurement is None or measurement.saved_parameters is None
+            or measurement.saved_parameters_at_sample is None):
+            return None
+        calibrations.append((
+            _calibration_line(measurement), _provenance_key(measurement),
+        ))
+    if calibrations and all(item == calibrations[0] for item in calibrations[1:]):
+        return calibrations[0][0]
+    return None
 
 
 def _format_context(result):
@@ -248,7 +277,8 @@ def _format_recovery(result):
     return lines
 
 
-def format_stall_attempt(result, number):
+def format_stall_attempt(result, number, calibration_context=None,
+                         compact_negative=False):
     """Format one retained attempt/candidate without changing its status."""
     attempt = result.attempt
     noun = "Candidate" if result.status is StallStatus.REJECTED else "Attempt"
@@ -262,6 +292,28 @@ def format_stall_attempt(result, number):
                 reason.value.replace("_", " ") for reason in result.reasons
             ) + ")"
         return lines[0]
+    if compact_negative and result.status is StallStatus.NO_DEMONSTRATED_DEPARTURE:
+        material_reasons = [
+            reason.value.replace("_", " ") for reason in result.reasons
+            if reason is not StallReason.NO_OPPOSED_FALL
+        ]
+        if material_reasons:
+            lines.append("  Evidence notes: " + ", ".join(material_reasons))
+        minimum = (result.airspeed.lowest_usable_raw_airspeed_in_attempt
+                   if result.airspeed is not None else None)
+        if result.airspeed is not None:
+            lines.append(_airspeed_line(
+                "Minimum usable airspeed", minimum,
+            ))
+        reference = _reference_airspeed(result)
+        calibration = _calibration_line(reference)
+        if calibration and calibration != calibration_context:
+            lines.append(calibration)
+        if (reference is not None and reference.warnings
+            and (reference is not minimum
+                 or reference.quality is AirspeedQuality.USABLE)):
+            lines.append("  Airspeed note: " + "; ".join(reference.warnings))
+        return "\n".join(lines)
     lines.append(_format_context(result))
     if result.reasons:
         lines.append(
@@ -281,12 +333,9 @@ def format_stall_attempt(result, number):
         for label, measurement in measurements:
             if measurement is not None or label == "Minimum usable airspeed":
                 lines.append(_airspeed_line(label, measurement))
-        reference = (
-            air.raw_airspeed_at_pre_fall_pitch_peak
-            or air.lowest_usable_raw_airspeed_in_attempt
-        )
+        reference = _reference_airspeed(result)
         calibration = _calibration_line(reference)
-        if calibration:
+        if calibration and calibration != calibration_context:
             lines.append(calibration)
         if (reference is not None and reference.warnings
             and reference.quality is AirspeedQuality.USABLE):
@@ -311,45 +360,65 @@ def format_stall_flight_report(flight_result, flight_number):
         f"Flight {flight_number} | {_time(window.start_us)}–{_time(window.end_us)}",
         "-" * 58,
     ]
-    if not flight_result.results:
-        lines.append("No analyzable FBWA stall-test attempts found.")
-    else:
-        if all(result.status is StallStatus.REJECTED
-               for result in flight_result.results):
-            lines.append("No analyzable FBWA stall-test attempts found.")
-        for number, result in enumerate(flight_result.results, start=1):
-            lines.extend(("", format_stall_attempt(result, number)))
+    summary = summarize_clean_idle_airspeed(flight_result)
+    series = summary is not None
+    visible = [
+        (number, result)
+        for number, result in enumerate(flight_result.results, start=1)
+        if result.status is not StallStatus.REJECTED
+        and (series or result.status in (
+            StallStatus.PROBABLE_DEPARTURE, StallStatus.AMBIGUOUS,
+        ))
+    ]
+    calibration_context = _shared_calibration(visible) if series else None
+    if series:
+        lines.append("Stall-test series detected")
+        if calibration_context:
+            lines.append(calibration_context)
     counts = {status: sum(result.status is status for result in flight_result.results)
               for status in StallStatus}
-    lines.extend((
-        "", "Flight classification summary:",
+    summary_lines = [
+        "Flight classification summary:",
         f"  Probable departures: {counts[StallStatus.PROBABLE_DEPARTURE]}",
         f"  No demonstrated departures: {counts[StallStatus.NO_DEMONSTRATED_DEPARTURE]}",
         f"  Ambiguous attempts: {counts[StallStatus.AMBIGUOUS]}",
         f"  Rejected candidates: {counts[StallStatus.REJECTED]}",
-    ))
-    summary = summarize_clean_idle_airspeed(flight_result)
+    ]
     if summary is None:
         eligible = [result for result in flight_result.results
                     if _cohort_measurement(result) is not None]
         if len(eligible) >= 2:
-            lines.append(
+            summary_lines.append(
                 "  Eligible attempts have incompatible airspeed provenance/calibration; "
                 "no mean reported."
             )
         else:
-            lines.append(
+            summary_lines.append(
                 "  No comparable clean-idle probable-departure cohort "
                 "of at least two events; no mean reported."
             )
     else:
-        lines.extend((
+        summary_lines.extend((
             "  Comparable clean-idle probable departures: "
             f"{summary.count} (attempts {', '.join(map(str, summary.attempt_numbers))})",
             f"  Mean pre-fall pitch-peak airspeed: {summary.mean_m_s:.2f} m/s",
             f"  Median: {summary.median_m_s:.2f} m/s; "
             f"range: {summary.minimum_m_s:.2f}–{summary.maximum_m_s:.2f} m/s",
         ))
+    if not series:
+        lines.extend(("", *summary_lines))
+        if not any(result.status is not StallStatus.REJECTED
+                   for result in flight_result.results):
+            lines.extend(("", "No analyzable FBWA stall-test attempts found."))
+        if visible:
+            lines.extend(("", "Notable events:"))
+    for number, result in visible:
+        lines.extend(("", format_stall_attempt(
+            result, number, calibration_context=calibration_context,
+            compact_negative=series,
+        )))
+    if series:
+        lines.extend(("", *summary_lines))
     return "\n".join(lines)
 
 
