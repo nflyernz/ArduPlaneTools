@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from core.log_reader import UnsupportedFirmwareError
 
 from .autotune_adapter import analyse_autotune_log
+from .takeoff_adapter import analyse_takeoff_log
 
 
 ANALYSIS_TABS = (
@@ -35,8 +36,8 @@ ANALYSIS_TABS = (
 )
 
 
-class _AutotuneWorker(QObject):
-    """Run one AUTOTUNE adapter call away from the GUI thread."""
+class _AnalysisWorker(QObject):
+    """Run one analysis adapter call away from the GUI thread."""
 
     succeeded = Signal(str)
     failed = Signal(object)
@@ -62,15 +63,22 @@ class _AutotuneWorker(QObject):
 class MainWindow(QMainWindow):
     """Resizable desktop shell with shared source selection and analysis tabs."""
 
-    def __init__(self, autotune_adapter=analyse_autotune_log):
+    def __init__(
+        self,
+        autotune_adapter=analyse_autotune_log,
+        takeoff_adapter=analyse_takeoff_log,
+    ):
         super().__init__()
         self._selected_log: Path | None = None
         self._reports: dict[str, QPlainTextEdit] = {}
         self._autotune_adapter = autotune_adapter
-        self._autotune_thread: QThread | None = None
-        self._autotune_worker: _AutotuneWorker | None = None
+        self._takeoff_adapter = takeoff_adapter
+        self._analysis_thread: QThread | None = None
+        self._analysis_worker: _AnalysisWorker | None = None
+        self._active_analysis: str | None = None
         self._close_after_worker = False
         self.autotune_analyse_button: QPushButton | None = None
+        self.takeoff_analyse_button: QPushButton | None = None
 
         self.setWindowTitle("ArduPlaneTools")
         self.setMinimumSize(900, 600)
@@ -109,8 +117,22 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central)
         self.statusBar().setSizeGripEnabled(True)
-        self._update_autotune_controls()
+        self._update_analysis_controls()
         self._update_status()
+
+    @property
+    def _autotune_thread(self) -> QThread | None:
+        """Expose the active AUTOTUNE thread for existing lifecycle tests."""
+        if self._active_analysis == "AUTOTUNE":
+            return self._analysis_thread
+        return None
+
+    @property
+    def _autotune_worker(self) -> _AnalysisWorker | None:
+        """Expose the active AUTOTUNE worker for existing lifecycle tests."""
+        if self._active_analysis == "AUTOTUNE":
+            return self._analysis_worker
+        return None
 
     @property
     def selected_log(self) -> Path | None:
@@ -156,39 +178,48 @@ class MainWindow(QMainWindow):
         self.source_path_edit.setText(displayed)
         self.source_path_edit.setToolTip(displayed)
         self.source_path_edit.setCursorPosition(0)
-        self._update_autotune_controls()
+        self._update_analysis_controls()
         self._update_status("BIN selected")
 
     def start_autotune_analysis(self) -> None:
-        """Validate selection and start one AUTOTUNE worker thread."""
-        if self._autotune_thread is not None:
+        """Start AUTOTUNE through the shared background execution path."""
+        self._start_analysis("AUTOTUNE", self._autotune_adapter)
+
+    def start_takeoff_analysis(self) -> None:
+        """Start TAKEOFF through the shared background execution path."""
+        self._start_analysis("TAKEOFF", self._takeoff_adapter)
+
+    def _start_analysis(self, analysis: str, adapter) -> None:
+        """Validate the shared source and run one analysis at a time."""
+        if self._analysis_thread is not None:
             return
-        error = self._autotune_selection_error()
+        error = self._selection_error(analysis)
         if error is not None:
-            self._show_autotune_error(error)
+            self._show_analysis_error(analysis, error)
             return
 
         assert self._selected_log is not None
         path = self._selected_log
         thread = QThread(self)
-        worker = _AutotuneWorker(path, self._autotune_adapter)
+        worker = _AnalysisWorker(path, adapter)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.succeeded.connect(self._autotune_succeeded)
-        worker.failed.connect(self._autotune_failed)
+        worker.succeeded.connect(self._analysis_succeeded)
+        worker.failed.connect(self._analysis_failed)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
-        thread.finished.connect(self._autotune_thread_finished)
+        thread.finished.connect(self._analysis_thread_finished)
         thread.finished.connect(thread.deleteLater)
-        self._autotune_thread = thread
-        self._autotune_worker = worker
-        self._set_autotune_busy(True)
-        self.report_for("AUTOTUNE").setPlainText(
-            "AUTOTUNE\n\n"
+        self._analysis_thread = thread
+        self._analysis_worker = worker
+        self._active_analysis = analysis
+        self._set_analysis_busy(True)
+        self.report_for(analysis).setPlainText(
+            f"{analysis}\n\n"
             f"Analysing {path}…\n\n"
             "The GUI remains available; no progress percentage is available."
         )
-        self.statusBar().showMessage(f"AUTOTUNE analysis running — {path}")
+        self.statusBar().showMessage(f"{analysis} analysis running — {path}")
         thread.start()
 
     def _create_analysis_page(self, name: str) -> QWidget:
@@ -199,15 +230,18 @@ class MainWindow(QMainWindow):
         heading.setStyleSheet("font-weight: 600;")
         layout.addWidget(heading)
 
-        if name == "AUTOTUNE":
+        if name in ("TAKEOFF", "AUTOTUNE"):
             action_layout = QHBoxLayout()
             action_layout.addStretch(1)
-            self.autotune_analyse_button = QPushButton("Analyse")
-            self.autotune_analyse_button.setObjectName("autotuneAnalyseButton")
-            self.autotune_analyse_button.clicked.connect(
-                self.start_autotune_analysis
-            )
-            action_layout.addWidget(self.autotune_analyse_button)
+            analyse_button = QPushButton("Analyse")
+            analyse_button.setObjectName(f"{name.lower()}AnalyseButton")
+            if name == "AUTOTUNE":
+                self.autotune_analyse_button = analyse_button
+                analyse_button.clicked.connect(self.start_autotune_analysis)
+            else:
+                self.takeoff_analyse_button = analyse_button
+                analyse_button.clicked.connect(self.start_takeoff_analysis)
+            action_layout.addWidget(analyse_button)
             layout.addLayout(action_layout)
 
         report = QPlainTextEdit()
@@ -233,6 +267,12 @@ class MainWindow(QMainWindow):
                 "Select a BIN log above, then choose Analyse.\n\n"
                 "Reports use the existing AUTOTUNE evidence pipeline."
             )
+        elif name == "TAKEOFF":
+            return (
+                "TAKEOFF\n\n"
+                "Select a BIN log above, then choose Analyse.\n\n"
+                "Reports use the existing TAKEOFF evidence pipeline."
+            )
         else:
             source_note = "Select a BIN log above to establish the shared source."
         return (
@@ -244,71 +284,87 @@ class MainWindow(QMainWindow):
     def _on_tab_changed(self, _index: int) -> None:
         self._update_status()
 
-    def _autotune_selection_error(self) -> str | None:
+    def _selection_error(self, analysis: str) -> str | None:
         if self._selected_log is None:
-            return "Select a BIN log before running AUTOTUNE analysis."
+            return f"Select a BIN log before running {analysis} analysis."
         if self._selected_log.suffix.lower() != ".bin":
-            return "The selected AUTOTUNE source must have a .bin extension."
+            return f"The selected {analysis} source must have a .bin extension."
         if not self._selected_log.is_file():
             return f"The selected BIN log does not exist: {self._selected_log}"
         return None
 
-    def _update_autotune_controls(self) -> None:
-        if self.autotune_analyse_button is None:
-            return
-        busy = self._autotune_thread is not None
-        valid = self._autotune_selection_error() is None
-        self.autotune_analyse_button.setEnabled(
-            not busy and valid and not self._close_after_worker
-        )
+    def _update_analysis_controls(self) -> None:
+        busy = self._analysis_thread is not None
+        for analysis, button in (
+            ("TAKEOFF", self.takeoff_analyse_button),
+            ("AUTOTUNE", self.autotune_analyse_button),
+        ):
+            if button is not None:
+                valid = self._selection_error(analysis) is None
+                button.setEnabled(
+                    not busy and valid and not self._close_after_worker
+                )
         self.choose_log_button.setEnabled(not busy and not self._close_after_worker)
 
-    def _set_autotune_busy(self, busy: bool) -> None:
-        if self.autotune_analyse_button is not None:
-            self.autotune_analyse_button.setText("Analysing…" if busy else "Analyse")
-        self._update_autotune_controls()
+    def _set_analysis_busy(self, busy: bool) -> None:
+        for analysis, button in (
+            ("TAKEOFF", self.takeoff_analyse_button),
+            ("AUTOTUNE", self.autotune_analyse_button),
+        ):
+            if button is not None:
+                is_active = busy and analysis == self._active_analysis
+                button.setText("Analysing…" if is_active else "Analyse")
+        self._update_analysis_controls()
 
     @Slot(str)
-    def _autotune_succeeded(self, report: str) -> None:
-        self.report_for("AUTOTUNE").setPlainText(report)
-        self.statusBar().showMessage("AUTOTUNE analysis complete")
+    def _analysis_succeeded(self, report: str) -> None:
+        assert self._active_analysis is not None
+        self.report_for(self._active_analysis).setPlainText(report)
+        self.statusBar().showMessage(f"{self._active_analysis} analysis complete")
 
     @Slot(object)
-    def _autotune_failed(self, exc: Exception) -> None:
+    def _analysis_failed(self, exc: Exception) -> None:
+        assert self._active_analysis is not None
         if isinstance(exc, UnsupportedFirmwareError):
             message = f"Unsupported firmware.\n{exc}"
         elif isinstance(exc, OSError):
             message = f"Unable to read log: {exc}"
         else:
-            message = f"AUTOTUNE analysis failed unexpectedly: {exc}"
-        self._show_autotune_error(message)
+            message = (
+                f"{self._active_analysis} analysis failed unexpectedly: {exc}"
+            )
+        self._show_analysis_error(self._active_analysis, message)
 
-    def _show_autotune_error(self, message: str) -> None:
-        self.report_for("AUTOTUNE").setPlainText(
-            "AUTOTUNE Analysis Error\n"
-            "=======================\n"
+    def _show_analysis_error(self, analysis: str, message: str) -> None:
+        heading = f"{analysis} Analysis Error"
+        self.report_for(analysis).setPlainText(
+            f"{heading}\n"
+            f"{'=' * len(heading)}\n"
             f"{message}"
         )
         self.statusBar().showMessage(message.replace("\n", " — "))
 
     @Slot()
-    def _autotune_thread_finished(self) -> None:
-        self._autotune_thread = None
-        self._autotune_worker = None
-        self._set_autotune_busy(False)
+    def _analysis_thread_finished(self) -> None:
+        self._analysis_thread = None
+        self._analysis_worker = None
+        self._active_analysis = None
+        self._set_analysis_busy(False)
         if self._close_after_worker:
             self._close_after_worker = False
             self.close()
 
     def _update_status(self, action: str | None = None) -> None:
         source = str(self._selected_log) if self._selected_log else "no BIN selected"
-        if self._autotune_thread is not None:
-            self.statusBar().showMessage(f"AUTOTUNE analysis running — {source}")
+        if self._analysis_thread is not None:
+            self.statusBar().showMessage(
+                f"{self._active_analysis} analysis running — {source}"
+            )
             return
         prefix = f"{action} — " if action else ""
         state = (
             "ready"
-            if self.current_analysis == "AUTOTUNE"
+            if self.current_analysis in ("TAKEOFF", "AUTOTUNE")
             else "analysis not connected"
         )
         self.statusBar().showMessage(
@@ -316,14 +372,13 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event) -> None:
-        """Defer destruction until an active AUTOTUNE worker has exited."""
-        if self._autotune_thread is not None:
+        """Defer destruction until an active analysis worker has exited."""
+        if self._analysis_thread is not None:
             self._close_after_worker = True
             self.choose_log_button.setEnabled(False)
-            if self.autotune_analyse_button is not None:
-                self.autotune_analyse_button.setEnabled(False)
+            self._update_analysis_controls()
             self.statusBar().showMessage(
-                "Waiting for AUTOTUNE analysis to finish before closing"
+                f"Waiting for {self._active_analysis} analysis to finish before closing"
             )
             event.ignore()
             return
