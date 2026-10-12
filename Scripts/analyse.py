@@ -44,6 +44,7 @@ def menu():
         print("10. Takeoff Analysis")
         print("11. Radio Link Analysis")
         print("12. Radio Link Range-Walk Comparison")
+        print("13. Stall Analysis")
 
         print("0. Exit")
 
@@ -116,6 +117,12 @@ def menu():
             from analyses.range_walk import RangeWalkComparisonPresentation
 
             RangeWalkComparisonPresentation().run()
+
+        elif choice == "13":
+
+            from analyses.stall import StallAnalysisPresentation
+
+            StallAnalysisPresentation().run()
 
         elif choice == "0":
             break
