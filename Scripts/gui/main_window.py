@@ -22,6 +22,7 @@ from core.log_reader import UnsupportedFirmwareError
 
 from .autotune_adapter import analyse_autotune_log
 from .docs_viewer import ModuleDocsWindow
+from .landing_adapter import analyse_landing_log
 from .stall_adapter import analyse_stall_log
 from .takeoff_adapter import analyse_takeoff_log
 
@@ -52,7 +53,7 @@ _MODULE_DESCRIPTIONS = {
     "Stall": "Review FBWA slow-flight and probable attitude-departure evidence.",
 }
 
-_CONNECTED_ANALYSES = frozenset(("AUTOTUNE", "TAKEOFF", "Stall"))
+_CONNECTED_ANALYSES = frozenset(("Landing", "AUTOTUNE", "TAKEOFF", "Stall"))
 
 
 class _AnalysisWorker(QObject):
@@ -87,6 +88,7 @@ class MainWindow(QMainWindow):
         autotune_adapter=analyse_autotune_log,
         takeoff_adapter=analyse_takeoff_log,
         stall_adapter=analyse_stall_log,
+        landing_adapter=analyse_landing_log,
     ):
         super().__init__()
         self._selected_log: Path | None = None
@@ -97,6 +99,7 @@ class MainWindow(QMainWindow):
         self._autotune_adapter = autotune_adapter
         self._takeoff_adapter = takeoff_adapter
         self._stall_adapter = stall_adapter
+        self._landing_adapter = landing_adapter
         self._analysis_thread: QThread | None = None
         self._analysis_worker: _AnalysisWorker | None = None
         self._active_analysis: str | None = None
@@ -104,6 +107,7 @@ class MainWindow(QMainWindow):
         self.autotune_analyse_button: QPushButton | None = None
         self.takeoff_analyse_button: QPushButton | None = None
         self.stall_analyse_button: QPushButton | None = None
+        self.landing_analyse_button: QPushButton | None = None
 
         self.setWindowTitle("ArduPlaneTools")
         self.setMinimumSize(900, 600)
@@ -239,6 +243,10 @@ class MainWindow(QMainWindow):
         """Start Stall through the shared background execution path."""
         self._start_analysis("Stall", self._stall_adapter)
 
+    def start_landing_analysis(self) -> None:
+        """Start Landing through the shared background execution path."""
+        self._start_analysis("Landing", self._landing_adapter)
+
     def _start_analysis(self, analysis: str, adapter) -> None:
         """Validate the shared source and run one analysis at a time."""
         if self._analysis_thread is not None:
@@ -337,10 +345,13 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(docs_button)
         self.docs_buttons[name] = docs_button
 
-        if name in ("TAKEOFF", "AUTOTUNE", "Stall"):
+        if name in _CONNECTED_ANALYSES:
             analyse_button = QPushButton("Analyse")
             analyse_button.setObjectName(f"{name.lower()}AnalyseButton")
-            if name == "AUTOTUNE":
+            if name == "Landing":
+                self.landing_analyse_button = analyse_button
+                analyse_button.clicked.connect(self.start_landing_analysis)
+            elif name == "AUTOTUNE":
                 self.autotune_analyse_button = analyse_button
                 analyse_button.clicked.connect(self.start_autotune_analysis)
             elif name == "TAKEOFF":
@@ -368,6 +379,12 @@ class MainWindow(QMainWindow):
             source_note = (
                 "This workflow uses EdgeTX CSV recordings; the shared BIN "
                 "selection does not apply."
+            )
+        elif name == "Landing":
+            return (
+                "Landing\n\n"
+                "Select a BIN log above, then choose Analyse.\n\n"
+                "Reports use the existing Landing evidence pipeline."
             )
         elif name == "AUTOTUNE":
             return (
@@ -410,6 +427,7 @@ class MainWindow(QMainWindow):
     def _update_analysis_controls(self) -> None:
         busy = self._analysis_thread is not None
         for analysis, button in (
+            ("Landing", self.landing_analyse_button),
             ("TAKEOFF", self.takeoff_analyse_button),
             ("AUTOTUNE", self.autotune_analyse_button),
             ("Stall", self.stall_analyse_button),
@@ -423,6 +441,7 @@ class MainWindow(QMainWindow):
 
     def _set_analysis_busy(self, busy: bool) -> None:
         for analysis, button in (
+            ("Landing", self.landing_analyse_button),
             ("TAKEOFF", self.takeoff_analyse_button),
             ("AUTOTUNE", self.autotune_analyse_button),
             ("Stall", self.stall_analyse_button),
@@ -485,7 +504,7 @@ class MainWindow(QMainWindow):
             return
         state = (
             "ready"
-            if self.current_analysis in ("TAKEOFF", "AUTOTUNE", "Stall")
+            if self.current_analysis in _CONNECTED_ANALYSES
             else "analysis not connected"
         )
         self.statusBar().showMessage(
