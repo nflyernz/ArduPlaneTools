@@ -95,7 +95,7 @@ Flight Analysis
 
 Some menu items are placeholders for future analyses.
 
-**12. Stall Analysis** examines FBWA slow-flight attempts in a single BIN log.
+**13. Stall Analysis** examines FBWA slow-flight attempts in a single BIN log.
 It reports demand-versus-response evidence and per-flight descriptive airspeed
 statistics, without claiming a confirmed aerodynamic stall. Read the
 [Stall Analysis guide](Docs/Stall_Analysis_Guide.md) and its safety warning

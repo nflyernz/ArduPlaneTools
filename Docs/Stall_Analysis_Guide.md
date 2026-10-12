@@ -1,7 +1,7 @@
 # Stall Analysis guide
 
 APT's initial Stall Analysis examines deliberate slow-flight tests recorded in
-ArduPlane DataFlash BIN logs. Select **12. Stall Analysis** in the Analyse menu
+ArduPlane DataFlash BIN logs. Select **13. Stall Analysis** in the Analyse menu
 and choose one BIN log. The current prototype analyses FBWA attempts only and
 reports logged evidence; it does not diagnose a confirmed aerodynamic stall.
 

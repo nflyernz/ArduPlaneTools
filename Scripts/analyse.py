@@ -43,7 +43,8 @@ def menu():
         print("9. Pack Performance Report")
         print("10. Takeoff Analysis")
         print("11. Radio Link Analysis")
-        print("12. Stall Analysis")
+        print("12. Radio Link Range-Walk Comparison")
+        print("13. Stall Analysis")
 
         print("0. Exit")
 
@@ -112,6 +113,12 @@ def menu():
             RadioLinkAnalysisPresentation().run()
 
         elif choice == "12":
+
+            from analyses.range_walk import RangeWalkComparisonPresentation
+
+            RangeWalkComparisonPresentation().run()
+
+        elif choice == "13":
 
             from analyses.stall import StallAnalysisPresentation
 

@@ -375,15 +375,21 @@ def test_menu_adds_stall_without_reordering_existing_actions(monkeypatch, capsys
         presentation.StallAnalysisPresentation,
         "run", lambda _self: called.append(True),
     )
-    choices = iter(("12", "0"))
+    choices = iter(("13", "0"))
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(choices))
     analyse.menu()
     output = capsys.readouterr().out
     assert called == [True]
     assert "10. Takeoff Analysis" in output
     assert "11. Radio Link Analysis" in output
-    assert "12. Stall Analysis" in output
-    assert output.index("10. Takeoff Analysis") < output.index("11. Radio Link Analysis") < output.index("12. Stall Analysis")
+    assert "12. Radio Link Range-Walk Comparison" in output
+    assert "13. Stall Analysis" in output
+    assert (
+        output.index("10. Takeoff Analysis")
+        < output.index("11. Radio Link Analysis")
+        < output.index("12. Radio Link Range-Walk Comparison")
+        < output.index("13. Stall Analysis")
+    )
 
 
 def test_presentation_uses_shared_selector_and_existing_core(monkeypatch, capsys):
