@@ -62,13 +62,10 @@ def menu():
             analysis = EventTimelineAnalysis()
             analysis.run()
 
-            input("\nPress Enter to return to the menu...")
-
         elif choice == "3":
             from analyses.battery import BatteryAnalysisPresentation
             analysis = BatteryAnalysisPresentation()
             analysis.run()
-            input("\nPress Enter to return to the menu...")
 
         elif choice == "4":
             cruise_analysis()

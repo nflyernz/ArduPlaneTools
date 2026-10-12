@@ -30,6 +30,10 @@ class EventTimelineAnalysis:
             print("Unsupported firmware.")
             print(exc)
             return
+        except OSError as exc:
+            print()
+            print(f"Unable to read log: {exc}")
+            return
 
         if not flight_log.flights:
             print()

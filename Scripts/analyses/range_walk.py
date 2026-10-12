@@ -17,6 +17,18 @@ from core.range_walk import (
 )
 
 
+class _RangeWalkCancelled(Exception):
+    """Signal deliberate cancellation separately from invalid walk input."""
+
+
+def _prompt(prompt: str) -> str:
+    """Read one setup value, treating Q as deliberate cancellation."""
+    value = input(prompt).strip()
+    if value.casefold() == "q":
+        raise _RangeWalkCancelled
+    return value
+
+
 def _value(value: float | None, unit: str = "") -> str:
     return f"{value:.1f}{unit}" if value is not None else "Unavailable"
 
@@ -300,10 +312,10 @@ def write_range_walk_graphs(walks: list[WalkEvidence],
 
 def _prompt_settings() -> WalkSettings:
     return WalkSettings(
-        input("Configured TX power (e.g. 50 mW; blank if unknown): ").strip(),
-        input("Configured packet rate (blank if unknown): ").strip(),
-        input("Configured RF mode/band (blank if unknown): ").strip(),
-        input("Dynamic TX power state (off/on; blank if unknown): ").strip(),
+        _prompt("Configured TX power (e.g. 50 mW; blank if unknown): "),
+        _prompt("Configured packet rate (blank if unknown): "),
+        _prompt("Configured RF mode/band (blank if unknown): "),
+        _prompt("Dynamic TX power state (off/on; blank if unknown): "),
     )
 
 
@@ -316,21 +328,21 @@ def _csv_fingerprint(path: Path) -> str:
 
 
 def _prompt_walk(number: int, landmarks: tuple[str, ...] | None) -> WalkEvidence:
-    path = Path(input(f"Walk {number} EdgeTX CSV path: ").strip()).expanduser()
+    path = Path(_prompt(f"Walk {number} EdgeTX CSV path: ")).expanduser()
     session = read_edgetx_csv(path)
-    label = input(f"Walk {number} label: ").strip() or path.stem
-    antenna = input("Receiver antenna configuration: ").strip()
+    label = _prompt(f"Walk {number} label: ") or path.stem
+    antenna = _prompt("Receiver antenna configuration: ")
     if number == 1 and not antenna:
         raise ValueError("Walk 1 requires an original-antenna description")
-    if number == 1 and input(
+    if number == 1 and _prompt(
             "Confirm Walk 1 used the original antenna installation [y/N]: "
-            ).strip().casefold() not in ("y", "yes"):
+            ).casefold() not in ("y", "yes"):
         raise ValueError("Walk 1 must be the confirmed original-antenna baseline")
     settings = _prompt_settings()
-    down = float(input("This model's calibrated full elevator-down Ele value: "))
-    neutral = float(input("This model's calibrated neutral Ele value: "))
-    threshold = input("Near-full-down Ele threshold from calibration "
-                      "(blank = 87.5% of calibrated span): ").strip()
+    down = float(_prompt("This model's calibrated full elevator-down Ele value: "))
+    neutral = float(_prompt("This model's calibrated neutral Ele value: "))
+    threshold = _prompt("Near-full-down Ele threshold from calibration "
+                        "(blank = 87.5% of calibrated span): ")
     calibration = MarkerCalibration(down, neutral,
                                     near_down=float(threshold) if threshold else None)
     candidates = detect_markers(session, calibration)
@@ -342,7 +354,7 @@ def _prompt_walk(number: int, landmarks: tuple[str, ...] | None) -> WalkEvidence
         print("Frozen Walk 1 landmark order: " + " → ".join(landmarks))
     print("Confirm five candidate numbers in landmark order; use 0 for a "
           "missing marker on Walk 2+. Extra candidates are excluded explicitly.")
-    raw = input("Landmarks 1–5 (e.g. 1,2,3,4,5): ").strip()
+    raw = _prompt("Landmarks 1–5 (e.g. 1,2,3,4,5): ")
     parts = [part.strip() for part in raw.split(",")]
     if len(parts) != 5:
         raise ValueError("Enter exactly five landmark mappings")
@@ -356,8 +368,9 @@ class RangeWalkComparisonPresentation:
 
     def run(self):
         print("\nRadio Link Range-Walk Comparison (CSV-only; aircraft disarmed)")
+        print("Enter Q at any setup prompt to cancel.")
         try:
-            count = int(input("Number of walks (2 or more): "))
+            count = int(_prompt("Number of walks (2 or more): "))
             if count < 2:
                 raise ValueError("At least two walks are required")
             walks = []
@@ -380,21 +393,23 @@ class RangeWalkComparisonPresentation:
                         print("Select a valid CSV and confirmed markers for this walk.")
                 if number == 1:
                     landmarks = tuple(
-                        input(f"Physical landmark {i} name/description: ").strip()
+                        _prompt(f"Physical landmark {i} name/description: ")
                         for i in range(1, 6))
                     if any(not name for name in landmarks):
                         raise ValueError("Five physical landmark descriptions are required")
-                    turnaround = input(
-                        "Safe turnaround at landmark 5 (physical note): ").strip()
+                    turnaround = _prompt(
+                        "Safe turnaround at landmark 5 (physical note): ")
                     if not turnaround:
                         raise ValueError(
                             "Walk 1 requires a safe turnaround description")
+            destination = _prompt("PNG output directory [RangeWalkReports]: ")
             print("\n" + format_range_walk_report(walks, landmarks, turnaround))
-            destination = input("PNG output directory [RangeWalkReports]: ").strip()
             output = Path(destination or "RangeWalkReports").expanduser()
             paths = write_range_walk_graphs(walks, landmarks, output)
             print("\nPNG graphs:")
             for path in paths:
                 print(f"  {path.resolve()}")
+        except _RangeWalkCancelled:
+            print("\nRange-Walk Comparison cancelled.")
         except (EOFError, OSError, ValueError, RuntimeError) as exc:
             print(f"Range-Walk Comparison unavailable: {exc}")
