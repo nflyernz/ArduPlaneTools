@@ -1,7 +1,7 @@
 # APT Radio Link — Range-Walk Comparison Output Specification
 
 **Version:** 1.0 — initial output contract for implementation, 2026-10-10
-**Depends on:** `Radio_Link_Range_Walk_Field_Test_Procedure.md` (field actions frozen separately)
+**Depends on:** `Radio_Link_Range_Walk_Comparison_Procedure.md` (field actions frozen separately)
 **Status:** Initial v1 output contract, prepared for focused implementation. Engineering provenance and safety restrictions remain mandatory; this specification does not alter the validated BIN Radio Link analysis.
 
 ## 1. User question
