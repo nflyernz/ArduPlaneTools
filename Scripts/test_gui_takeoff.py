@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QApplication
 
 import gui.takeoff_adapter as adapter_module
 from core.log_reader import UnsupportedFirmwareError
-from gui import ANALYSIS_TABS, MainWindow
+from gui import MainWindow
 
 
 @pytest.fixture(scope="module")
@@ -161,7 +161,7 @@ def test_takeoff_runs_selected_path_once_and_blocks_other_analysis(
 
     window.start_takeoff_analysis()
     window.start_autotune_analysis()
-    window.analysis_tabs.setCurrentIndex(ANALYSIS_TABS.index("AUTOTUNE"))
+    window.show_analysis_tab("AUTOTUNE")
     qt_app.processEvents()
     assert window.current_analysis == "AUTOTUNE"
     assert "TAKEOFF analysis running" in window.statusBar().currentMessage()

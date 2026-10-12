@@ -18,7 +18,7 @@ from analyses.stall import analyse_stall_flight_log
 import gui.stall_adapter as adapter_module
 from core.config import Config
 from core.log_reader import UnsupportedFirmwareError
-from gui import ANALYSIS_TABS, MainWindow
+from gui import MainWindow
 
 
 @pytest.fixture(scope="module")
@@ -166,7 +166,7 @@ def test_stall_runs_responsively_and_excludes_other_analyses(
     window.start_stall_analysis()
     window.start_autotune_analysis()
     window.start_takeoff_analysis()
-    window.analysis_tabs.setCurrentIndex(ANALYSIS_TABS.index("TAKEOFF"))
+    window.show_analysis_tab("TAKEOFF")
     qt_app.processEvents()
     assert window.current_analysis == "TAKEOFF"
     assert "Stall analysis running" in window.statusBar().currentMessage()
