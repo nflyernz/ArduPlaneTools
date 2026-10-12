@@ -4,7 +4,9 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import (
+    QCommandLinkButton,
     QFileDialog,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -35,6 +37,21 @@ ANALYSIS_TABS = (
     "Range-Walk Comparison",
     "Stall",
 )
+
+_MODULE_DESCRIPTIONS = {
+    "Landing": "Review approach, preflare, flare, and landing evidence.",
+    "Events": "Inspect recorded flight events.",
+    "Battery": "Analyse battery consumption and electrical performance.",
+    "Battery Pack Management": "Manage battery pack identities and history.",
+    "Pack Performance": "Examine pack behaviour across logs.",
+    "TAKEOFF": "Review takeoff triggers, execution, and outcomes.",
+    "AUTOTUNE": "Examine recorded tuning sessions.",
+    "Radio Link": "Inspect radio-link quality and failsafe evidence.",
+    "Range-Walk Comparison": "Compare repeatable radio range-walk recordings.",
+    "Stall": "Review FBWA slow-flight and probable attitude-departure evidence.",
+}
+
+_CONNECTED_ANALYSES = frozenset(("AUTOTUNE", "TAKEOFF", "Stall"))
 
 
 class _AnalysisWorker(QObject):
@@ -73,6 +90,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._selected_log: Path | None = None
         self._reports: dict[str, QPlainTextEdit] = {}
+        self.overview_buttons: dict[str, QCommandLinkButton] = {}
         self._autotune_adapter = autotune_adapter
         self._takeoff_adapter = takeoff_adapter
         self._stall_adapter = stall_adapter
@@ -114,6 +132,7 @@ class MainWindow(QMainWindow):
         self.analysis_tabs.setUsesScrollButtons(True)
         self.analysis_tabs.setDocumentMode(True)
         self.analysis_tabs.tabBar().setExpanding(False)
+        self.analysis_tabs.addTab(self._create_overview_page(), "Overview")
         for name in ANALYSIS_TABS:
             self.analysis_tabs.addTab(self._create_analysis_page(name), name)
         self.analysis_tabs.currentChanged.connect(self._on_tab_changed)
@@ -151,6 +170,10 @@ class MainWindow(QMainWindow):
     def report_for(self, analysis: str) -> QPlainTextEdit:
         """Return the read-only report surface for an analysis tab."""
         return self._reports[analysis]
+
+    def show_analysis_tab(self, analysis: str) -> None:
+        """Navigate from Overview to an existing analysis tab."""
+        self.analysis_tabs.setCurrentIndex(ANALYSIS_TABS.index(analysis) + 1)
 
     def choose_log(self) -> None:
         """Select one BIN with a native dialog while preserving state on cancel."""
@@ -229,6 +252,48 @@ class MainWindow(QMainWindow):
         )
         self.statusBar().showMessage(f"{analysis} analysis running — {path}")
         thread.start()
+
+    def _create_overview_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(12, 12, 12, 10)
+        layout.setSpacing(6)
+
+        title = QLabel("ArduPlaneTools")
+        title_font = title.font()
+        title_font.setPointSize(title_font.pointSize() + 5)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        layout.addWidget(title)
+
+        subtitle = QLabel("Evidence-based ArduPlane flight-log analysis")
+        layout.addWidget(subtitle)
+
+        modules = QGridLayout()
+        modules.setHorizontalSpacing(10)
+        modules.setVerticalSpacing(6)
+        for index, name in enumerate(ANALYSIS_TABS):
+            connection = (
+                "Connected to the GUI"
+                if name in _CONNECTED_ANALYSES
+                else "Not yet connected to the GUI"
+            )
+            button = QCommandLinkButton(
+                name,
+                f"{_MODULE_DESCRIPTIONS[name]}\n{connection}",
+            )
+            button.setObjectName(
+                f"overview_{name.lower().replace(' ', '_').replace('-', '_')}"
+            )
+            button.setMinimumHeight(72)
+            button.clicked.connect(
+                lambda _checked=False, analysis=name: self.show_analysis_tab(analysis)
+            )
+            modules.addWidget(button, index // 2, index % 2)
+            self.overview_buttons[name] = button
+        layout.addLayout(modules)
+        layout.addStretch(1)
+        return page
 
     def _create_analysis_page(self, name: str) -> QWidget:
         page = QWidget()
@@ -381,6 +446,11 @@ class MainWindow(QMainWindow):
             )
             return
         prefix = f"{action} — " if action else ""
+        if self.current_analysis == "Overview":
+            self.statusBar().showMessage(
+                f"{prefix}Overview — {source} — choose a module"
+            )
+            return
         state = (
             "ready"
             if self.current_analysis in ("TAKEOFF", "AUTOTUNE", "Stall")
