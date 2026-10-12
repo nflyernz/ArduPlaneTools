@@ -1,7 +1,7 @@
-# ArduPilotTools
+# ArduPlaneTools
 
-ArduPilotTools is a Python toolkit for evidence-based analysis of ArduPilot
-fixed-wing flight logs.
+ArduPlaneTools (APT) is a Python toolkit for evidence-based analysis of
+ArduPlane fixed-wing flight logs and related transmitter evidence.
 
 It reads ArduPlane DataFlash BIN logs and EdgeTX CSV recordings, then presents
 analysis-specific measured and logged evidence without replacing operational
@@ -491,7 +491,7 @@ or sharing them.
 
 ## Project Scope
 
-ArduPilotTools is an independent analysis project.
+ArduPlaneTools is an independent analysis project.
 
 It is intended to help inspect and understand evidence recorded by ArduPilot
 flight logs. It does not replace ArduPilot's own documentation, ground-control

@@ -1,4 +1,4 @@
-"""Qt Widgets desktop interface for ArduPilotTools."""
+"""Qt Widgets desktop interface for ArduPlaneTools."""
 
 from .main_window import ANALYSIS_TABS, MainWindow
 
