@@ -80,6 +80,19 @@ venv/bin/python Scripts/analyse.py
 If the virtual environment is already active, `python Scripts/analyse.py` is
 equivalent.
 
+### Desktop shell (Phase 1)
+
+The optional PySide6 desktop shell can be installed and launched separately:
+
+```bash
+venv/bin/python -m pip install -r requirements-gui.txt
+venv/bin/python Scripts/gui_app.py
+```
+
+The Phase 1 shell provides native file selection, analysis tabs and report
+surfaces. Analysis execution is not connected yet; the existing CLI remains
+the operational analysis interface.
+
 The main menu currently presents:
 
 ```text
