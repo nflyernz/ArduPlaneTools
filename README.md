@@ -3,23 +3,22 @@
 ArduPilotTools is a Python toolkit for evidence-based analysis of ArduPilot
 fixed-wing flight logs.
 
-The project is currently focused on ArduPlane landing analysis. It reads
-DataFlash BIN logs, identifies individual flights and AUTO landing attempts,
-and reports measured and logged evidence associated with each attempt.
+It reads ArduPlane DataFlash BIN logs and EdgeTX CSV recordings, then presents
+analysis-specific measured and logged evidence without replacing operational
+judgement.
 
-The longer-term goal is a modular flight-analysis framework that can support
-additional analyses such as cruise performance, TECS behaviour, power systems,
-RTL and autotune.
+The longer-term goal is to extend the modular flight-analysis framework into
+areas such as cruise performance, TECS behaviour and RTL while retaining the
+same evidence standards.
 
 ## Current Status
 
 The project is under active development.
 
-The current primary user-facing analysis is **Landing Analysis**.
-
-The framework also contains an Event Timeline, Battery Analysis, sensor
-processors and development/regression tools used to validate the underlying
-analysis architecture.
+Implemented user-facing workflows include Landing, Event Timeline, Battery,
+AUTOTUNE, TAKEOFF, Radio Link, Radio Link Range-Walk Comparison and Stall
+Analysis, plus Battery Pack Management and Pack Performance reporting. Cruise
+Analysis, Sensor Diagnostics and Log Summary remain placeholders.
 
 Landing Analysis has been regression-tested against a set of development
 ArduPlane 4.7 flight logs containing successful landings, aborted approaches,
@@ -75,8 +74,11 @@ pip install -r requirements.txt
 From the repository root:
 
 ```bash
-python Scripts/analyse.py
+venv/bin/python Scripts/analyse.py
 ```
+
+If the virtual environment is already active, `python Scripts/analyse.py` is
+equivalent.
 
 The main menu currently presents:
 
@@ -86,14 +88,44 @@ Flight Analysis
 1. Landing Analysis
 2. Event Timeline
 3. Battery Analysis
-4. Cruise Analysis
+4. Cruise Analysis (not implemented)
 5. Autotune Review
-6. Sensor Diagnostics
-7. Log Summary
+6. Sensor Diagnostics (not implemented)
+7. Log Summary (not implemented)
+8. Battery Pack Management
+9. Pack Performance Report
+10. Takeoff Analysis
+11. Radio Link Analysis
+12. Radio Link Range-Walk Comparison
+13. Stall Analysis
 0. Exit
 ```
 
-Some menu items are placeholders for future analyses.
+Most BIN-based analyses use the shared log selector. It lists BIN files in the
+current directory and supports numbered single-log selection, browsing to
+another directory, manual file paths (including `~`) and cancellation. The
+selected directory is remembered for later analyses in the same session.
+Landing Analysis additionally offers whole-directory analysis; other analyses
+retain their single-log or analysis-specific input rules.
+
+The implemented workflows provide:
+
+- **Landing Analysis:** individual flights and bounded AUTO landing attempts.
+- **Event Timeline:** chronological flight events from a selected BIN.
+- **Battery Analysis:** flight-scoped battery evidence and optional physical
+  Pack ID association.
+- **Autotune Review:** authoritative AUTOTUNE sessions, axes, persistence and
+  evidence warnings.
+- **Takeoff Analysis:** ArduPlane TAKEOFF-mode trigger, control-stage and
+  performance evidence.
+- **Radio Link Analysis:** BIN-authoritative RC failsafe episodes and aircraft
+  response, with optional EdgeTX evidence where correlation supports it.
+- **Radio Link Range-Walk Comparison:** landmark-aligned EdgeTX CSV comparison
+  using Walk 1 as the fixed baseline.
+- **Stall Analysis:** FBWA slow-flight attempt evidence and descriptive
+  characterization with explicit safety qualifications.
+- **Battery Pack Management and Pack Performance:** durable Pack ID ownership
+  and stored AUTO-takeoff battery observations.
 
 **13. Stall Analysis** examines FBWA slow-flight attempts in a single BIN log.
 It reports demand-versus-response evidence and per-flight descriptive airspeed
@@ -109,18 +141,18 @@ Select:
 1. Landing Analysis
 ```
 
-Landing Analysis accepts either:
+Landing Analysis uses the shared selector and accepts either:
 
 - a single ArduPilot `.bin` / `.BIN` flight log; or
 - a directory containing multiple `.bin` / `.BIN` flight logs.
 
-For a single log:
+For a manually entered single log:
 
 ```text
 Log file or directory: Logs/log_19.bin
 ```
 
-For an entire directory:
+For whole-directory mode:
 
 ```text
 Log file or directory: Logs/
@@ -272,14 +304,13 @@ during the transition into the sensor's usable range.
 The framework supports companion parameter files for parameter-dependent
 analysis.
 
-The current parameter model is log-wide. A companion parameter file represents
-the parameter snapshot associated with that log.
+The framework reconstructs timestamped parameter history from in-log `PARM`
+records and can query the value applicable at a specific event time. Analyses
+consume that history only where their evidence contract requires it. Companion
+parameter files may still provide a parameter snapshot associated with a log.
 
 Parameter files used during development are not included in the public
 repository.
-
-A future version may reconstruct parameter state from in-log parameter changes
-where per-flight parameter history is required.
 
 ## Architecture
 
@@ -411,7 +442,8 @@ records.
 
 ## Current Development Direction
 
-Landing Analysis is the first substantial analysis built on the framework.
+Landing Analysis established the framework now shared by the implemented
+analyses listed above.
 
 Current and future work is tracked in:
 
@@ -427,8 +459,6 @@ Potential future areas include:
 - TECS behaviour
 - cruise performance
 - RTL
-- power-system analysis
-- autotune review
 - richer reporting
 - graphical presentation
 

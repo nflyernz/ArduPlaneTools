@@ -73,9 +73,11 @@ def _execution(
     )
 
 
-def _run_with_executions(monkeypatch, executions):
+def _run_with_executions(monkeypatch, executions, *, firmware=None):
     """Run presentation with a normally loaded synthetic FlightLog."""
     flight_log = FlightLog()
+    if firmware is not None:
+        flight_log.firmware_version = lambda: {"version": firmware}
 
     class _Reader:
         def __init__(self, _path, config=None):
@@ -165,10 +167,27 @@ def test_takeoff_presentation_shared_selector_cancellation_stops_read(monkeypatc
 
 
 def test_takeoff_presentation_handles_no_detected_executions(monkeypatch, capsys):
-    """An empty detector result produces a concise operator message."""
+    """An empty result still identifies its source and missing firmware evidence."""
     _run_with_executions(monkeypatch, ())
 
-    assert "No TAKEOFF-mode executions found." in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Log: Logs/synthetic.bin" in output
+    assert "Firmware: Evidence unavailable" in output
+    assert "No TAKEOFF-mode executions found." in output
+
+
+def test_takeoff_presentation_labels_available_firmware(monkeypatch, capsys):
+    """Available VER evidence is labelled without changing detector results."""
+    _run_with_executions(
+        monkeypatch,
+        (),
+        firmware="ArduPlane V4.7.1 (dbe79216)",
+    )
+
+    output = capsys.readouterr().out
+    assert "Log: Logs/synthetic.bin" in output
+    assert "Firmware: ArduPlane V4.7.1 (dbe79216)" in output
+    assert "No TAKEOFF-mode executions found." in output
 
 
 def test_takeoff_presentation_handles_mode13_without_trigger(monkeypatch, capsys):

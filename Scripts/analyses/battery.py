@@ -237,19 +237,6 @@ class BatteryPackManagementPresentation:
 class BatteryPackPerformancePresentation:
     """Present durable AUTO takeoff evidence for one physical battery pack."""
 
-    HEADINGS = (
-        "Date",
-        "Source",
-        "Flight",
-        "Capacity used",
-        "Avg curr (A)",
-        "Peak curr (A)",
-        "Pre-load volt (V)",
-        "Min loaded volt (V)",
-        "Sag (V)",
-        "Recovery (V)",
-    )
-
     def __init__(self, pack_store=None, history_store=None):
         self.pack_store = pack_store
         self.history_store = history_store
@@ -343,15 +330,35 @@ class BatteryPackPerformancePresentation:
 
     @classmethod
     def _print_table(cls, observations):
-        rows = [cls._row(observation) for observation in observations]
-        widths = [
-            max(len(heading), *(len(row[index]) for row in rows))
-            for index, heading in enumerate(cls.HEADINGS)
-        ]
-        print(cls._table_line(cls.HEADINGS, widths))
-        print(cls._table_line(tuple("-" * width for width in widths), widths))
-        for row in rows:
-            print(cls._table_line(row, widths))
+        for index, observation in enumerate(observations, start=1):
+            (
+                date,
+                source,
+                flight,
+                capacity,
+                average_current,
+                peak_current,
+                pre_load_voltage,
+                minimum_loaded_voltage,
+                voltage_sag,
+                voltage_recovery,
+            ) = cls._row(observation)
+            print()
+            print(f"{index}. Date: {date} | Flight: {flight}")
+            print(f"   Source: {source}")
+            print(f"   Capacity used (mAh): {capacity}")
+            print(
+                f"   Current (A): average {average_current} | peak {peak_current}"
+            )
+            print(
+                "   Voltage (V): "
+                f"pre-load {pre_load_voltage} | "
+                f"minimum loaded {minimum_loaded_voltage}"
+            )
+            print(
+                f"   Voltage response (V): sag {voltage_sag} | "
+                f"recovery {voltage_recovery}"
+            )
 
     @staticmethod
     def _row(observation):
@@ -371,12 +378,6 @@ class BatteryPackPerformancePresentation:
             _format_value(observation.minimum_loaded_voltage_v),
             _format_value(observation.voltage_sag_v),
             _format_value(observation.voltage_recovery_v),
-        )
-
-    @staticmethod
-    def _table_line(values, widths):
-        return " | ".join(
-            value.ljust(width) for value, width in zip(values, widths, strict=True)
         )
 
 

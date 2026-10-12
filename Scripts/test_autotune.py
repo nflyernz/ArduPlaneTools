@@ -58,6 +58,10 @@ def mode(time, number):
     return "MODE", {"TimeUS": time, "ModeNum": number}
 
 
+def ver(time, text="ArduPlane V4.7.0"):
+    return "VER", {"TimeUS": time, "Maj": 4, "Min": 7, "Pat": 0, "FWS": text}
+
+
 def command(time, kind="MAVC"):
     return kind, {"TimeUS": time, "Cmd": 212 if kind == "MAVC" else None, "CId": 212}
 
@@ -953,6 +957,7 @@ def test_presentation_uses_single_log_shared_selector(monkeypatch, capsys):
     selected = Path("Logs/synthetic.bin")
     received = []
     log = _log(
+        ver(90),
         msg(100, "Started autotune"),
         msg(110, "Autotuning roll pitch yaw"),
         atrp(120),
@@ -974,7 +979,20 @@ def test_presentation_uses_single_log_shared_selector(monkeypatch, capsys):
     presentation.AutotuneAnalysisPresentation().run()
     output = capsys.readouterr().out
     assert received[0][0] == selected
+    assert "Log: Logs/synthetic.bin" in output
+    assert "Firmware: ArduPlane V4.7.0" in output
     assert "Flight association: Flight 1" in output
     assert "selected; YAW_RATE_ENABLE=0" in output
     assert "Mode observed at start:" not in output
     assert output.count("Completion milestone observed") == 2
+
+
+def test_report_labels_missing_firmware_evidence():
+    """Synthetic logs without VER retain an explicit unavailable distinction."""
+    report = presentation.format_autotune_report(
+        detect(),
+        Path("Logs/no-ver.bin"),
+    )
+
+    assert "Log: Logs/no-ver.bin" in report
+    assert "Firmware: Evidence unavailable" in report

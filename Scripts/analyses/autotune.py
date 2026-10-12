@@ -37,12 +37,13 @@ def _flight_association(relations):
     return "Flights " + ", ".join(str(relation.flight_number) for relation in relations)
 
 
-def format_autotune_report(result):
+def format_autotune_report(result, log_path=None):
     """Format evidence without re-reading or interpreting raw log records."""
     lines = [
         "AUTOTUNE Review",
         "===============",
-        result.firmware or "Firmware evidence unavailable",
+        f"Log: {log_path if log_path is not None else 'Unavailable'}",
+        f"Firmware: {result.firmware or 'Evidence unavailable'}",
         f"Sessions: {len(result.sessions)}",
     ]
     for session in result.sessions:
@@ -170,4 +171,4 @@ class AutotuneAnalysisPresentation:
             print(f"\nUnable to read log: {exc}")
             return
         result = AutotuneDetector().detect(flight_log)
-        print("\n" + format_autotune_report(result))
+        print("\n" + format_autotune_report(result, selection[0]))
