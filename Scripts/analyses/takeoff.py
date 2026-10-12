@@ -36,6 +36,16 @@ class TakeoffAnalysisPresentation:
             print(f"Unable to read log: {exc}")
             return
 
+        firmware = flight_log.firmware_version()
+        print()
+        print("TAKEOFF Analysis")
+        print("================")
+        print(f"Log: {log_path}")
+        print(
+            "Firmware: "
+            + ((firmware or {}).get("version") or "Evidence unavailable")
+        )
+
         executions = TakeoffExecutionDetector().detect(flight_log)
         takeoff_executions = tuple(
             execution
