@@ -78,6 +78,10 @@ def test_every_overview_entry_describes_and_opens_its_module(qt_app, window):
     for name in ANALYSIS_TABS:
         button = window.overview_buttons[name]
         assert button.text() == name
+        assert button.font().pointSizeF() == pytest.approx(
+            window.font().pointSizeF() + 2.0
+        )
+        assert button.minimumHeight() >= 84
         assert expected_descriptions[name] in button.description()
         expected_connection = (
             "Connected to the GUI"

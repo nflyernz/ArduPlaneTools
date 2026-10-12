@@ -61,7 +61,11 @@ class ModuleDocsWindow(QWidget):
         browser = QTextBrowser()
         browser.setObjectName(f"{label.lower()}Browser")
         browser.setOpenExternalLinks(False)
+        document = browser.document()
+        document.setBaseUrl(path.parent.as_uri() + "/")
+        body_font = browser.font()
+        body_font.setPointSizeF(body_font.pointSizeF() + 2.0)
+        document.setDefaultFont(body_font)
         browser.setMarkdown(_read_markdown(path))
-        browser.document().setBaseUrl(path.parent.as_uri() + "/")
         self.tabs.addTab(browser, label)
         return browser
