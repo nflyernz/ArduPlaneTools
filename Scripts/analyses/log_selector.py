@@ -45,7 +45,7 @@ def select_log_input(*, allow_directory: bool = False) -> list[Path] | None:
             if not entry:
                 print("Invalid directory.")
                 continue
-            directory = Path(entry)
+            directory = Path(entry).expanduser()
             if not directory.is_dir():
                 print("Invalid directory.")
                 continue
@@ -106,7 +106,7 @@ def _manual_path(allow_directory: bool) -> list[Path] | None:
     if not entry:
         print("No path entered.")
         return None
-    path = Path(entry)
+    path = Path(entry).expanduser()
     if path.is_file():
         if path.suffix.lower() != ".bin":
             print("Log file must have a .bin extension.")
