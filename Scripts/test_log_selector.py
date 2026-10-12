@@ -336,3 +336,17 @@ def test_placeholder_functions_remain_unimplemented(capsys):
     analyse.log_summary()
 
     assert capsys.readouterr().out.count("Not implemented.") == 3
+
+
+def test_menu_labels_and_dispatches_placeholder_entries(monkeypatch, capsys):
+    """Placeholder status is visible without changing options 4, 6, or 7."""
+    choices = iter(("4", "6", "7", "0"))
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(choices))
+
+    analyse.menu()
+
+    output = capsys.readouterr().out
+    assert "4. Cruise Analysis (not implemented)" in output
+    assert "6. Sensor Diagnostics (not implemented)" in output
+    assert "7. Log Summary (not implemented)" in output
+    assert output.count("Not implemented.") == 3

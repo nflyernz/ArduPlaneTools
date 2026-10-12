@@ -21,18 +21,6 @@ from test_battery_pack_history import _observation
 
 SUMMARY_HEADING = "FIRST TAKEOFF BY BATTERY SESSION"
 ALL_HEADING = "ALL AUTO TAKEOFFS"
-TABLE_HEADINGS = (
-    "Date",
-    "Source",
-    "Flight",
-    "Capacity used",
-    "Avg curr (A)",
-    "Peak curr (A)",
-    "Pre-load volt (V)",
-    "Min loaded volt (V)",
-    "Sag (V)",
-    "Recovery (V)",
-)
 
 
 def _inputs(monkeypatch, *responses):
@@ -51,14 +39,37 @@ def _section_rows(output, heading):
     section = output.split(heading, maxsplit=1)[1]
     if heading == SUMMARY_HEADING:
         section = section.split(ALL_HEADING, maxsplit=1)[0]
-    table_lines = [line for line in section.splitlines() if " | " in line]
-    assert tuple(part.strip() for part in table_lines[0].split(" | ")) == (
-        TABLE_HEADINGS
-    )
-    return [
-        tuple(part.strip() for part in line.split(" | "))
-        for line in table_lines[2:]
-    ]
+    rows = []
+    row = None
+    for line in section.splitlines():
+        text = line.strip()
+        if ". Date: " in text and " | Flight: " in text:
+            _number, details = text.split(". Date: ", maxsplit=1)
+            date, flight = details.split(" | Flight: ", maxsplit=1)
+            row = [date, None, flight]
+        elif row is not None and text.startswith("Source: "):
+            row[1] = text.removeprefix("Source: ")
+        elif row is not None and text.startswith("Capacity used (mAh): "):
+            row.append(text.removeprefix("Capacity used (mAh): "))
+        elif row is not None and text.startswith("Current (A): "):
+            average, peak = text.removeprefix("Current (A): ").split(
+                " | peak ", maxsplit=1
+            )
+            row.extend((average.removeprefix("average "), peak))
+        elif row is not None and text.startswith("Voltage (V): "):
+            pre_load, minimum = text.removeprefix("Voltage (V): ").split(
+                " | minimum loaded ", maxsplit=1
+            )
+            row.extend((pre_load.removeprefix("pre-load "), minimum))
+        elif row is not None and text.startswith("Voltage response (V): "):
+            sag, recovery = text.removeprefix("Voltage response (V): ").split(
+                " | recovery ", maxsplit=1
+            )
+            row.extend((sag.removeprefix("sag "), recovery))
+            rows.append(tuple(row))
+            row = None
+    assert all(len(row) == 10 and row[1] is not None for row in rows)
+    return rows
 
 
 def _event(
@@ -300,11 +311,14 @@ def test_report_uses_current_ownership_and_survives_without_bins(
     pack_store.create_and_associate(selected, "Pack A")
     pack_store.create_and_associate(other, "Pack B")
     pack_store.mark_not_tracked(not_tracked)
+    full_source_name = (
+        "Piper-Cub-2026-10-12-very-long-session-name-with-full-provenance.bin"
+    )
     history.add_observations(
         [
             _observation(
                 source_sha256=selected,
-                source_filename="deleted-selected.bin",
+                source_filename=full_source_name,
                 pack_id="Old ingest name",
             ),
             _observation(
@@ -328,7 +342,7 @@ def test_report_uses_current_ownership_and_survives_without_bins(
     BatteryPackPerformancePresentation(pack_store, history).run()
     output = capsys.readouterr().out
 
-    assert "deleted-selected.bin" in output
+    assert f"Source: {full_source_name}" in output
     assert "other.bin" not in output
     assert "not-tracked.bin" not in output
     assert "unseen.bin" not in output
@@ -446,7 +460,6 @@ def test_report_headings_ordering_and_unavailable_rendering(
 
     assert output.count(SUMMARY_HEADING) == 1
     assert output.count(ALL_HEADING) == 1
-    assert output.count("Date") == 2
     summary_rows = _section_rows(output, SUMMARY_HEADING)
     full_rows = _section_rows(output, ALL_HEADING)
     assert len(summary_rows) == 4
