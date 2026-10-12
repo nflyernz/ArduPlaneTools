@@ -11,6 +11,67 @@ from core.takeoff_performance import (
 )
 
 
+def analyse_takeoff_flight_log(flight_log, log_path) -> str:
+    """Return the existing TAKEOFF report for one loaded flight log."""
+    firmware = flight_log.firmware_version()
+    lines = [
+        "TAKEOFF Analysis",
+        "================",
+        f"Log: {log_path}",
+        "Firmware: " + ((firmware or {}).get("version") or "Evidence unavailable"),
+    ]
+
+    executions = TakeoffExecutionDetector().detect(flight_log)
+    takeoff_executions = tuple(
+        execution
+        for execution in executions
+        if execution.entry_context is TakeoffEntryContext.TAKEOFF_MODE
+    )
+    if not takeoff_executions:
+        return "\n".join((*lines, "", "No TAKEOFF-mode executions found."))
+
+    analyses = tuple(
+        analysis
+        for execution in takeoff_executions
+        if (
+            analysis := TakeoffPerformanceProcessor(
+                flight_log,
+                execution,
+            ).analyse()
+        )
+        is not None
+    )
+    already_airborne_executions = tuple(
+        execution
+        for execution in takeoff_executions
+        if execution.already_airborne_entry is not None
+        and execution.launch_trigger is None
+    )
+    if not analyses and not already_airborne_executions:
+        count = len(takeoff_executions)
+        noun = "execution" if count == 1 else "executions"
+        return "\n".join(
+            (
+                *lines,
+                "",
+                f"{count} TAKEOFF-mode {noun} detected; "
+                "none contained a firmware launch trigger.",
+            )
+        )
+
+    return "\n".join(
+        (
+            *lines,
+            "",
+            format_takeoff_performance_reports(
+                analyses,
+                detected_execution_count=len(takeoff_executions),
+                already_airborne_executions=already_airborne_executions,
+            ),
+        )
+    )
+
+
 class TakeoffAnalysisPresentation:
     """Load one log and present triggered TAKEOFF-mode execution evidence."""
 
@@ -36,59 +97,4 @@ class TakeoffAnalysisPresentation:
             print(f"Unable to read log: {exc}")
             return
 
-        firmware = flight_log.firmware_version()
-        print()
-        print("TAKEOFF Analysis")
-        print("================")
-        print(f"Log: {log_path}")
-        print(
-            "Firmware: "
-            + ((firmware or {}).get("version") or "Evidence unavailable")
-        )
-
-        executions = TakeoffExecutionDetector().detect(flight_log)
-        takeoff_executions = tuple(
-            execution
-            for execution in executions
-            if execution.entry_context is TakeoffEntryContext.TAKEOFF_MODE
-        )
-        if not takeoff_executions:
-            print()
-            print("No TAKEOFF-mode executions found.")
-            return
-
-        analyses = tuple(
-            analysis
-            for execution in takeoff_executions
-            if (
-                analysis := TakeoffPerformanceProcessor(
-                    flight_log,
-                    execution,
-                ).analyse()
-            )
-            is not None
-        )
-        already_airborne_executions = tuple(
-            execution
-            for execution in takeoff_executions
-            if execution.already_airborne_entry is not None
-            and execution.launch_trigger is None
-        )
-        if not analyses and not already_airborne_executions:
-            count = len(takeoff_executions)
-            noun = "execution" if count == 1 else "executions"
-            print()
-            print(
-                f"{count} TAKEOFF-mode {noun} detected; "
-                "none contained a firmware launch trigger."
-            )
-            return
-
-        print()
-        print(
-            format_takeoff_performance_reports(
-                analyses,
-                detected_execution_count=len(takeoff_executions),
-                already_airborne_executions=already_airborne_executions,
-            )
-        )
+        print("\n" + analyse_takeoff_flight_log(flight_log, log_path))

@@ -223,10 +223,10 @@ def test_shell_interactions_do_not_import_or_execute_analyses(
     )
 
     window.choose_log_button.click()
-    window.analysis_tabs.setCurrentIndex(ANALYSIS_TABS.index("TAKEOFF"))
+    window.analysis_tabs.setCurrentIndex(ANALYSIS_TABS.index("Landing"))
     qt_app.processEvents()
 
     assert imported_analysis_modules == []
     assert "Analysis execution is not connected" in window.report_for(
-        "TAKEOFF"
+        "Landing"
     ).toPlainText()
