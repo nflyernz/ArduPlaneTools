@@ -86,9 +86,9 @@ def _run_with_executions(monkeypatch, executions):
 
     monkeypatch.setattr(takeoff_module, "FlightReader", _Reader)
     monkeypatch.setattr(
-        takeoff_module.TakeoffAnalysisPresentation,
-        "_select_log",
-        staticmethod(lambda: Path("Logs/synthetic.bin")),
+        takeoff_module,
+        "select_log_input",
+        lambda: [Path("Logs/synthetic.bin")],
     )
     monkeypatch.setattr(
         takeoff_module.TakeoffExecutionDetector,
@@ -115,6 +115,53 @@ def test_menu_lists_and_dispatches_takeoff_analysis(monkeypatch, capsys):
     assert "10. Takeoff Analysis" in output
     assert calls == ["run"]
     assert output.count("Flight Analysis") == 2
+
+
+def test_takeoff_presentation_uses_shared_selector_and_selected_log(monkeypatch):
+    """The shared single-log selection is passed unchanged to FlightReader."""
+    selected_path = Path("chosen/takeoff.BIN")
+    config = object()
+    selector_calls = []
+    reader_calls = []
+
+    def select_log():
+        selector_calls.append(True)
+        return [selected_path]
+
+    class _Reader:
+        def __init__(self, path, config=None):
+            reader_calls.append((path, config))
+
+        def read(self):
+            return FlightLog()
+
+    monkeypatch.setattr(takeoff_module, "select_log_input", select_log)
+    monkeypatch.setattr(takeoff_module, "FlightReader", _Reader)
+    monkeypatch.setattr(
+        takeoff_module.TakeoffExecutionDetector,
+        "detect",
+        lambda _self, _flight_log: (),
+    )
+
+    TakeoffAnalysisPresentation(config=config).run()
+
+    assert selector_calls == [True]
+    assert reader_calls == [(selected_path, config)]
+
+
+def test_takeoff_presentation_shared_selector_cancellation_stops_read(monkeypatch):
+    """Cancelling the shared selector exits before opening a log."""
+    reader_calls = []
+    monkeypatch.setattr(takeoff_module, "select_log_input", lambda: None)
+    monkeypatch.setattr(
+        takeoff_module,
+        "FlightReader",
+        lambda *args, **kwargs: reader_calls.append((args, kwargs)),
+    )
+
+    TakeoffAnalysisPresentation(config=object()).run()
+
+    assert reader_calls == []
 
 
 def test_takeoff_presentation_handles_no_detected_executions(monkeypatch, capsys):
