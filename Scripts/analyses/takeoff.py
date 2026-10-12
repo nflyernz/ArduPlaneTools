@@ -1,7 +1,6 @@
 """User-facing workflow for Plane TAKEOFF-mode performance analysis."""
 
-from pathlib import Path
-
+from analyses.log_selector import select_log_input
 from core.config import Config
 from core.log_reader import FlightReader, UnsupportedFirmwareError
 from core.takeoff_execution import TakeoffEntryContext
@@ -20,9 +19,10 @@ class TakeoffAnalysisPresentation:
 
     def run(self):
         """Select, analyse, and present one DataFlash log."""
-        log_path = self._select_log()
-        if log_path is None:
+        selected_logs = select_log_input()
+        if selected_logs is None:
             return
+        log_path = selected_logs[0]
 
         try:
             flight_log = FlightReader(log_path, config=self.config).read()
@@ -82,31 +82,3 @@ class TakeoffAnalysisPresentation:
                 already_airborne_executions=already_airborne_executions,
             )
         )
-
-    @staticmethod
-    def _select_log():
-        """Select one BIN log using the established interactive list pattern."""
-        log_paths = sorted(Path("Logs").glob("*.bin"))
-        if not log_paths:
-            print()
-            print("No BIN logs found in Logs/")
-            return None
-
-        print()
-        print("Available Logs")
-        print("=" * 16)
-        for index, log_path in enumerate(log_paths, start=1):
-            print(f"{index}. {log_path.name}")
-        print("0. Cancel")
-
-        while True:
-            choice = input("\nSelection: ").strip()
-            if choice == "0":
-                return None
-            try:
-                index = int(choice)
-                if 1 <= index <= len(log_paths):
-                    return log_paths[index - 1]
-            except ValueError:
-                pass
-            print("Invalid selection.")
