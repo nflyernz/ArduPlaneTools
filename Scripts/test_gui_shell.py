@@ -83,28 +83,84 @@ def test_expected_analysis_tabs_are_present_in_order(window):
     assert labels == ANALYSIS_TABS
 
 
-def test_bin_dialog_updates_shared_selected_file_state(
+@pytest.mark.parametrize("filename", ("flight.bin", "flight.BIN"))
+def test_bin_dialog_accepts_bin_files_and_excludes_all_files_filter(
     monkeypatch,
     qt_app,
     window,
     tmp_path,
+    filename,
 ):
-    selected = tmp_path / "flight.BIN"
+    selected = tmp_path / filename
     selected.touch()
+
+    dialog_call = {}
+
+    def select_file(*args, **kwargs):
+        dialog_call["args"] = args
+        dialog_call["kwargs"] = kwargs
+        return str(selected), "ArduPilot BIN logs (*.bin *.BIN)"
+
     monkeypatch.setattr(
         QFileDialog,
         "getOpenFileName",
-        lambda *_args, **_kwargs: (str(selected), "ArduPilot BIN logs (*.bin *.BIN)"),
+        select_file,
     )
 
     window.choose_log_button.click()
     qt_app.processEvents()
 
+    file_filter = dialog_call["args"][3]
+    assert file_filter == "ArduPilot BIN logs (*.bin *.BIN)"
+    assert "All files" not in file_filter
     expected = selected.resolve()
     assert window.selected_log == expected
     assert window.source_path_edit.text() == str(expected)
     assert window.source_path_edit.toolTip() == str(expected)
     assert str(expected) in window.statusBar().currentMessage()
+    assert window.autotune_analyse_button.isEnabled()
+
+
+@pytest.mark.parametrize(
+    ("rejected_name", "create_rejected", "expected_status"),
+    (
+        ("not-a-log.csv", "file", ".bin extension"),
+        ("missing.bin", None, "not an existing file"),
+        ("directory.bin", "directory", "not an existing file"),
+    ),
+)
+def test_bin_dialog_rejection_preserves_previous_selection(
+    monkeypatch,
+    qt_app,
+    window,
+    tmp_path,
+    rejected_name,
+    create_rejected,
+    expected_status,
+):
+    previous = tmp_path / "previous.bin"
+    previous.touch()
+    window.set_selected_log(previous)
+
+    rejected = tmp_path / rejected_name
+    if create_rejected == "file":
+        rejected.touch()
+    elif create_rejected == "directory":
+        rejected.mkdir()
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *_args, **_kwargs: (str(rejected), ""),
+    )
+
+    window.choose_log_button.click()
+    qt_app.processEvents()
+
+    expected = previous.resolve()
+    assert window.selected_log == expected
+    assert window.source_path_edit.text() == str(expected)
+    assert window.source_path_edit.toolTip() == str(expected)
+    assert expected_status in window.statusBar().currentMessage()
 
 
 def test_file_dialog_cancellation_preserves_previous_selection(
