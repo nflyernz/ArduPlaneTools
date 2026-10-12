@@ -318,6 +318,54 @@ def test_cli_confirms_baseline_route_and_exports_report_and_graphs(
     assert (output / "section_1rss_p10.png").is_file()
 
 
+def test_cli_can_cancel_during_initial_setup_without_output(
+        monkeypatch, capsys):
+    generated = []
+    monkeypatch.setattr("builtins.input", lambda _prompt="": "q")
+    monkeypatch.setattr(
+        presentation,
+        "format_range_walk_report",
+        lambda *_args: generated.append("report"),
+    )
+    monkeypatch.setattr(
+        presentation,
+        "write_range_walk_graphs",
+        lambda *_args: generated.append("graphs"),
+    )
+
+    presentation.RangeWalkComparisonPresentation().run()
+
+    output = capsys.readouterr().out
+    assert "Range-Walk Comparison cancelled." in output
+    assert "Range-Walk Comparison unavailable:" not in output
+    assert generated == []
+
+
+def test_cli_can_cancel_during_walk_retry_without_output(
+        monkeypatch, tmp_path, capsys):
+    answers = iter(("2", str(tmp_path / "missing.csv"), "q"))
+    generated = []
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
+    monkeypatch.setattr(
+        presentation,
+        "format_range_walk_report",
+        lambda *_args: generated.append("report"),
+    )
+    monkeypatch.setattr(
+        presentation,
+        "write_range_walk_graphs",
+        lambda *_args: generated.append("graphs"),
+    )
+
+    presentation.RangeWalkComparisonPresentation().run()
+
+    output = capsys.readouterr().out
+    assert "Walk 1 input skipped with reason:" in output
+    assert "Range-Walk Comparison cancelled." in output
+    assert "Range-Walk Comparison unavailable:" not in output
+    assert generated == []
+
+
 def test_identical_csv_copies_have_same_source_identity(tmp_path):
     first = _session(tmp_path, name="first.csv")
     copy = tmp_path / "copy.csv"

@@ -124,6 +124,34 @@ def test_manual_file_path_accepts_bin_case_insensitively(monkeypatch, tmp_path):
     assert log_selector.select_log_input() == [selected]
 
 
+def test_directory_choice_expands_user_home(monkeypatch, tmp_path):
+    """D expands a leading tilde before validating and remembering a directory."""
+    home = tmp_path / "home"
+    selected_directory = home / "flight-logs"
+    selected_directory.mkdir(parents=True)
+    selected = selected_directory / "flight.bin"
+    selected.touch()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(log_selector, "_current_directory", tmp_path)
+    _inputs(monkeypatch, "d", "~/flight-logs", "1")
+
+    assert log_selector.select_log_input() == [selected]
+    assert log_selector._current_directory == selected_directory
+
+
+def test_manual_file_path_expands_user_home(monkeypatch, tmp_path):
+    """P expands a leading tilde for a manually entered BIN file."""
+    home = tmp_path / "home"
+    home.mkdir()
+    selected = home / "manual.BIN"
+    selected.touch()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(log_selector, "_current_directory", tmp_path)
+    _inputs(monkeypatch, "p", "~/manual.BIN")
+
+    assert log_selector.select_log_input() == [selected]
+
+
 def test_single_log_mode_rejects_manual_directory_and_all_option(
     monkeypatch,
     tmp_path,
@@ -237,6 +265,68 @@ def test_implemented_presentations_receive_shared_selector_paths(monkeypatch):
         str(single),
     ]
     assert loaded == multiple
+
+
+def test_event_timeline_reports_log_read_failure(monkeypatch, capsys):
+    """An ordinary read failure returns a concise Event Timeline message."""
+    selected = Path("chosen/unreadable.bin")
+
+    class _Reader:
+        def __init__(self, path):
+            assert path == str(selected)
+
+        def read(self):
+            raise OSError("permission denied")
+
+    monkeypatch.setattr(event_timeline_module, "select_log_input", lambda: [selected])
+    monkeypatch.setattr(event_timeline_module, "FlightReader", _Reader)
+
+    event_timeline_module.EventTimelineAnalysis().run()
+
+    assert "Unable to read log: permission denied" in capsys.readouterr().out
+
+
+def test_battery_analysis_reports_log_read_failure(monkeypatch, capsys):
+    """An ordinary read failure returns a concise Battery Analysis message."""
+    selected = Path("chosen/unreadable.bin")
+
+    class _Reader:
+        def __init__(self, path, config=None):
+            assert path == str(selected)
+
+        def read(self):
+            raise OSError("permission denied")
+
+    monkeypatch.setattr(battery_module, "select_log_input", lambda: [selected])
+    monkeypatch.setattr(battery_module, "FlightReader", _Reader)
+
+    battery_module.BatteryAnalysisPresentation(
+        pack_id="Pack 1",
+        config=object(),
+    ).run()
+
+    assert "Unable to read log: permission denied" in capsys.readouterr().out
+
+
+def test_event_and_battery_return_directly_to_menu(monkeypatch):
+    """Menu options 2 and 3 do not consume an extra return-pause response."""
+    calls = []
+    choices = iter(("2", "3", "0"))
+    monkeypatch.setattr("builtins.input", lambda _prompt="": next(choices))
+    monkeypatch.setattr(
+        event_timeline_module.EventTimelineAnalysis,
+        "run",
+        lambda _self: calls.append("event"),
+    )
+    monkeypatch.setattr(
+        battery_module.BatteryAnalysisPresentation,
+        "run",
+        lambda _self: calls.append("battery"),
+    )
+
+    analyse.menu()
+
+    assert calls == ["event", "battery"]
 
 
 def test_placeholder_functions_remain_unimplemented(capsys):
