@@ -547,6 +547,13 @@ def format_stall_report(flight_results):
     return "\n".join(lines)
 
 
+def analyse_stall_flight_log(log, config) -> str:
+    """Return the existing formatted Stall report for one loaded flight log."""
+    analyzer = StallTestAnalyzer(config)
+    results = tuple(analyzer.analyse(log, flight) for flight in log.flights)
+    return wrap_report(format_stall_report(results))
+
+
 class StallAnalysisPresentation:
     """Select a BIN through APT's shared selector and present core results."""
 
@@ -562,6 +569,4 @@ class StallAnalysisPresentation:
         except (UnsupportedFirmwareError, OSError) as exc:
             print(f"\nStall Analysis unavailable: {exc}")
             return
-        analyzer = StallTestAnalyzer(self.config)
-        results = tuple(analyzer.analyse(log, flight) for flight in log.flights)
-        print("\n" + wrap_report(format_stall_report(results)))
+        print("\n" + analyse_stall_flight_log(log, self.config))
