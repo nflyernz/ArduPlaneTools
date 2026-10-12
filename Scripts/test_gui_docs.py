@@ -68,6 +68,10 @@ def test_all_modules_have_working_docs_buttons_and_render_both_files(
         assert viewer.tabs.tabText(1) == "Glossary"
         assert viewer.readme_browser.isReadOnly()
         assert viewer.glossary_browser.isReadOnly()
+        for browser in (viewer.readme_browser, viewer.glossary_browser):
+            assert browser.document().defaultFont().pointSizeF() == pytest.approx(
+                browser.font().pointSizeF() + 2.0
+            )
         assert "Documentation unavailable" not in viewer.readme_browser.toPlainText()
         assert "Documentation unavailable" not in viewer.glossary_browser.toPlainText()
         assert "<h1" in viewer.readme_browser.toHtml()

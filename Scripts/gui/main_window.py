@@ -304,7 +304,10 @@ class MainWindow(QMainWindow):
             button.setObjectName(
                 f"overview_{name.lower().replace(' ', '_').replace('-', '_')}"
             )
-            button.setMinimumHeight(72)
+            button_font = button.font()
+            button_font.setPointSizeF(button_font.pointSizeF() + 2.0)
+            button.setFont(button_font)
+            button.setMinimumHeight(84)
             button.clicked.connect(
                 lambda _checked=False, analysis=name: self.show_analysis_tab(analysis)
             )
