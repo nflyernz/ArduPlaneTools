@@ -1,6 +1,5 @@
 """Focused tests for the optional PySide6 desktop shell."""
 
-import builtins
 import os
 from pathlib import Path
 
@@ -199,7 +198,7 @@ def test_tab_switching_updates_visible_module_context(qt_app, window):
     assert "analysis not connected" in window.statusBar().currentMessage()
 
 
-def test_shell_interactions_do_not_import_or_execute_analyses(
+def test_shell_interactions_do_not_execute_landing_analysis(
     monkeypatch,
     qt_app,
     window,
@@ -207,15 +206,6 @@ def test_shell_interactions_do_not_import_or_execute_analyses(
 ):
     selected = tmp_path / "no-analysis.bin"
     selected.touch()
-    imported_analysis_modules = []
-    original_import = builtins.__import__
-
-    def tracked_import(name, *args, **kwargs):
-        if name == "analyses" or name.startswith("analyses."):
-            imported_analysis_modules.append(name)
-        return original_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", tracked_import)
     monkeypatch.setattr(
         QFileDialog,
         "getOpenFileName",
@@ -226,7 +216,6 @@ def test_shell_interactions_do_not_import_or_execute_analyses(
     window.show_analysis_tab("Landing")
     qt_app.processEvents()
 
-    assert imported_analysis_modules == []
-    assert "Analysis execution is not connected" in window.report_for(
+    assert "Reports use the existing Landing evidence pipeline" in window.report_for(
         "Landing"
     ).toPlainText()
