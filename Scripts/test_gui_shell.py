@@ -12,6 +12,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QFileDialog
 
+import gui_app
 from gui import ANALYSIS_TABS, MainWindow
 
 
@@ -33,13 +34,45 @@ def window(qt_app):
 
 
 def test_window_constructs_with_expected_native_shell(window):
-    assert window.windowTitle() == "ArduPilotTools"
+    assert window.windowTitle() == "ArduPlaneTools"
     assert window.minimumWidth() >= 900
     assert window.minimumHeight() >= 600
     assert window.analysis_tabs.usesScrollButtons()
     assert window.source_path_edit.isReadOnly()
     assert all(window.report_for(name).isReadOnly() for name in ANALYSIS_TABS)
     assert "analysis not connected" in window.statusBar().currentMessage()
+
+
+def test_qt_application_identity_is_arduplane_tools(monkeypatch):
+    identity = {}
+
+    class _Application:
+        def __init__(self, argv):
+            identity["argv"] = argv
+
+        def setApplicationName(self, name):
+            identity["application"] = name
+
+        def setOrganizationName(self, name):
+            identity["organization"] = name
+
+        def exec(self):
+            return 0
+
+    class _Window:
+        def show(self):
+            identity["shown"] = True
+
+    monkeypatch.setattr(gui_app, "QApplication", _Application)
+    monkeypatch.setattr(gui_app, "MainWindow", _Window)
+
+    assert gui_app.main(["gui_app.py"]) == 0
+    assert identity == {
+        "argv": ["gui_app.py"],
+        "application": "ArduPlaneTools",
+        "organization": "ArduPlaneTools",
+        "shown": True,
+    }
 
 
 def test_expected_analysis_tabs_are_present_in_order(window):
