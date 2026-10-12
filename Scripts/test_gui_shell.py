@@ -40,7 +40,8 @@ def test_window_constructs_with_expected_native_shell(window):
     assert window.analysis_tabs.usesScrollButtons()
     assert window.source_path_edit.isReadOnly()
     assert all(window.report_for(name).isReadOnly() for name in ANALYSIS_TABS)
-    assert "analysis not connected" in window.statusBar().currentMessage()
+    assert window.current_analysis == "Overview"
+    assert "choose a module" in window.statusBar().currentMessage()
 
 
 def test_qt_application_identity_is_arduplane_tools(monkeypatch):
@@ -80,7 +81,7 @@ def test_expected_analysis_tabs_are_present_in_order(window):
         window.analysis_tabs.tabText(index)
         for index in range(window.analysis_tabs.count())
     )
-    assert labels == ANALYSIS_TABS
+    assert labels == ("Overview", *ANALYSIS_TABS)
 
 
 @pytest.mark.parametrize("filename", ("flight.bin", "flight.BIN"))
@@ -187,8 +188,7 @@ def test_file_dialog_cancellation_preserves_previous_selection(
 
 
 def test_tab_switching_updates_visible_module_context(qt_app, window):
-    index = ANALYSIS_TABS.index("Range-Walk Comparison")
-    window.analysis_tabs.setCurrentIndex(index)
+    window.show_analysis_tab("Range-Walk Comparison")
     qt_app.processEvents()
 
     assert window.current_analysis == "Range-Walk Comparison"
@@ -223,7 +223,7 @@ def test_shell_interactions_do_not_import_or_execute_analyses(
     )
 
     window.choose_log_button.click()
-    window.analysis_tabs.setCurrentIndex(ANALYSIS_TABS.index("Landing"))
+    window.show_analysis_tab("Landing")
     qt_app.processEvents()
 
     assert imported_analysis_modules == []

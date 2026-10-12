@@ -165,7 +165,7 @@ def test_success_runs_selected_path_once_in_background_and_restores_controls(
     ).toPlainText()
 
     window.start_autotune_analysis()
-    window.analysis_tabs.setCurrentIndex(ANALYSIS_TABS.index("Landing"))
+    window.show_analysis_tab("Landing")
     qt_app.processEvents()
     assert "AUTOTUNE analysis running" in window.statusBar().currentMessage()
     assert window.current_analysis == "Landing"
