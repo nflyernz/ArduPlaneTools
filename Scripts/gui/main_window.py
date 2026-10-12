@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from core.log_reader import UnsupportedFirmwareError
 
 from .autotune_adapter import analyse_autotune_log
+from .stall_adapter import analyse_stall_log
 from .takeoff_adapter import analyse_takeoff_log
 
 
@@ -67,18 +68,21 @@ class MainWindow(QMainWindow):
         self,
         autotune_adapter=analyse_autotune_log,
         takeoff_adapter=analyse_takeoff_log,
+        stall_adapter=analyse_stall_log,
     ):
         super().__init__()
         self._selected_log: Path | None = None
         self._reports: dict[str, QPlainTextEdit] = {}
         self._autotune_adapter = autotune_adapter
         self._takeoff_adapter = takeoff_adapter
+        self._stall_adapter = stall_adapter
         self._analysis_thread: QThread | None = None
         self._analysis_worker: _AnalysisWorker | None = None
         self._active_analysis: str | None = None
         self._close_after_worker = False
         self.autotune_analyse_button: QPushButton | None = None
         self.takeoff_analyse_button: QPushButton | None = None
+        self.stall_analyse_button: QPushButton | None = None
 
         self.setWindowTitle("ArduPlaneTools")
         self.setMinimumSize(900, 600)
@@ -189,6 +193,10 @@ class MainWindow(QMainWindow):
         """Start TAKEOFF through the shared background execution path."""
         self._start_analysis("TAKEOFF", self._takeoff_adapter)
 
+    def start_stall_analysis(self) -> None:
+        """Start Stall through the shared background execution path."""
+        self._start_analysis("Stall", self._stall_adapter)
+
     def _start_analysis(self, analysis: str, adapter) -> None:
         """Validate the shared source and run one analysis at a time."""
         if self._analysis_thread is not None:
@@ -230,7 +238,7 @@ class MainWindow(QMainWindow):
         heading.setStyleSheet("font-weight: 600;")
         layout.addWidget(heading)
 
-        if name in ("TAKEOFF", "AUTOTUNE"):
+        if name in ("TAKEOFF", "AUTOTUNE", "Stall"):
             action_layout = QHBoxLayout()
             action_layout.addStretch(1)
             analyse_button = QPushButton("Analyse")
@@ -238,9 +246,12 @@ class MainWindow(QMainWindow):
             if name == "AUTOTUNE":
                 self.autotune_analyse_button = analyse_button
                 analyse_button.clicked.connect(self.start_autotune_analysis)
-            else:
+            elif name == "TAKEOFF":
                 self.takeoff_analyse_button = analyse_button
                 analyse_button.clicked.connect(self.start_takeoff_analysis)
+            else:
+                self.stall_analyse_button = analyse_button
+                analyse_button.clicked.connect(self.start_stall_analysis)
             action_layout.addWidget(analyse_button)
             layout.addLayout(action_layout)
 
@@ -273,6 +284,12 @@ class MainWindow(QMainWindow):
                 "Select a BIN log above, then choose Analyse.\n\n"
                 "Reports use the existing TAKEOFF evidence pipeline."
             )
+        elif name == "Stall":
+            return (
+                "Stall\n\n"
+                "Select a BIN log above, then choose Analyse.\n\n"
+                "Reports use the existing Stall evidence pipeline."
+            )
         else:
             source_note = "Select a BIN log above to establish the shared source."
         return (
@@ -298,6 +315,7 @@ class MainWindow(QMainWindow):
         for analysis, button in (
             ("TAKEOFF", self.takeoff_analyse_button),
             ("AUTOTUNE", self.autotune_analyse_button),
+            ("Stall", self.stall_analyse_button),
         ):
             if button is not None:
                 valid = self._selection_error(analysis) is None
@@ -310,6 +328,7 @@ class MainWindow(QMainWindow):
         for analysis, button in (
             ("TAKEOFF", self.takeoff_analyse_button),
             ("AUTOTUNE", self.autotune_analyse_button),
+            ("Stall", self.stall_analyse_button),
         ):
             if button is not None:
                 is_active = busy and analysis == self._active_analysis
@@ -364,7 +383,7 @@ class MainWindow(QMainWindow):
         prefix = f"{action} — " if action else ""
         state = (
             "ready"
-            if self.current_analysis in ("TAKEOFF", "AUTOTUNE")
+            if self.current_analysis in ("TAKEOFF", "AUTOTUNE", "Stall")
             else "analysis not connected"
         )
         self.statusBar().showMessage(
