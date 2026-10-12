@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from core.log_reader import UnsupportedFirmwareError
 
 from .autotune_adapter import analyse_autotune_log
+from .docs_viewer import ModuleDocsWindow
 from .stall_adapter import analyse_stall_log
 from .takeoff_adapter import analyse_takeoff_log
 
@@ -91,6 +92,8 @@ class MainWindow(QMainWindow):
         self._selected_log: Path | None = None
         self._reports: dict[str, QPlainTextEdit] = {}
         self.overview_buttons: dict[str, QCommandLinkButton] = {}
+        self.docs_buttons: dict[str, QPushButton] = {}
+        self._docs_windows: dict[str, ModuleDocsWindow] = {}
         self._autotune_adapter = autotune_adapter
         self._takeoff_adapter = takeoff_adapter
         self._stall_adapter = stall_adapter
@@ -174,6 +177,22 @@ class MainWindow(QMainWindow):
     def show_analysis_tab(self, analysis: str) -> None:
         """Navigate from Overview to an existing analysis tab."""
         self.analysis_tabs.setCurrentIndex(ANALYSIS_TABS.index(analysis) + 1)
+
+    def open_module_docs(self, module: str) -> None:
+        """Open or focus the retained documentation window for one module."""
+        existing = self._docs_windows.get(module)
+        if existing is not None:
+            existing.showNormal()
+            existing.raise_()
+            existing.activateWindow()
+            return
+
+        viewer = ModuleDocsWindow(module, self)
+        viewer.destroyed.connect(
+            lambda _object=None, name=module: self._docs_windows.pop(name, None)
+        )
+        self._docs_windows[module] = viewer
+        viewer.show()
 
     def choose_log(self) -> None:
         """Select one BIN with a native dialog while preserving state on cancel."""
@@ -303,9 +322,19 @@ class MainWindow(QMainWindow):
         heading.setStyleSheet("font-weight: 600;")
         layout.addWidget(heading)
 
+        action_layout = QHBoxLayout()
+        action_layout.addStretch(1)
+        docs_button = QPushButton("Docs")
+        docs_button.setObjectName(
+            f"{name.lower().replace(' ', '_').replace('-', '_')}DocsButton"
+        )
+        docs_button.clicked.connect(
+            lambda _checked=False, module=name: self.open_module_docs(module)
+        )
+        action_layout.addWidget(docs_button)
+        self.docs_buttons[name] = docs_button
+
         if name in ("TAKEOFF", "AUTOTUNE", "Stall"):
-            action_layout = QHBoxLayout()
-            action_layout.addStretch(1)
             analyse_button = QPushButton("Analyse")
             analyse_button.setObjectName(f"{name.lower()}AnalyseButton")
             if name == "AUTOTUNE":
@@ -318,7 +347,7 @@ class MainWindow(QMainWindow):
                 self.stall_analyse_button = analyse_button
                 analyse_button.clicked.connect(self.start_stall_analysis)
             action_layout.addWidget(analyse_button)
-            layout.addLayout(action_layout)
+        layout.addLayout(action_layout)
 
         report = QPlainTextEdit()
         report.setObjectName(f"{name.lower().replace(' ', '_')}_report")
@@ -471,4 +500,8 @@ class MainWindow(QMainWindow):
             )
             event.ignore()
             return
+        documentation_windows = tuple(self._docs_windows.values())
+        self._docs_windows.clear()
+        for window in documentation_windows:
+            window.close()
         event.accept()
