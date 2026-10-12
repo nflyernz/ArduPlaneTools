@@ -1,4 +1,4 @@
-"""Phase 1 Qt Widgets shell for ArduPilotTools."""
+"""Phase 1 Qt Widgets shell for ArduPlaneTools."""
 
 from pathlib import Path
 
@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
         self._selected_log: Path | None = None
         self._reports: dict[str, QPlainTextEdit] = {}
 
-        self.setWindowTitle("ArduPilotTools")
+        self.setWindowTitle("ArduPlaneTools")
         self.setMinimumSize(900, 600)
         self.resize(1200, 780)
 
