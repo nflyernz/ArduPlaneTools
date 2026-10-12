@@ -132,12 +132,21 @@ class MainWindow(QMainWindow):
             self,
             "Select ArduPilot BIN log",
             str(self._selected_log.parent) if self._selected_log else "",
-            "ArduPilot BIN logs (*.bin *.BIN);;All files (*)",
+            "ArduPilot BIN logs (*.bin *.BIN)",
         )
         if not file_name:
             self._update_status("Selection cancelled")
             return
-        self.set_selected_log(Path(file_name))
+
+        selected_log = Path(file_name).expanduser().resolve()
+        if not selected_log.is_file():
+            self._update_status(f"Selection rejected: not an existing file: {selected_log}")
+            return
+        if selected_log.suffix.lower() != ".bin":
+            self._update_status("Selection rejected: file must have a .bin extension")
+            return
+
+        self.set_selected_log(selected_log)
 
     def set_selected_log(self, path: Path) -> None:
         """Update shared source state and its full-path presentation."""
