@@ -318,6 +318,76 @@ def test_csv_controls_fit_minimum_window_and_preserve_action_order(
     assert widget.browse_button.geometry().top() == (
         widget.use_candidate_button.geometry().top()
     )
+    assert widget.candidate_diagnostic_group.isVisible()
+    assert widget.candidate_hint.height() >= 44
+    assert widget.candidate_diagnostic_group.geometry().bottom() < (
+        widget.report.geometry().bottom()
+    )
+
+
+def test_candidate_diagnostic_is_visible_and_tracks_current_selection(
+    qt_app, tmp_path, make_window
+):
+    adapter_calls = []
+    automatic = tmp_path / "automatic.csv"
+    explicit = tmp_path / "explicit.csv"
+    unusable = tmp_path / "unusable.csv"
+
+    def adapter(path):
+        adapter_calls.append(path)
+        return RadioLinkGuiResult(path, "summary", "detail", object(), object())
+
+    class Service:
+        def discover(self, context):
+            return EdgeTxCandidateSet(
+                context.source_path,
+                (
+                    EdgeTxCandidatePreview(
+                        automatic,
+                        "Auto-eligible candidate; ordered loss pattern",
+                        _session(automatic),
+                        _overlay(automatic),
+                    ),
+                    EdgeTxCandidatePreview(
+                        explicit,
+                        "GPS-coordinate candidate; explicit selection required",
+                        _session(explicit),
+                        _overlay(explicit, "accepted explicit"),
+                    ),
+                    EdgeTxCandidatePreview(
+                        unusable,
+                        "unusable CSV: required columns are missing",
+                        None,
+                        None,
+                    ),
+                ),
+            )
+
+    window = make_window(adapter, Service())
+    widget = window._radio_link.widget
+    window.resize(window.minimumSize())
+    window.show_analysis_tab("Radio Link")
+    _select_and_analyse(qt_app, window, tmp_path, adapter_calls)
+    widget.discover_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    assert widget.candidate_diagnostic_group.isVisible()
+    assert "Auto-eligible candidate: automatic.csv" in widget.candidate_hint.text()
+    assert "ordered loss pattern" in widget.candidate_hint.text()
+    assert "does not establish pairing" in widget.candidate_diagnostic_group.title()
+    assert "pairing and alignment remain unverified" in widget.candidate_hint.text()
+
+    widget.candidate_combo.setCurrentIndex(1)
+    qt_app.processEvents()
+    assert "Explicit selection required: explicit.csv" in widget.candidate_hint.text()
+    assert "explicit selection required" in widget.candidate_hint.text()
+
+    widget.candidate_combo.setCurrentIndex(2)
+    qt_app.processEvents()
+    assert "Unusable candidate: unusable.csv" in widget.candidate_hint.text()
+    assert "required columns are missing" in widget.candidate_hint.text()
+    assert adapter_calls == [(tmp_path / "radio.bin").resolve()]
+    assert window._analysis_thread is None
 
 
 def test_malformed_candidate_failure_preserves_bin_and_allows_retry(
