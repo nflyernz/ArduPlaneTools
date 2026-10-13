@@ -44,6 +44,170 @@ def _format_duration(seconds):
     return f"{minutes:02d}:{seconds:02d}"
 
 
+def _format_threshold(value):
+    if value is None:
+        return "Unavailable"
+    if value == 0:
+        return "Disabled"
+    return f"{value:.2f} V"
+
+
+def format_bounded_load_events(events) -> str:
+    """Return the existing bounded-load-event presentation."""
+    lines = ["BOUNDED LOAD EVENTS"]
+    if not events:
+        lines.extend(("", "No bounded load events detected."))
+        return "\n".join(lines)
+
+    for index, event in enumerate(events, start=1):
+        lines.extend(("", f"{index}. {event.event_type.value}"))
+        if (
+            event.event_type == BatteryLoadEventType.TAKEOFF
+            and event.takeoff_type is not None
+        ):
+            lines.append(f"   Context              {event.takeoff_type.value}")
+        lines.extend(
+            (
+                "   Time                 "
+                f"{format_time_us(event.start_us)} -> "
+                f"{format_time_us(event.end_us)}",
+                "   Duration             "
+                f"{_format_value(event.duration_s, ' s', 3)}",
+                "   Capacity used before event    "
+                f"{_format_value(event.consumed_mah_at_start, ' mAh')}",
+                "   Maximum throttle     "
+                f"{_format_value(event.maximum_throttle, ' %')}",
+                "   Average throttle     "
+                f"{_format_value(event.average_throttle, ' %')}",
+                "   Pre-load voltage     "
+                f"{_format_value(event.pre_load_voltage, ' V')}",
+                "   Minimum voltage      "
+                f"{_format_value(event.minimum_voltage, ' V')}",
+                "   Voltage sag          "
+                f"{_format_value(event.voltage_sag, ' V')}",
+                "   Peak current         "
+                f"{_format_value(event.peak_current, ' A')}",
+                "   Average current      "
+                f"{_format_value(event.average_current, ' A')}",
+                "   Current at min V     "
+                f"{_format_value(event.current_at_minimum_voltage, ' A')}",
+                "   Voltage after 5 s    "
+                f"{_format_value(event.voltage_after_recovery, ' V')}",
+                "   Voltage recovery     "
+                f"{_format_value(event.voltage_recovery, ' V')}",
+                "   Margin to LOW        "
+                f"{_format_value(event.low_voltage_margin, ' V')}",
+                "   Margin to CRITICAL   "
+                f"{_format_value(event.critical_voltage_margin, ' V')}",
+            )
+        )
+    return "\n".join(lines)
+
+
+def format_battery_report(
+    log_path,
+    flight_window,
+    analysis: BatteryAnalysis | None,
+    pack_id=None,
+) -> str:
+    """Return the existing Battery Analysis presentation for one instance."""
+    lines = [
+        "BATTERY ANALYSIS",
+        "=" * 70,
+        f"Log    : {log_path.name}",
+        (
+            "Window : "
+            f"{format_time(flight_window.start_us)}"
+            " -> "
+            f"{format_time(flight_window.end_us)}"
+        ),
+    ]
+    if analysis is None:
+        lines.extend(("", "No valid battery analysis is available."))
+        return "\n".join(lines)
+
+    lines.append(f"Battery instance : {analysis.instance}")
+    configuration = analysis.session_configuration
+    if pack_id is not None:
+        lines.append(f"Pack ID          : {pack_id}")
+    if configuration is not None:
+        lines.extend(
+            (
+                "Capacity         : "
+                f"{_format_value(configuration.capacity_mah, ' mAh', 0)}",
+                "Low voltage      : "
+                f"{_format_threshold(configuration.low_voltage)}",
+                "Critical voltage : "
+                f"{_format_threshold(configuration.critical_voltage)}",
+            )
+        )
+
+    lines.extend(
+        (
+            "",
+            "Flight duration       " f"{_format_duration(analysis.duration_s)}",
+            "Start voltage         "
+            f"{_format_value(analysis.start_voltage, ' V')}",
+            "Final voltage         "
+            f"{_format_value(analysis.final_voltage, ' V')}",
+            "Minimum voltage       "
+            f"{_format_value(analysis.minimum_voltage, ' V')}",
+            "",
+            "Maximum current       "
+            f"{_format_value(analysis.maximum_current, ' A')}",
+            "Average current       "
+            f"{_format_value(analysis.average_current, ' A')}",
+            "Maximum power         "
+            f"{_format_value(analysis.maximum_power, ' W')}",
+            "Energy consumed       "
+            f"{_format_value(analysis.consumed_wh, ' Wh')}",
+            "Capacity consumed     "
+            f"{_format_value(analysis.consumed_mah, ' mAh')}",
+            "Consumption rate      "
+            f"{_format_value(analysis.mah_per_minute, ' mAh/min')}",
+            "",
+            "HIGHEST-LOAD EVENT",
+        )
+    )
+
+    event = analysis.load_event
+    if event is None:
+        lines.extend(("", "No valid load event is available."))
+    else:
+        lines.extend(
+            (
+                "",
+                f"Time                  {format_time_us(event.time_us)}",
+                "Current               "
+                f"{_format_value(event.current, ' A')}",
+                "Voltage before        "
+                f"{_format_value(event.voltage_before, ' V')}",
+                "Minimum voltage       "
+                f"{_format_value(event.minimum_voltage, ' V')}",
+                "Voltage sag           "
+                f"{_format_value(event.voltage_sag, ' V')}",
+                "Sag per ampere        "
+                f"{_format_value(event.sag_per_ampere, ' V/A')}",
+                "Voltage after 5 s     "
+                f"{_format_value(event.voltage_after_recovery, ' V')}",
+                "Voltage recovery      "
+                f"{_format_value(event.voltage_recovery, ' V')}",
+            )
+        )
+
+    if analysis.counter_warnings:
+        lines.extend(("", "COUNTER WARNINGS"))
+        for warning in analysis.counter_warnings:
+            lines.extend(("", f"- {warning}"))
+
+    lines.extend(("", format_bounded_load_events(analysis.bounded_load_events)))
+    if configuration is not None and configuration.warnings:
+        lines.extend(("", "CONFIGURATION WARNINGS"))
+        for warning in configuration.warnings:
+            lines.extend(("", f"- {warning}"))
+    return "\n".join(lines)
+
+
 class BatteryPackManagementPresentation:
     """Manage persistent physical battery Pack IDs."""
 
@@ -728,281 +892,21 @@ class BatteryAnalysisPresentation:
         analysis: BatteryAnalysis | None,
         pack_id=None,
     ):
-
-        print()
-        print("BATTERY ANALYSIS")
-        print("=" * 70)
-
-        print(
-            f"Log    : {log_path.name}"
-        )
-
-        print(
-            "Window : "
-            f"{format_time(flight_window.start_us)}"
-            " -> "
-            f"{format_time(flight_window.end_us)}"
-        )
-
-        if analysis is None:
-            print()
-            print(
-                "No valid battery analysis is available."
-            )
-            return
-
-        print(
-            f"Battery instance : {analysis.instance}"
-        )
-
-        configuration = analysis.session_configuration
-
         display_pack_id = pack_id if pack_id is not None else self.pack_id
-        if display_pack_id is not None:
-            print(f"Pack ID          : {display_pack_id}")
-
-        if configuration is not None:
-            print(
-                "Capacity         : "
-                f"{_format_value(
-                    configuration.capacity_mah,
-                    ' mAh',
-                    0,
-                )}"
-            )
-            print(
-                "Low voltage      : "
-                f"{self._format_threshold(
-                    configuration.low_voltage
-                )}"
-            )
-            print(
-                "Critical voltage : "
-                f"{self._format_threshold(
-                    configuration.critical_voltage
-                )}"
-            )
-
-        print()
         print(
-            "Flight duration       "
-            f"{_format_duration(analysis.duration_s)}"
-        )
-        print(
-            "Start voltage         "
-            f"{_format_value(analysis.start_voltage, ' V')}"
-        )
-        print(
-            "Final voltage         "
-            f"{_format_value(analysis.final_voltage, ' V')}"
-        )
-        print(
-            "Minimum voltage       "
-            f"{_format_value(analysis.minimum_voltage, ' V')}"
-        )
-
-        print()
-        print(
-            "Maximum current       "
-            f"{_format_value(analysis.maximum_current, ' A')}"
-        )
-        print(
-            "Average current       "
-            f"{_format_value(analysis.average_current, ' A')}"
-        )
-        print(
-            "Maximum power         "
-            f"{_format_value(analysis.maximum_power, ' W')}"
-        )
-        print(
-            "Energy consumed       "
-            f"{_format_value(analysis.consumed_wh, ' Wh')}"
-        )
-        print(
-            "Capacity consumed     "
-            f"{_format_value(analysis.consumed_mah, ' mAh')}"
-        )
-        print(
-            "Consumption rate      "
-            f"{_format_value(analysis.mah_per_minute, ' mAh/min')}"
-        )
-
-        print()
-        print("HIGHEST-LOAD EVENT")
-
-        event = analysis.load_event
-
-        if event is None:
-            print()
-            print("No valid load event is available.")
-
-        else:
-            print()
-            print(
-                f"Time                  "
-                f"{format_time_us(event.time_us)}"
+            "\n"
+            + format_battery_report(
+                log_path,
+                flight_window,
+                analysis,
+                display_pack_id,
             )
-            print(
-                "Current               "
-                f"{_format_value(event.current, ' A')}"
-            )
-            print(
-                "Voltage before        "
-                f"{_format_value(event.voltage_before, ' V')}"
-            )
-            print(
-                "Minimum voltage       "
-                f"{_format_value(event.minimum_voltage, ' V')}"
-            )
-            print(
-                "Voltage sag           "
-                f"{_format_value(event.voltage_sag, ' V')}"
-            )
-            print(
-                "Sag per ampere        "
-                f"{_format_value(event.sag_per_ampere, ' V/A')}"
-            )
-            print(
-                "Voltage after 5 s     "
-                f"{_format_value(
-                    event.voltage_after_recovery,
-                    ' V',
-                )}"
-            )
-            print(
-                "Voltage recovery      "
-                f"{_format_value(
-                    event.voltage_recovery,
-                    ' V',
-                )}"
-            )
-
-        if analysis.counter_warnings:
-            print()
-            print("COUNTER WARNINGS")
-
-            for warning in analysis.counter_warnings:
-                print()
-                print(f"- {warning}")
-
-        self._print_bounded_load_events(
-            analysis.bounded_load_events
         )
-
-        if (
-            configuration is not None
-            and configuration.warnings
-        ):
-            print()
-            print("CONFIGURATION WARNINGS")
-
-            for warning in configuration.warnings:
-                print()
-                print(f"- {warning}")
 
     @staticmethod
     def _format_threshold(value):
-        if value is None:
-            return "Unavailable"
-        if value == 0:
-            return "Disabled"
-        return f"{value:.2f} V"
+        return _format_threshold(value)
 
     @staticmethod
     def _print_bounded_load_events(events):
-        print()
-        print("BOUNDED LOAD EVENTS")
-
-        if not events:
-            print()
-            print("No bounded load events detected.")
-            return
-
-        for index, event in enumerate(events, start=1):
-            print()
-            print(
-                f"{index}. {event.event_type.value}"
-            )
-
-            if (
-                event.event_type == BatteryLoadEventType.TAKEOFF
-                and event.takeoff_type is not None
-            ):
-                print(
-                    f"   Context              "
-                    f"{event.takeoff_type.value}"
-                )
-
-            print(
-                "   Time                 "
-                f"{format_time_us(event.start_us)} -> "
-                f"{format_time_us(event.end_us)}"
-            )
-            print(
-                "   Duration             "
-                f"{_format_value(event.duration_s, ' s', 3)}"
-            )
-            print(
-                "   Capacity used before event    "
-                f"{_format_value(
-                    event.consumed_mah_at_start,
-                    ' mAh',
-                )}"
-            )
-            print(
-                "   Maximum throttle     "
-                f"{_format_value(event.maximum_throttle, ' %')}"
-            )
-            print(
-                "   Average throttle     "
-                f"{_format_value(event.average_throttle, ' %')}"
-            )
-            print(
-                "   Pre-load voltage     "
-                f"{_format_value(event.pre_load_voltage, ' V')}"
-            )
-            print(
-                "   Minimum voltage      "
-                f"{_format_value(event.minimum_voltage, ' V')}"
-            )
-            print(
-                "   Voltage sag          "
-                f"{_format_value(event.voltage_sag, ' V')}"
-            )
-            print(
-                "   Peak current         "
-                f"{_format_value(event.peak_current, ' A')}"
-            )
-            print(
-                "   Average current      "
-                f"{_format_value(event.average_current, ' A')}"
-            )
-            print(
-                "   Current at min V     "
-                f"{_format_value(
-                    event.current_at_minimum_voltage,
-                    ' A',
-                )}"
-            )
-            print(
-                "   Voltage after 5 s    "
-                f"{_format_value(
-                    event.voltage_after_recovery,
-                    ' V',
-                )}"
-            )
-            print(
-                "   Voltage recovery     "
-                f"{_format_value(event.voltage_recovery, ' V')}"
-            )
-            print(
-                "   Margin to LOW        "
-                f"{_format_value(event.low_voltage_margin, ' V')}"
-            )
-            print(
-                "   Margin to CRITICAL   "
-                f"{_format_value(
-                    event.critical_voltage_margin,
-                    ' V',
-                )}"
-            )
+        print("\n" + format_bounded_load_events(events))

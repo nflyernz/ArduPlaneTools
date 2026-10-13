@@ -79,7 +79,8 @@ def test_every_overview_entry_describes_and_opens_its_module(qt_app, window):
         assert expected_descriptions[name] in button.description()
         expected_connection = (
             "Connected to the GUI"
-            if name in ("Landing", "Events", "AUTOTUNE", "TAKEOFF", "Stall")
+            if name
+            in ("Landing", "Events", "Battery", "AUTOTUNE", "TAKEOFF", "Stall")
             else "Not yet connected to the GUI"
         )
         assert expected_connection in button.description()
