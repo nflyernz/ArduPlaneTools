@@ -13,11 +13,17 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QLabel
 
 from gui import ANALYSIS_TABS, MainWindow
+from gui.pack_performance_adapter import BatteryPackPerformanceService
 
 
 @pytest.fixture
-def window(qt_app):
-    subject = MainWindow()
+def window(qt_app, tmp_path):
+    subject = MainWindow(
+        pack_performance_service=BatteryPackPerformanceService(
+            pack_store_path=tmp_path / "packs.json",
+            history_store_path=tmp_path / "history.json",
+        )
+    )
     subject.show()
     qt_app.processEvents()
     yield subject
@@ -85,6 +91,7 @@ def test_every_overview_entry_describes_and_opens_its_module(qt_app, window):
                 "Events",
                 "Battery",
                 "Battery Pack Management",
+                "Pack Performance",
                 "AUTOTUNE",
                 "TAKEOFF",
                 "Stall",
@@ -95,7 +102,10 @@ def test_every_overview_entry_describes_and_opens_its_module(qt_app, window):
 
         window.analysis_tabs.setCurrentIndex(0)
         button.click()
-        qt_app.processEvents()
+        if name == "Pack Performance":
+            _wait_until(qt_app, lambda: window._analysis_thread is None)
+        else:
+            qt_app.processEvents()
         assert window.current_analysis == name
         assert window.analysis_tabs.currentIndex() == ANALYSIS_TABS.index(name) + 1
 
@@ -118,12 +128,16 @@ def test_navigation_preserves_selected_bin_and_existing_report(qt_app, window, t
     assert window.report_for("AUTOTUNE").toPlainText() == report
 
 
-def test_overview_navigation_does_not_execute_analysis(qt_app):
+def test_overview_navigation_does_not_execute_analysis(qt_app, tmp_path):
     calls = []
     window = MainWindow(
         autotune_adapter=lambda path: calls.append(("AUTOTUNE", path)),
         takeoff_adapter=lambda path: calls.append(("TAKEOFF", path)),
         stall_adapter=lambda path: calls.append(("Stall", path)),
+        pack_performance_service=BatteryPackPerformanceService(
+            pack_store_path=tmp_path / "packs.json",
+            history_store_path=tmp_path / "history.json",
+        ),
     )
     window.show()
     qt_app.processEvents()
@@ -131,6 +145,8 @@ def test_overview_navigation_does_not_execute_analysis(qt_app):
     for name in ANALYSIS_TABS:
         window.analysis_tabs.setCurrentIndex(0)
         window.overview_buttons[name].click()
+        if name == "Pack Performance":
+            _wait_until(qt_app, lambda: window._analysis_thread is None)
     qt_app.processEvents()
 
     assert calls == []

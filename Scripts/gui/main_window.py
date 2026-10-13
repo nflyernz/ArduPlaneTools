@@ -30,11 +30,17 @@ from .battery_adapter import analyse_battery_log
 from .docs_viewer import ModuleDocsWindow
 from .events_adapter import analyse_events_log
 from .landing_adapter import analyse_landing_log
+from .module_catalog import (
+    CONNECTED_ANALYSES as _CONNECTED_ANALYSES,
+    EXECUTABLE_ANALYSES as _EXECUTABLE_ANALYSES,
+    MODULE_DESCRIPTIONS as _MODULE_DESCRIPTIONS,
+)
 from .pack_management_adapter import (
     BatteryPackManagementService,
     PackManagementResult,
     PackManagementState,
 )
+from .pack_performance_widget import PackPerformanceController
 from .stall_adapter import analyse_stall_log
 from .takeoff_adapter import analyse_takeoff_log
 
@@ -52,34 +58,6 @@ ANALYSIS_TABS = (
     "Stall",
 )
 
-_MODULE_DESCRIPTIONS = {
-    "Landing": "Review approach, preflare, flare, and landing evidence.",
-    "Events": "Inspect recorded flight events.",
-    "Battery": "Analyse battery consumption and electrical performance.",
-    "Battery Pack Management": "Manage battery pack identities and history.",
-    "Pack Performance": "Examine pack behaviour across logs.",
-    "TAKEOFF": "Review takeoff triggers, execution, and outcomes.",
-    "AUTOTUNE": "Examine recorded tuning sessions.",
-    "Radio Link": "Inspect radio-link quality and failsafe evidence.",
-    "Range-Walk Comparison": "Compare repeatable radio range-walk recordings.",
-    "Stall": "Review FBWA slow-flight and probable attitude-departure evidence.",
-}
-
-_CONNECTED_ANALYSES = frozenset(
-    (
-        "Landing",
-        "Events",
-        "Battery",
-        "Battery Pack Management",
-        "AUTOTUNE",
-        "TAKEOFF",
-        "Stall",
-    )
-)
-
-_EXECUTABLE_ANALYSES = _CONNECTED_ANALYSES - {"Battery Pack Management"}
-
-
 class _AnalysisWorker(QObject):
     """Run one analysis adapter call away from the GUI thread."""
 
@@ -87,15 +65,15 @@ class _AnalysisWorker(QObject):
     failed = Signal(object)
     finished = Signal()
 
-    def __init__(self, log_path: Path, adapter):
+    def __init__(self, task_input, adapter):
         super().__init__()
-        self._log_path = log_path
+        self._task_input = task_input
         self._adapter = adapter
 
     @Slot()
     def run(self) -> None:
         try:
-            report = self._adapter(self._log_path)
+            report = self._adapter(self._task_input)
         except Exception as exc:
             self.failed.emit(exc)
         else:
@@ -116,6 +94,7 @@ class MainWindow(QMainWindow):
         events_adapter=analyse_events_log,
         battery_adapter=analyse_battery_log,
         pack_management_service=None,
+        pack_performance_service=None,
     ):
         super().__init__()
         self._selected_log: Path | None = None
@@ -131,6 +110,12 @@ class MainWindow(QMainWindow):
         self._battery_adapter = battery_adapter
         self._pack_management_service = (
             pack_management_service or BatteryPackManagementService()
+        )
+        self._pack_performance = PackPerformanceController(
+            pack_performance_service,
+            self._start_worker,
+            lambda: self._analysis_thread is not None,
+            self.statusBar().showMessage,
         )
         self._pack_management_state: PackManagementState | None = None
         self._pack_management_task: str | None = None
@@ -446,6 +431,12 @@ class MainWindow(QMainWindow):
 
         if name == "Battery Pack Management":
             self._create_pack_management_controls(layout)
+
+        if name == "Pack Performance":
+            widget = self._pack_performance.create_widget(page)
+            layout.addWidget(widget, 1)
+            self._reports[name] = widget.report
+            return page
 
         report = QPlainTextEdit()
         report.setObjectName(f"{name.lower().replace(' ', '_')}_report")
@@ -795,6 +786,8 @@ class MainWindow(QMainWindow):
                 and (state is None or state.log_path != self._selected_log)
             ):
                 self._request_pack_lookup()
+        elif self.current_analysis == "Pack Performance":
+            self._pack_performance.request_refresh()
 
     def _selection_error(self, analysis: str) -> str | None:
         if self._selected_log is None:
@@ -857,6 +850,7 @@ class MainWindow(QMainWindow):
                 and association.state is LogPackState.TRACKED
             )
         self.choose_log_button.setEnabled(not busy and not self._close_after_worker)
+        self._pack_performance.set_busy(busy or self._close_after_worker)
 
     def _set_analysis_busy(self, busy: bool) -> None:
         for analysis, button in (
@@ -878,6 +872,9 @@ class MainWindow(QMainWindow):
         if self._active_analysis == "Battery Pack Management":
             self._pack_management_succeeded(report)
             return
+        if self._active_analysis == "Pack Performance":
+            assert self._pack_performance.handle_success(report)
+            return
         assert isinstance(report, str)
         self.report_for(self._active_analysis).setPlainText(report)
         self.statusBar().showMessage(f"{self._active_analysis} analysis complete")
@@ -887,6 +884,9 @@ class MainWindow(QMainWindow):
         assert self._active_analysis is not None
         if self._active_analysis == "Battery Pack Management":
             self._show_pack_message(str(exc), error=True)
+            return
+        if self._active_analysis == "Pack Performance":
+            self._pack_performance.handle_failure(exc)
             return
         if isinstance(exc, UnsupportedFirmwareError):
             message = f"Unsupported firmware.\n{exc}"
@@ -919,6 +919,9 @@ class MainWindow(QMainWindow):
             self._close_after_worker = False
             self.close()
             return
+        self._pack_performance.worker_finished(
+            finished_analysis == "Pack Performance"
+        )
         if finished_analysis == "Battery Pack Management":
             pending = self._pending_pack_lookup
             self._pending_pack_lookup = None

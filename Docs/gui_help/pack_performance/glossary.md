@@ -8,3 +8,5 @@
 - **Minimum loaded voltage** — Lowest valid voltage selected during the event.
 - **Peak / average current** — Maximum and mean logged current within the bounded event.
 - **Owned history** — Observations whose source fingerprint is currently assigned to the selected Pack ID.
+- **Newest supported observation** — The retained observation selected by the existing history rules when stored evidence for the same event has more than one supported version.
+- **Read-only report** — A view of existing identities, associations and observations that performs no persistent write.
