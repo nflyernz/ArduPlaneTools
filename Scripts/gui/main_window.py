@@ -5,12 +5,16 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QCommandLinkButton,
+    QComboBox,
     QFileDialog,
+    QFormLayout,
     QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QTabWidget,
@@ -19,12 +23,18 @@ from PySide6.QtWidgets import (
 )
 
 from core.log_reader import UnsupportedFirmwareError
+from core.battery_pack_store import LogPackState
 
 from .autotune_adapter import analyse_autotune_log
 from .battery_adapter import analyse_battery_log
 from .docs_viewer import ModuleDocsWindow
 from .events_adapter import analyse_events_log
 from .landing_adapter import analyse_landing_log
+from .pack_management_adapter import (
+    BatteryPackManagementService,
+    PackManagementResult,
+    PackManagementState,
+)
 from .stall_adapter import analyse_stall_log
 from .takeoff_adapter import analyse_takeoff_log
 
@@ -56,14 +66,22 @@ _MODULE_DESCRIPTIONS = {
 }
 
 _CONNECTED_ANALYSES = frozenset(
-    ("Landing", "Events", "Battery", "AUTOTUNE", "TAKEOFF", "Stall")
+    (
+        "Landing",
+        "Events",
+        "Battery",
+        "Battery Pack Management",
+        "AUTOTUNE",
+        "TAKEOFF",
+        "Stall",
+    )
 )
 
 
 class _AnalysisWorker(QObject):
     """Run one analysis adapter call away from the GUI thread."""
 
-    succeeded = Signal(str)
+    succeeded = Signal(object)
     failed = Signal(object)
     finished = Signal()
 
@@ -95,6 +113,7 @@ class MainWindow(QMainWindow):
         landing_adapter=analyse_landing_log,
         events_adapter=analyse_events_log,
         battery_adapter=analyse_battery_log,
+        pack_management_service=None,
     ):
         super().__init__()
         self._selected_log: Path | None = None
@@ -108,6 +127,12 @@ class MainWindow(QMainWindow):
         self._landing_adapter = landing_adapter
         self._events_adapter = events_adapter
         self._battery_adapter = battery_adapter
+        self._pack_management_service = (
+            pack_management_service or BatteryPackManagementService()
+        )
+        self._pack_management_state: PackManagementState | None = None
+        self._pack_management_task: str | None = None
+        self._pending_pack_lookup: Path | None = None
         self._analysis_thread: QThread | None = None
         self._analysis_worker: _AnalysisWorker | None = None
         self._active_analysis: str | None = None
@@ -119,6 +144,16 @@ class MainWindow(QMainWindow):
         self.events_analyse_button: QPushButton | None = None
         self.battery_analyse_button: QPushButton | None = None
         self.battery_read_only_notice: QLabel | None = None
+        self.pack_selected_bin_value: QLabel | None = None
+        self.pack_association_value: QLabel | None = None
+        self.pack_assign_combo: QComboBox | None = None
+        self.pack_assign_button: QPushButton | None = None
+        self.pack_create_edit: QLineEdit | None = None
+        self.pack_create_button: QPushButton | None = None
+        self.pack_rename_combo: QComboBox | None = None
+        self.pack_rename_edit: QLineEdit | None = None
+        self.pack_rename_button: QPushButton | None = None
+        self.pack_record_history_button: QPushButton | None = None
 
         self.setWindowTitle("ArduPlaneTools")
         self.setMinimumSize(900, 600)
@@ -235,12 +270,17 @@ class MainWindow(QMainWindow):
         """Update shared source state and its full-path presentation."""
         selected = path.expanduser().resolve()
         self._selected_log = selected
+        self._pack_management_state = None
+        self._pending_pack_lookup = None
         displayed = str(selected)
         self.source_path_edit.setText(displayed)
         self.source_path_edit.setToolTip(displayed)
         self.source_path_edit.setCursorPosition(0)
         self._update_analysis_controls()
         self._update_status("BIN selected")
+        self._refresh_pack_management_view("Association not loaded.")
+        if self.current_analysis == "Battery Pack Management":
+            self._request_pack_lookup()
 
     def start_autotune_analysis(self) -> None:
         """Start AUTOTUNE through the shared background execution path."""
@@ -277,6 +317,10 @@ class MainWindow(QMainWindow):
 
         assert self._selected_log is not None
         path = self._selected_log
+        self._start_worker(analysis, path, adapter)
+
+    def _start_worker(self, analysis: str, path: Path, adapter) -> None:
+        """Start one adapter using the shared GUI worker lifecycle."""
         thread = QThread(self)
         worker = _AnalysisWorker(path, adapter)
         worker.moveToThread(thread)
@@ -392,11 +436,14 @@ class MainWindow(QMainWindow):
             self.battery_read_only_notice = QLabel(
                 "<b>Read-only Battery Analysis</b><br>"
                 "Analyses the selected BIN without changing Pack IDs, log "
-                "associations or battery history. Pack tracking remains "
-                "available through the CLI."
+                "associations or battery history. Use the Battery Pack "
+                "Management tab for tracking and explicit history recording."
             )
             self.battery_read_only_notice.setWordWrap(True)
             layout.addWidget(self.battery_read_only_notice)
+
+        if name == "Battery Pack Management":
+            self._create_pack_management_controls(layout)
 
         report = QPlainTextEdit()
         report.setObjectName(f"{name.lower().replace(' ', '_')}_report")
@@ -407,6 +454,69 @@ class MainWindow(QMainWindow):
         layout.addWidget(report, 1)
         self._reports[name] = report
         return page
+
+    def _create_pack_management_controls(self, layout: QVBoxLayout) -> None:
+        """Build explicit pack identity and history controls."""
+        source_group = QGroupBox("Selected BIN")
+        source_form = QFormLayout(source_group)
+        self.pack_selected_bin_value = QLabel("No BIN selected")
+        self.pack_selected_bin_value.setWordWrap(True)
+        self.pack_association_value = QLabel("Unseen")
+        source_form.addRow("Source:", self.pack_selected_bin_value)
+        source_form.addRow("Association:", self.pack_association_value)
+        source_form.addRow(
+            "Scope:",
+            QLabel("The association applies to the entire source BIN."),
+        )
+        layout.addWidget(source_group)
+
+        assignment_group = QGroupBox("Assign existing Pack ID")
+        assignment_layout = QHBoxLayout(assignment_group)
+        self.pack_assign_combo = QComboBox()
+        self.pack_assign_button = QPushButton("Assign selected BIN")
+        self.pack_assign_button.clicked.connect(self.assign_existing_pack)
+        assignment_layout.addWidget(self.pack_assign_combo, 1)
+        assignment_layout.addWidget(self.pack_assign_button)
+        layout.addWidget(assignment_group)
+
+        create_group = QGroupBox("Create and assign Pack ID")
+        create_layout = QHBoxLayout(create_group)
+        self.pack_create_edit = QLineEdit()
+        self.pack_create_edit.setPlaceholderText("New Pack ID")
+        self.pack_create_edit.textChanged.connect(self._update_analysis_controls)
+        self.pack_create_button = QPushButton("Create and assign")
+        self.pack_create_button.clicked.connect(self.create_and_assign_pack)
+        create_layout.addWidget(self.pack_create_edit, 1)
+        create_layout.addWidget(self.pack_create_button)
+        layout.addWidget(create_group)
+
+        rename_group = QGroupBox("Rename existing Pack ID")
+        rename_form = QFormLayout(rename_group)
+        self.pack_rename_combo = QComboBox()
+        self.pack_rename_edit = QLineEdit()
+        self.pack_rename_edit.setPlaceholderText("Replacement Pack ID")
+        self.pack_rename_edit.textChanged.connect(self._update_analysis_controls)
+        self.pack_rename_button = QPushButton("Rename globally")
+        self.pack_rename_button.clicked.connect(self.rename_pack)
+        rename_form.addRow("Existing:", self.pack_rename_combo)
+        rename_form.addRow("Replacement:", self.pack_rename_edit)
+        rename_form.addRow(
+            "Effect:",
+            QLabel("Updates every associated BIN identity using this Pack ID."),
+        )
+        rename_form.addRow(self.pack_rename_button)
+        layout.addWidget(rename_group)
+
+        history_group = QGroupBox("Record AUTO takeoff history")
+        history_layout = QHBoxLayout(history_group)
+        history_layout.addWidget(
+            QLabel("Explicitly record supported AUTO takeoff evidence from this BIN."),
+            1,
+        )
+        self.pack_record_history_button = QPushButton("Record history")
+        self.pack_record_history_button.clicked.connect(self.record_pack_history)
+        history_layout.addWidget(self.pack_record_history_button)
+        layout.addWidget(history_group)
 
     @staticmethod
     def _context_message(name: str) -> str:
@@ -434,6 +544,12 @@ class MainWindow(QMainWindow):
                 "Reports use the existing Battery evidence pipeline without "
                 "changing pack tracking or history."
             )
+        elif name == "Battery Pack Management":
+            return (
+                "Battery Pack Management\n\n"
+                "Select a BIN log to load its persistent association. Changes "
+                "and history recording occur only after explicit confirmation."
+            )
         elif name == "AUTOTUNE":
             return (
                 "AUTOTUNE\n\n"
@@ -460,8 +576,219 @@ class MainWindow(QMainWindow):
             "Analysis execution is not connected in GUI Phase 1."
         )
 
+    def _request_pack_lookup(self) -> None:
+        """Resolve the current BIN association without writing persistence."""
+        if self._selected_log is None:
+            self._pack_management_state = None
+            self._refresh_pack_management_view("Select a BIN log to begin.")
+            return
+        if self._analysis_thread is not None:
+            self._pending_pack_lookup = self._selected_log
+            self._refresh_pack_management_view("Association lookup pending.")
+            return
+        path = self._selected_log
+        self._pack_management_task = "lookup"
+        self._refresh_pack_management_view("Identifying source BIN…")
+        self._start_worker(
+            "Battery Pack Management",
+            path,
+            self._pack_management_service.lookup,
+        )
+
+    def assign_existing_pack(self) -> None:
+        """Confirm and assign the selected BIN to a known Pack ID."""
+        state = self._current_pack_state()
+        if state is None or self.pack_assign_combo is None:
+            return
+        pack_id = self.pack_assign_combo.currentText()
+        if (
+            state.association.state is LogPackState.TRACKED
+            and state.association.pack_id == pack_id
+        ):
+            self._show_pack_message(f"Pack assignment is already {pack_id}.")
+            return
+        if not self._confirm_pack_action(
+            "Assign Battery Pack",
+            f"Source BIN: {state.log_path.name}\n"
+            f"Current association: {self._association_text(state)}\n"
+            f"Proposed Pack ID: {pack_id}\n\n"
+            "Apply this association to the entire source BIN?",
+        ):
+            return
+        self._start_pack_mutation(
+            "assign",
+            state,
+            lambda _path: self._pack_management_service.assign_existing(
+                state,
+                pack_id,
+            ),
+        )
+
+    def create_and_assign_pack(self) -> None:
+        """Confirm atomic Pack ID creation and source assignment."""
+        state = self._current_pack_state()
+        if state is None or self.pack_create_edit is None:
+            return
+        pack_id = self.pack_create_edit.text().strip()
+        if not pack_id:
+            self._show_pack_message("Enter a new Pack ID.", error=True)
+            return
+        if not self._confirm_pack_action(
+            "Create Battery Pack",
+            f"Source BIN: {state.log_path.name}\n"
+            f"Current association: {self._association_text(state)}\n"
+            f"New Pack ID: {pack_id}\n\n"
+            "Create this Pack ID and associate the entire source BIN?",
+        ):
+            return
+        self._start_pack_mutation(
+            "create",
+            state,
+            lambda _path: self._pack_management_service.create_and_assign(
+                state,
+                pack_id,
+            ),
+        )
+
+    def rename_pack(self) -> None:
+        """Confirm a global Pack ID rename."""
+        state = self._current_pack_state()
+        if (
+            state is None
+            or self.pack_rename_combo is None
+            or self.pack_rename_edit is None
+        ):
+            return
+        old_id = self.pack_rename_combo.currentText()
+        new_id = self.pack_rename_edit.text().strip()
+        if not new_id:
+            self._show_pack_message("Enter a replacement Pack ID.", error=True)
+            return
+        if old_id == new_id:
+            self._show_pack_message("Pack ID is unchanged.")
+            return
+        if not self._confirm_pack_action(
+            "Rename Battery Pack",
+            f"Rename Pack ID {old_id} to {new_id}?\n\n"
+            "This updates every associated BIN identity, not only the selected BIN.",
+        ):
+            return
+        self._start_pack_mutation(
+            "rename",
+            state,
+            lambda _path: self._pack_management_service.rename(
+                state,
+                old_id,
+                new_id,
+            ),
+        )
+
+    def record_pack_history(self) -> None:
+        """Confirm explicit whole-BIN AUTO takeoff history recording."""
+        state = self._current_pack_state()
+        if (
+            state is None
+            or state.association.state is not LogPackState.TRACKED
+            or state.association.pack_id is None
+        ):
+            return
+        if not self._confirm_pack_action(
+            "Record Battery History",
+            f"Source BIN: {state.log_path.name}\n"
+            f"Tracked Pack ID: {state.association.pack_id}\n\n"
+            "Record all supported AUTO takeoff observations from this BIN?",
+        ):
+            return
+        self._start_pack_mutation(
+            "history",
+            state,
+            lambda _path: self._pack_management_service.record_history(state),
+        )
+
+    def _start_pack_mutation(self, task: str, state, adapter) -> None:
+        if self._analysis_thread is not None:
+            return
+        self._pack_management_task = task
+        self._show_pack_message("Operation in progress…")
+        self._start_worker("Battery Pack Management", state.log_path, adapter)
+
+    def _current_pack_state(self) -> PackManagementState | None:
+        state = self._pack_management_state
+        if (
+            state is None
+            or self._selected_log is None
+            or state.log_path != self._selected_log
+            or self._analysis_thread is not None
+        ):
+            return None
+        return state
+
+    @staticmethod
+    def _association_text(state: PackManagementState) -> str:
+        if state.association.state is LogPackState.TRACKED:
+            return f"Tracked — {state.association.pack_id}"
+        if state.association.state is LogPackState.NOT_TRACKED:
+            return "Not tracked"
+        return "Unseen"
+
+    def _refresh_pack_management_view(self, message: str | None = None) -> None:
+        """Render selected source and the latest persisted read-only state."""
+        if self.pack_selected_bin_value is None:
+            return
+        if self._selected_log is None:
+            self.pack_selected_bin_value.setText("No BIN selected")
+            self.pack_association_value.setText("Unseen")
+            pack_ids = ()
+        else:
+            self.pack_selected_bin_value.setText(self._selected_log.name)
+            state = self._pack_management_state
+            if state is not None and state.log_path == self._selected_log:
+                self.pack_association_value.setText(self._association_text(state))
+                pack_ids = state.pack_ids
+            else:
+                self.pack_association_value.setText("Pending lookup")
+                pack_ids = ()
+
+        for combo in (self.pack_assign_combo, self.pack_rename_combo):
+            if combo is not None:
+                current = combo.currentText()
+                combo.clear()
+                combo.addItems(pack_ids)
+                index = combo.findText(current)
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+        if message is not None:
+            self.report_for("Battery Pack Management").setPlainText(message)
+        self._update_analysis_controls()
+
+    def _show_pack_message(self, message: str, *, error: bool = False) -> None:
+        heading = "Battery Pack Management Error" if error else "Battery Pack Management"
+        self.report_for("Battery Pack Management").setPlainText(
+            f"{heading}\n{'=' * len(heading)}\n{message}"
+        )
+        self.statusBar().showMessage(message)
+
+    def _confirm_pack_action(self, title: str, message: str) -> bool:
+        return (
+            QMessageBox.question(
+                self,
+                title,
+                message,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            is QMessageBox.StandardButton.Yes
+        )
+
     def _on_tab_changed(self, _index: int) -> None:
         self._update_status()
+        if self.current_analysis == "Battery Pack Management":
+            state = self._pack_management_state
+            if (
+                self._selected_log is not None
+                and (state is None or state.log_path != self._selected_log)
+            ):
+                self._request_pack_lookup()
 
     def _selection_error(self, analysis: str) -> str | None:
         if self._selected_log is None:
@@ -487,6 +814,42 @@ class MainWindow(QMainWindow):
                 button.setEnabled(
                     not busy and valid and not self._close_after_worker
                 )
+        pack_ready = (
+            not busy
+            and not self._close_after_worker
+            and self._current_pack_state() is not None
+        )
+        pack_ids = (
+            self._pack_management_state.pack_ids
+            if self._pack_management_state is not None
+            else ()
+        )
+        if self.pack_assign_button is not None:
+            self.pack_assign_button.setEnabled(pack_ready and bool(pack_ids))
+        if self.pack_create_button is not None:
+            self.pack_create_button.setEnabled(
+                pack_ready
+                and self.pack_create_edit is not None
+                and bool(self.pack_create_edit.text().strip())
+            )
+        if self.pack_rename_button is not None:
+            self.pack_rename_button.setEnabled(
+                pack_ready
+                and bool(pack_ids)
+                and self.pack_rename_edit is not None
+                and bool(self.pack_rename_edit.text().strip())
+            )
+        if self.pack_record_history_button is not None:
+            association = (
+                self._pack_management_state.association
+                if self._pack_management_state is not None
+                else None
+            )
+            self.pack_record_history_button.setEnabled(
+                pack_ready
+                and association is not None
+                and association.state is LogPackState.TRACKED
+            )
         self.choose_log_button.setEnabled(not busy and not self._close_after_worker)
 
     def _set_analysis_busy(self, busy: bool) -> None:
@@ -503,15 +866,22 @@ class MainWindow(QMainWindow):
                 button.setText("Analysing…" if is_active else "Analyse")
         self._update_analysis_controls()
 
-    @Slot(str)
-    def _analysis_succeeded(self, report: str) -> None:
+    @Slot(object)
+    def _analysis_succeeded(self, report: object) -> None:
         assert self._active_analysis is not None
+        if self._active_analysis == "Battery Pack Management":
+            self._pack_management_succeeded(report)
+            return
+        assert isinstance(report, str)
         self.report_for(self._active_analysis).setPlainText(report)
         self.statusBar().showMessage(f"{self._active_analysis} analysis complete")
 
     @Slot(object)
     def _analysis_failed(self, exc: Exception) -> None:
         assert self._active_analysis is not None
+        if self._active_analysis == "Battery Pack Management":
+            self._show_pack_message(str(exc), error=True)
+            return
         if isinstance(exc, UnsupportedFirmwareError):
             message = f"Unsupported firmware.\n{exc}"
         elif isinstance(exc, OSError):
@@ -533,13 +903,46 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _analysis_thread_finished(self) -> None:
+        finished_analysis = self._active_analysis
         self._analysis_thread = None
         self._analysis_worker = None
         self._active_analysis = None
+        self._pack_management_task = None
         self._set_analysis_busy(False)
         if self._close_after_worker:
             self._close_after_worker = False
             self.close()
+            return
+        if finished_analysis == "Battery Pack Management":
+            pending = self._pending_pack_lookup
+            self._pending_pack_lookup = None
+            if pending is not None and pending == self._selected_log:
+                self._request_pack_lookup()
+
+    def _pack_management_succeeded(self, result: object) -> None:
+        if isinstance(result, PackManagementResult):
+            state = result.state
+            message = result.message
+            if self.pack_create_edit is not None and result.changed:
+                self.pack_create_edit.clear()
+            if self.pack_rename_edit is not None and result.changed:
+                self.pack_rename_edit.clear()
+        elif isinstance(result, PackManagementState):
+            state = result
+            message = "Persistent association loaded."
+        else:
+            self._show_pack_message(
+                "Management operation returned an unexpected result.",
+                error=True,
+            )
+            return
+
+        if self._selected_log == state.log_path:
+            self._pack_management_state = state
+            self._refresh_pack_management_view(message)
+            self.statusBar().showMessage(message)
+        elif self._selected_log is not None:
+            self._pending_pack_lookup = self._selected_log
 
     def _update_status(self, action: str | None = None) -> None:
         source = str(self._selected_log) if self._selected_log else "no BIN selected"
