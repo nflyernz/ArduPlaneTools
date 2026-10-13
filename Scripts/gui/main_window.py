@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from core.log_reader import UnsupportedFirmwareError
 
 from .autotune_adapter import analyse_autotune_log
+from .battery_adapter import analyse_battery_log
 from .docs_viewer import ModuleDocsWindow
 from .events_adapter import analyse_events_log
 from .landing_adapter import analyse_landing_log
@@ -55,7 +56,7 @@ _MODULE_DESCRIPTIONS = {
 }
 
 _CONNECTED_ANALYSES = frozenset(
-    ("Landing", "Events", "AUTOTUNE", "TAKEOFF", "Stall")
+    ("Landing", "Events", "Battery", "AUTOTUNE", "TAKEOFF", "Stall")
 )
 
 
@@ -93,6 +94,7 @@ class MainWindow(QMainWindow):
         stall_adapter=analyse_stall_log,
         landing_adapter=analyse_landing_log,
         events_adapter=analyse_events_log,
+        battery_adapter=analyse_battery_log,
     ):
         super().__init__()
         self._selected_log: Path | None = None
@@ -105,6 +107,7 @@ class MainWindow(QMainWindow):
         self._stall_adapter = stall_adapter
         self._landing_adapter = landing_adapter
         self._events_adapter = events_adapter
+        self._battery_adapter = battery_adapter
         self._analysis_thread: QThread | None = None
         self._analysis_worker: _AnalysisWorker | None = None
         self._active_analysis: str | None = None
@@ -114,6 +117,8 @@ class MainWindow(QMainWindow):
         self.stall_analyse_button: QPushButton | None = None
         self.landing_analyse_button: QPushButton | None = None
         self.events_analyse_button: QPushButton | None = None
+        self.battery_analyse_button: QPushButton | None = None
+        self.battery_read_only_notice: QLabel | None = None
 
         self.setWindowTitle("ArduPlaneTools")
         self.setMinimumSize(900, 600)
@@ -257,6 +262,10 @@ class MainWindow(QMainWindow):
         """Start Event Timeline through the shared background execution path."""
         self._start_analysis("Events", self._events_adapter)
 
+    def start_battery_analysis(self) -> None:
+        """Start read-only Battery Analysis through the shared worker."""
+        self._start_analysis("Battery", self._battery_adapter)
+
     def _start_analysis(self, analysis: str, adapter) -> None:
         """Validate the shared source and run one analysis at a time."""
         if self._analysis_thread is not None:
@@ -364,6 +373,9 @@ class MainWindow(QMainWindow):
             elif name == "Events":
                 self.events_analyse_button = analyse_button
                 analyse_button.clicked.connect(self.start_events_analysis)
+            elif name == "Battery":
+                self.battery_analyse_button = analyse_button
+                analyse_button.clicked.connect(self.start_battery_analysis)
             elif name == "AUTOTUNE":
                 self.autotune_analyse_button = analyse_button
                 analyse_button.clicked.connect(self.start_autotune_analysis)
@@ -375,6 +387,16 @@ class MainWindow(QMainWindow):
                 analyse_button.clicked.connect(self.start_stall_analysis)
             action_layout.addWidget(analyse_button)
         layout.addLayout(action_layout)
+
+        if name == "Battery":
+            self.battery_read_only_notice = QLabel(
+                "<b>Read-only Battery Analysis</b><br>"
+                "Analyses the selected BIN without changing Pack IDs, log "
+                "associations or battery history. Pack tracking remains "
+                "available through the CLI."
+            )
+            self.battery_read_only_notice.setWordWrap(True)
+            layout.addWidget(self.battery_read_only_notice)
 
         report = QPlainTextEdit()
         report.setObjectName(f"{name.lower().replace(' ', '_')}_report")
@@ -404,6 +426,13 @@ class MainWindow(QMainWindow):
                 "Events\n\n"
                 "Select a BIN log above, then choose Analyse.\n\n"
                 "Reports use the existing Event Timeline evidence pipeline."
+            )
+        elif name == "Battery":
+            return (
+                "Battery\n\n"
+                "Select a BIN log above, then choose Analyse.\n\n"
+                "Reports use the existing Battery evidence pipeline without "
+                "changing pack tracking or history."
             )
         elif name == "AUTOTUNE":
             return (
@@ -448,6 +477,7 @@ class MainWindow(QMainWindow):
         for analysis, button in (
             ("Landing", self.landing_analyse_button),
             ("Events", self.events_analyse_button),
+            ("Battery", self.battery_analyse_button),
             ("TAKEOFF", self.takeoff_analyse_button),
             ("AUTOTUNE", self.autotune_analyse_button),
             ("Stall", self.stall_analyse_button),
@@ -463,6 +493,7 @@ class MainWindow(QMainWindow):
         for analysis, button in (
             ("Landing", self.landing_analyse_button),
             ("Events", self.events_analyse_button),
+            ("Battery", self.battery_analyse_button),
             ("TAKEOFF", self.takeoff_analyse_button),
             ("AUTOTUNE", self.autotune_analyse_button),
             ("Stall", self.stall_analyse_button),
