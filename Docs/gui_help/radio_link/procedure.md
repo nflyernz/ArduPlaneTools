@@ -29,4 +29,18 @@ Transmitter shutdown is one controlled way to interrupt RC input. It does not ex
 3. Open **Show detailed evidence** to inspect sampled RC-input invalid boundaries, short and long failsafe messages, mode response, recovery, timing qualifications and commanded-output evidence.
 4. Treat Plane's BIN failsafe evidence as authoritative for aircraft response. BIN timestamps describe logged and sampled observations; they do not establish the exact physical RF-loss instant.
 
-Aircraft BIN evidence does not provide transmitter-side RF margin, transmitter power state, packet rate or distance. Optional EdgeTX CSV evidence is a separate transmitter-side source and is currently available through the CLI workflow, subject to its pairing and alignment requirements.
+Aircraft BIN evidence does not provide transmitter-side RF margin, transmitter power state, packet rate or distance.
+
+## Optional EdgeTX CSV recording and analysis
+
+This optional recording is a separate transmitter-side source that supplements the aircraft ground test. It does not change the physical test method or the aircraft BIN evidence.
+
+1. Before the controlled test, enable EdgeTX transmitter CSV logging while using the intended model and telemetry configuration.
+2. After the test, retain the original transmitter CSV together with its corresponding aircraft BIN. CSV clock times may differ from aircraft GPS time, so session pairing and timeline alignment require careful review.
+3. In the GUI, analyse the aircraft BIN first. Then choose **Discover nearby** to inspect CSV files beside the BIN, or **Browse CSV…** to choose a file elsewhere.
+4. Inspect each candidate's diagnostic hints. Choose **Auto pair** only when the application identifies exactly one eligible candidate.
+5. Choose **Use selected** to explicitly associate the selected CSV with the analysed BIN. Explicit selection records the user's choice; it is not proof that the BIN and CSV belong to the same flight or session.
+6. Review the reported pairing status, alignment status, telemetry availability and warnings. Distinguish session-wide RF observations from episode-specific measurements. RF observations are not necessarily measurements at the aircraft's logged failsafe boundaries.
+7. Choose **Remove CSV evidence** to remove the optional transmitter evidence and return to the cached BIN-only report. This does not delete the CSV or rerun the aircraft analysis.
+
+Missing or zero-filled transmitter telemetry is unavailable evidence, not a measured RF-link failure. Transmitter evidence must not alter the Plane failsafe episodes or aircraft response established from the BIN.
