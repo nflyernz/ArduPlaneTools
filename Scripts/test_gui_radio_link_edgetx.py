@@ -269,6 +269,11 @@ def test_optional_workflow_keeps_bin_cache_and_removes_only_overlay(
     widget.remove_overlay_button.click()
     assert widget.report.toPlainText() == "aircraft detail"
     assert widget.result is not None
+    assert widget.remove_overlay_button.text() == "Remove CSV evidence"
+    widget.summary_button.click()
+    assert widget.report.toPlainText() == "aircraft summary"
+    widget.detail_button.click()
+    assert widget.report.toPlainText() == "aircraft detail"
 
     widget.use_candidate_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
@@ -276,6 +281,43 @@ def test_optional_workflow_keeps_bin_cache_and_removes_only_overlay(
     assert adapter_calls == [widget.result.source_path]
     assert not (tmp_path / "packs.json").exists()
     assert not (tmp_path / "history.json").exists()
+
+
+def test_csv_controls_fit_minimum_window_and_preserve_action_order(
+    qt_app, tmp_path, make_window
+):
+    window = make_window(
+        lambda path: RadioLinkGuiResult(
+            path, "summary", "detail", object(), object()
+        )
+    )
+    window.resize(window.minimumSize())
+    window.show_analysis_tab("Radio Link")
+    qt_app.processEvents()
+    widget = window._radio_link.widget
+
+    action_buttons = (
+        widget.discover_button,
+        widget.automatic_button,
+        widget.browse_button,
+        widget.use_candidate_button,
+        widget.remove_overlay_button,
+    )
+    assert widget.candidate_combo.width() >= 400
+    assert widget.candidate_combo.geometry().bottom() < min(
+        button.geometry().top() for button in action_buttons
+    )
+    assert all(button.geometry().left() >= 0 for button in action_buttons)
+    assert all(
+        button.geometry().right() <= widget.contentsRect().right()
+        for button in action_buttons
+    )
+    assert widget.browse_button.geometry().right() < (
+        widget.use_candidate_button.geometry().left()
+    )
+    assert widget.browse_button.geometry().top() == (
+        widget.use_candidate_button.geometry().top()
+    )
 
 
 def test_malformed_candidate_failure_preserves_bin_and_allows_retry(
