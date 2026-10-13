@@ -11,19 +11,11 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication
-
 from core.events import EventType, TimelineEvent
 from core.flight_window import FlightWindow
 from core.log_reader import UnsupportedFirmwareError
 from gui import MainWindow
 import gui.events_adapter as adapter_module
-
-
-@pytest.fixture(scope="module")
-def qt_app():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 @pytest.fixture
