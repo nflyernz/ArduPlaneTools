@@ -1,6 +1,6 @@
 # Event Timeline
 
-Event Timeline presents a chronological view of selected events inside one detected flight window from an ArduPlane DataFlash BIN. The current GUI tab is not yet connected; use the CLI workflow to select a BIN and, when needed, a flight.
+Event Timeline presents a chronological view of selected events inside detected flight windows from an ArduPlane DataFlash BIN. Select one BIN in the GUI and choose **Analyse** to review every detected flight in order. The CLI workflow continues to let you select one flight when a BIN contains multiple flights.
 
 The timeline currently merges firmware `MSG` records, landing-controller stage changes from `LAND`, and flight-mode records from `MODE`. Each line includes log-relative time, event type, and source detail. LAND telemetry is continuous, so only stage changes are emitted.
 

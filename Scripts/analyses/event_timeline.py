@@ -7,6 +7,33 @@ from core.log_reader import (
 from core.time import format_time
 
 
+def format_event_timeline(log_path, flight_window, events) -> str:
+    """Return the existing Event Timeline presentation for one flight."""
+    lines = [
+        "Event Timeline",
+        "=" * 70,
+        f"Log    : {log_path.name}",
+        (
+            "Window : "
+            f"{format_time(flight_window.start_us)}"
+            " -> "
+            f"{format_time(flight_window.end_us)}"
+        ),
+        f"Events : {len(events)}",
+        "",
+    ]
+    if not events:
+        lines.append("No events found.")
+    else:
+        lines.extend(
+            f"{format_time(event.time_us)}  "
+            f"{event.event.value:<14}"
+            f"{event.detail}"
+            for event in events
+        )
+    return "\n".join(lines)
+
+
 class EventTimelineAnalysis:
     """
     Present a chronological event timeline for a selected flight.
@@ -116,35 +143,4 @@ class EventTimelineAnalysis:
         events,
     ):
 
-        print()
-        print("Event Timeline")
-        print("=" * 70)
-
-        print(
-            f"Log    : {log_path.name}"
-        )
-
-        print(
-            f"Window : "
-            f"{format_time(flight_window.start_us)}"
-            f" -> "
-            f"{format_time(flight_window.end_us)}"
-        )
-
-        print(
-            f"Events : {len(events)}"
-        )
-
-        print()
-
-        if not events:
-            print("No events found.")
-            return
-
-        for event in events:
-
-            print(
-                f"{format_time(event.time_us)}  "
-                f"{event.event.value:<14}"
-                f"{event.detail}"
-            )
+        print("\n" + format_event_timeline(log_path, flight_window, events))
