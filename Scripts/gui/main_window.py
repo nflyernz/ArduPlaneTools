@@ -22,6 +22,7 @@ from core.log_reader import UnsupportedFirmwareError
 
 from .autotune_adapter import analyse_autotune_log
 from .docs_viewer import ModuleDocsWindow
+from .events_adapter import analyse_events_log
 from .landing_adapter import analyse_landing_log
 from .stall_adapter import analyse_stall_log
 from .takeoff_adapter import analyse_takeoff_log
@@ -53,7 +54,9 @@ _MODULE_DESCRIPTIONS = {
     "Stall": "Review FBWA slow-flight and probable attitude-departure evidence.",
 }
 
-_CONNECTED_ANALYSES = frozenset(("Landing", "AUTOTUNE", "TAKEOFF", "Stall"))
+_CONNECTED_ANALYSES = frozenset(
+    ("Landing", "Events", "AUTOTUNE", "TAKEOFF", "Stall")
+)
 
 
 class _AnalysisWorker(QObject):
@@ -89,6 +92,7 @@ class MainWindow(QMainWindow):
         takeoff_adapter=analyse_takeoff_log,
         stall_adapter=analyse_stall_log,
         landing_adapter=analyse_landing_log,
+        events_adapter=analyse_events_log,
     ):
         super().__init__()
         self._selected_log: Path | None = None
@@ -100,6 +104,7 @@ class MainWindow(QMainWindow):
         self._takeoff_adapter = takeoff_adapter
         self._stall_adapter = stall_adapter
         self._landing_adapter = landing_adapter
+        self._events_adapter = events_adapter
         self._analysis_thread: QThread | None = None
         self._analysis_worker: _AnalysisWorker | None = None
         self._active_analysis: str | None = None
@@ -108,6 +113,7 @@ class MainWindow(QMainWindow):
         self.takeoff_analyse_button: QPushButton | None = None
         self.stall_analyse_button: QPushButton | None = None
         self.landing_analyse_button: QPushButton | None = None
+        self.events_analyse_button: QPushButton | None = None
 
         self.setWindowTitle("ArduPlaneTools")
         self.setMinimumSize(900, 600)
@@ -247,6 +253,10 @@ class MainWindow(QMainWindow):
         """Start Landing through the shared background execution path."""
         self._start_analysis("Landing", self._landing_adapter)
 
+    def start_events_analysis(self) -> None:
+        """Start Event Timeline through the shared background execution path."""
+        self._start_analysis("Events", self._events_adapter)
+
     def _start_analysis(self, analysis: str, adapter) -> None:
         """Validate the shared source and run one analysis at a time."""
         if self._analysis_thread is not None:
@@ -351,6 +361,9 @@ class MainWindow(QMainWindow):
             if name == "Landing":
                 self.landing_analyse_button = analyse_button
                 analyse_button.clicked.connect(self.start_landing_analysis)
+            elif name == "Events":
+                self.events_analyse_button = analyse_button
+                analyse_button.clicked.connect(self.start_events_analysis)
             elif name == "AUTOTUNE":
                 self.autotune_analyse_button = analyse_button
                 analyse_button.clicked.connect(self.start_autotune_analysis)
@@ -385,6 +398,12 @@ class MainWindow(QMainWindow):
                 "Landing\n\n"
                 "Select a BIN log above, then choose Analyse.\n\n"
                 "Reports use the existing Landing evidence pipeline."
+            )
+        elif name == "Events":
+            return (
+                "Events\n\n"
+                "Select a BIN log above, then choose Analyse.\n\n"
+                "Reports use the existing Event Timeline evidence pipeline."
             )
         elif name == "AUTOTUNE":
             return (
@@ -428,6 +447,7 @@ class MainWindow(QMainWindow):
         busy = self._analysis_thread is not None
         for analysis, button in (
             ("Landing", self.landing_analyse_button),
+            ("Events", self.events_analyse_button),
             ("TAKEOFF", self.takeoff_analyse_button),
             ("AUTOTUNE", self.autotune_analyse_button),
             ("Stall", self.stall_analyse_button),
@@ -442,6 +462,7 @@ class MainWindow(QMainWindow):
     def _set_analysis_busy(self, busy: bool) -> None:
         for analysis, button in (
             ("Landing", self.landing_analyse_button),
+            ("Events", self.events_analyse_button),
             ("TAKEOFF", self.takeoff_analyse_button),
             ("AUTOTUNE", self.autotune_analyse_button),
             ("Stall", self.stall_analyse_button),
