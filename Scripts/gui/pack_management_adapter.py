@@ -41,6 +41,7 @@ class PackManagementResult:
     message: str
     changed: bool
     observations_added: int | None = None
+    selected_pack_id: str | None = None
 
 
 class BatteryPackManagementService:
@@ -134,6 +135,7 @@ class BatteryPackManagementService:
             self._state(path, fingerprint, reloaded),
             f"Renamed Pack ID {old_id} to {new_id} for all associated BINs.",
             True,
+            selected_pack_id=new_id,
         )
 
     def record_history(

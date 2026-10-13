@@ -77,6 +77,8 @@ _CONNECTED_ANALYSES = frozenset(
     )
 )
 
+_EXECUTABLE_ANALYSES = _CONNECTED_ANALYSES - {"Battery Pack Management"}
+
 
 class _AnalysisWorker(QObject):
     """Run one analysis adapter call away from the GUI thread."""
@@ -408,7 +410,7 @@ class MainWindow(QMainWindow):
         action_layout.addWidget(docs_button)
         self.docs_buttons[name] = docs_button
 
-        if name in _CONNECTED_ANALYSES:
+        if name in _EXECUTABLE_ANALYSES:
             analyse_button = QPushButton("Analyse")
             analyse_button.setObjectName(f"{name.lower()}AnalyseButton")
             if name == "Landing":
@@ -426,7 +428,7 @@ class MainWindow(QMainWindow):
             elif name == "TAKEOFF":
                 self.takeoff_analyse_button = analyse_button
                 analyse_button.clicked.connect(self.start_takeoff_analysis)
-            else:
+            elif name == "Stall":
                 self.stall_analyse_button = analyse_button
                 analyse_button.clicked.connect(self.start_stall_analysis)
             action_layout.addWidget(analyse_button)
@@ -731,7 +733,11 @@ class MainWindow(QMainWindow):
             return "Not tracked"
         return "Unseen"
 
-    def _refresh_pack_management_view(self, message: str | None = None) -> None:
+    def _refresh_pack_management_view(
+        self,
+        message: str | None = None,
+        selected_pack_id: str | None = None,
+    ) -> None:
         """Render selected source and the latest persisted read-only state."""
         if self.pack_selected_bin_value is None:
             return
@@ -751,7 +757,7 @@ class MainWindow(QMainWindow):
 
         for combo in (self.pack_assign_combo, self.pack_rename_combo):
             if combo is not None:
-                current = combo.currentText()
+                current = selected_pack_id or combo.currentText()
                 combo.clear()
                 combo.addItems(pack_ids)
                 index = combo.findText(current)
@@ -777,7 +783,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Cancel,
             )
-            is QMessageBox.StandardButton.Yes
+            == QMessageBox.StandardButton.Yes
         )
 
     def _on_tab_changed(self, _index: int) -> None:
@@ -923,6 +929,7 @@ class MainWindow(QMainWindow):
         if isinstance(result, PackManagementResult):
             state = result.state
             message = result.message
+            selected_pack_id = result.selected_pack_id
             if self.pack_create_edit is not None and result.changed:
                 self.pack_create_edit.clear()
             if self.pack_rename_edit is not None and result.changed:
@@ -930,6 +937,7 @@ class MainWindow(QMainWindow):
         elif isinstance(result, PackManagementState):
             state = result
             message = "Persistent association loaded."
+            selected_pack_id = None
         else:
             self._show_pack_message(
                 "Management operation returned an unexpected result.",
@@ -939,7 +947,7 @@ class MainWindow(QMainWindow):
 
         if self._selected_log == state.log_path:
             self._pack_management_state = state
-            self._refresh_pack_management_view(message)
+            self._refresh_pack_management_view(message, selected_pack_id)
             self.statusBar().showMessage(message)
         elif self._selected_log is not None:
             self._pending_pack_lookup = self._selected_log
