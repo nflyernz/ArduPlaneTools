@@ -186,9 +186,10 @@ def test_tab_switching_updates_visible_module_context(qt_app, window):
     assert window.current_analysis == "Range-Walk Comparison"
     assert window.analysis_tabs.currentWidget().isVisible()
     report = window.report_for("Range-Walk Comparison").toPlainText()
-    assert "EdgeTX CSV recordings" in report
-    assert "shared BIN selection does not apply" in report
-    assert "analysis not connected" in window.statusBar().currentMessage()
+    assert "Range-Walk CSV / marker preview" in report
+    assert "CSV/marker preview ready; comparison not connected" in (
+        window.statusBar().currentMessage()
+    )
 
 
 def test_shell_interactions_do_not_execute_landing_analysis(
