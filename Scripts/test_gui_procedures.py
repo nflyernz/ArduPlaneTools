@@ -64,12 +64,31 @@ def test_only_radio_link_and_stall_have_test_procedure_buttons(window):
             (
                 "Safe preparation",
                 "Isolate propulsion",
+                "Recording boundaries",
+                "fresh flight-controller power-on session",
+                "fresh transmitter power-on and CSV-logging session",
+                "Do not combine recordings across power cycles",
+                "CSV logging stops at shutdown",
+                "separate transmitter session",
+                "no continuous transmitter telemetry",
+                "do not prove that a BIN and CSV belong",
                 "short-failsafe response",
                 "long-failsafe response",
                 "Restore valid RC input",
                 "does not exercise every",
                 "Aircraft BIN evidence",
                 "transmitter-side source",
+                "Optional EdgeTX CSV recording and analysis",
+                "Discover nearby",
+                "Auto pair",
+                "exactly one eligible candidate",
+                "Use selected",
+                "not proof that the BIN and CSV belong",
+                "pairing status",
+                "alignment status",
+                "not necessarily measurements",
+                "Remove CSV evidence",
+                "not a measured RF-link failure",
             ),
         ),
         (
@@ -120,6 +139,21 @@ def test_procedure_files_are_local_nonempty_markdown():
         assert path.is_file()
         assert text.startswith("# ")
         assert len(text.splitlines()) > 20
+
+
+def test_radio_link_procedure_keeps_aircraft_and_transmitter_sessions_separate():
+    text = (DOCS_ROOT / "radio_link" / "procedure.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "**Aircraft BIN session:**" in text
+    assert "power down the aircraft safely to end that session" in text
+    assert "**EdgeTX CSV session:**" in text
+    assert "transmitter is safely powered down" in text
+    assert "Do not combine recordings across power cycles" in text
+    assert "recording made after restarting the transmitter" in text
+    assert "no continuous transmitter telemetry across the power-off interval" in text
+    assert "boundaries alone do not prove that a BIN and CSV belong" in text
 
 
 def test_docs_and_procedure_windows_coexist_and_retain_separate_identity(

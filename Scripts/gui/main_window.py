@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
         pack_management_service=None,
         pack_performance_service=None,
         radio_link_adapter=analyse_radio_link_log,
+        radio_link_csv_service=None,
     ):
         super().__init__()
         self._selected_log: Path | None = None
@@ -103,6 +104,7 @@ class MainWindow(QMainWindow):
         )
         self._radio_link = RadioLinkController(
             radio_link_adapter,
+            radio_link_csv_service,
             self._start_worker,
             lambda: self._selected_log,
             lambda: self._selection_error("Radio Link"),

@@ -1,8 +1,11 @@
-"""Focused Qt controls for aircraft-BIN Radio Link evidence."""
+"""Focused Qt controls for BIN Radio Link and optional EdgeTX evidence."""
 
 from pathlib import Path
 
 from PySide6.QtWidgets import (
+    QComboBox,
+    QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -11,44 +14,107 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .radio_link_adapter import RadioLinkGuiResult
+from .radio_link_adapter import (
+    EdgeTxCandidateSet,
+    EdgeTxGuiOverlay,
+    EdgeTxOverlayRequest,
+    RadioLinkCsvService,
+    RadioLinkGuiResult,
+    automatic_overlay_result,
+)
 
 
 class RadioLinkWidget(QWidget):
-    """Explicit analysis and cached summary/detail report views."""
+    """Aircraft evidence with a separately controlled transmitter overlay."""
 
-    def __init__(self, analyse, parent=None):
+    def __init__(
+        self,
+        analyse,
+        discover,
+        automatic,
+        explicit,
+        browse,
+        parent=None,
+    ):
         super().__init__(parent)
         self._result: RadioLinkGuiResult | None = None
+        self._candidates: EdgeTxCandidateSet | None = None
+        self._overlay: EdgeTxGuiOverlay | None = None
         self._view: str | None = None
         self._busy = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
         notice = QLabel(
-            "<b>Aircraft BIN evidence only</b><br>"
-            "Optional EdgeTX CSV pairing and RF overlay are not yet supported "
-            "in the GUI. The CLI retains that optional workflow."
+            "<b>Aircraft BIN evidence is authoritative</b><br>"
+            "Optional EdgeTX CSV evidence is shown separately and cannot alter "
+            "aircraft failsafe episodes or response."
         )
         notice.setWordWrap(True)
         layout.addWidget(notice)
         self.bin_only_notice = notice
 
-        controls = QHBoxLayout()
-        controls.addStretch(1)
+        report_controls = QHBoxLayout()
+        report_controls.addStretch(1)
         self.summary_button = QPushButton("Show summary")
         self.summary_button.setObjectName("radioLinkSummaryButton")
         self.summary_button.clicked.connect(self.show_summary)
-        controls.addWidget(self.summary_button)
+        report_controls.addWidget(self.summary_button)
         self.detail_button = QPushButton("Show detailed evidence")
         self.detail_button.setObjectName("radioLinkDetailButton")
         self.detail_button.clicked.connect(self.show_detail)
-        controls.addWidget(self.detail_button)
+        report_controls.addWidget(self.detail_button)
         self.analyse_button = QPushButton("Analyse")
         self.analyse_button.setObjectName("radioLinkAnalyseButton")
         self.analyse_button.clicked.connect(analyse)
-        controls.addWidget(self.analyse_button)
-        layout.addLayout(controls)
+        report_controls.addWidget(self.analyse_button)
+        layout.addLayout(report_controls)
+
+        csv_source_controls = QHBoxLayout()
+        csv_source_controls.addWidget(QLabel("Optional EdgeTX CSV:"))
+        self.candidate_combo = QComboBox()
+        self.candidate_combo.setObjectName("radioLinkCsvCandidateCombo")
+        self.candidate_combo.setMinimumContentsLength(22)
+        self.candidate_combo.currentIndexChanged.connect(
+            self._show_candidate_hint
+        )
+        csv_source_controls.addWidget(self.candidate_combo, 1)
+        layout.addLayout(csv_source_controls)
+
+        csv_action_controls = QHBoxLayout()
+        csv_action_controls.addStretch(1)
+        self.discover_button = QPushButton("Discover nearby")
+        self.discover_button.clicked.connect(discover)
+        csv_action_controls.addWidget(self.discover_button)
+        self.automatic_button = QPushButton("Auto pair")
+        self.automatic_button.clicked.connect(automatic)
+        csv_action_controls.addWidget(self.automatic_button)
+        self.browse_button = QPushButton("Browse CSV…")
+        self.browse_button.clicked.connect(browse)
+        csv_action_controls.addWidget(self.browse_button)
+        self.use_candidate_button = QPushButton("Use selected")
+        self.use_candidate_button.clicked.connect(explicit)
+        csv_action_controls.addWidget(self.use_candidate_button)
+        self.remove_overlay_button = QPushButton("Remove CSV evidence")
+        self.remove_overlay_button.clicked.connect(self.remove_overlay)
+        csv_action_controls.addWidget(self.remove_overlay_button)
+        layout.addLayout(csv_action_controls)
+
+        diagnostic_group = QGroupBox(
+            "Candidate diagnostic — preview only; does not establish pairing"
+        )
+        diagnostic_group.setObjectName("radioLinkCsvCandidateDiagnostic")
+        diagnostic_layout = QVBoxLayout(diagnostic_group)
+        diagnostic_layout.setContentsMargins(10, 8, 10, 8)
+        self.candidate_hint = QLabel(
+            "Analyse a BIN before discovering or selecting transmitter evidence."
+        )
+        self.candidate_hint.setObjectName("radioLinkCsvCandidateHint")
+        self.candidate_hint.setWordWrap(True)
+        self.candidate_hint.setMinimumHeight(44)
+        diagnostic_layout.addWidget(self.candidate_hint)
+        layout.addWidget(diagnostic_group)
+        self.candidate_diagnostic_group = diagnostic_group
 
         self.report = QPlainTextEdit()
         self.report.setObjectName("radio_link_report")
@@ -60,64 +126,169 @@ class RadioLinkWidget(QWidget):
             "The initial result is the summary view."
         )
         layout.addWidget(self.report, 1)
-        self._update_controls(False, False)
+        self._update_controls(False)
 
     @property
     def result(self) -> RadioLinkGuiResult | None:
         return self._result
 
+    @property
+    def candidates(self) -> EdgeTxCandidateSet | None:
+        return self._candidates
+
+    @property
+    def overlay(self) -> EdgeTxGuiOverlay | None:
+        return self._overlay
+
+    @property
+    def selected_candidate(self):
+        index = self.candidate_combo.currentIndex()
+        if self._candidates is None or index < 0:
+            return None
+        return self._candidates.candidates[index]
+
     def set_result(self, result: RadioLinkGuiResult) -> None:
-        """Cache both views and initially display the existing summary."""
+        """Cache both BIN views and invalidate any earlier CSV state."""
         self._result = result
         self._view = "summary"
-        self.report.setPlainText(result.summary)
-        self._update_controls(True, True)
+        self._clear_csv()
+        self._render()
+        self._update_controls(True)
 
     def clear_result(self, message: str) -> None:
         """Remove reports that no longer identify the selected source."""
         self._result = None
         self._view = None
+        self._clear_csv()
         self.report.setPlainText(message)
-        self._update_controls(not self._busy, False)
+        self._update_controls(not self._busy)
+
+    def set_candidates(self, candidates: EdgeTxCandidateSet) -> None:
+        """Show non-authoritative nearby candidate diagnostics."""
+        self._candidates = candidates
+        self.candidate_combo.clear()
+        for candidate in candidates.candidates:
+            self.candidate_combo.addItem(candidate.path.name)
+        if candidates.candidates:
+            self.candidate_combo.setCurrentIndex(0)
+            self._show_candidate_hint()
+        else:
+            self.candidate_hint.setText("No nearby EdgeTX CSV candidates found.")
+        self._update_controls(True)
+
+    def set_overlay(self, overlay: EdgeTxGuiOverlay) -> None:
+        """Attach formatted transmitter evidence without changing BIN evidence."""
+        self._overlay = overlay
+        self._render()
+        self._update_controls(True)
+
+    def remove_overlay(self) -> None:
+        """Remove only the optional transmitter evidence."""
+        self._overlay = None
+        self._render()
+        self._update_controls(self._result is not None)
 
     def show_summary(self) -> None:
-        """Show the cached summary without rerunning analysis."""
         if self._result is not None:
             self._view = "summary"
-            self.report.setPlainText(self._result.summary)
-            self._update_controls(not self._busy, True)
+            self._render()
+            self._update_controls(True)
 
     def show_detail(self) -> None:
-        """Show cached detailed aircraft evidence without rerunning analysis."""
         if self._result is not None:
             self._view = "detail"
-            self.report.setPlainText(self._result.detail)
-            self._update_controls(not self._busy, True)
+            self._render()
+            self._update_controls(True)
+
+    def show_csv_message(self, message: str) -> None:
+        self.candidate_hint.setText(message)
+
+    def render(self) -> None:
+        """Restore cached evidence after MainWindow installs its busy message."""
+        self._render()
 
     def set_busy(self, busy: bool, source_valid: bool) -> None:
-        """Reflect the shared worker state without discarding cached evidence."""
         self._busy = busy
         self.analyse_button.setText("Analysing…" if busy else "Analyse")
-        self._update_controls(not busy and source_valid, self._result is not None)
+        self._update_controls(not busy and source_valid)
 
-    def _update_controls(self, can_analyse: bool, has_result: bool) -> None:
-        self.analyse_button.setEnabled(can_analyse)
+    def _clear_csv(self) -> None:
+        self._candidates = None
+        self._overlay = None
+        self.candidate_combo.clear()
+        self.candidate_hint.setText(
+            "Discover nearby candidates or browse for an optional EdgeTX CSV."
+            if self._result is not None
+            else "Analyse a BIN before discovering or selecting transmitter evidence."
+        )
+
+    def _show_candidate_hint(self, _index: int | None = None) -> None:
+        candidate = self.selected_candidate
+        if candidate is not None:
+            if not candidate.usable:
+                classification = "Unusable candidate"
+            elif candidate.automatic_eligible:
+                classification = "Auto-eligible candidate"
+            else:
+                classification = "Explicit selection required"
+            self.candidate_hint.setText(
+                f"{classification}: {candidate.path.name}\n"
+                f"{candidate.hint}\n"
+                "Diagnostic preview only; pairing and alignment remain unverified."
+            )
+
+    def _render(self) -> None:
+        if self._result is None:
+            return
+        aircraft = (
+            self._result.detail if self._view == "detail" else self._result.summary
+        )
+        if self._overlay is None:
+            self.report.setPlainText(aircraft)
+            return
+        self.report.setPlainText(
+            f"{aircraft}\n\n"
+            "OPTIONAL EDGETX CSV EVIDENCE\n"
+            "============================\n"
+            f"CSV: {self._overlay.csv_path.name}\n"
+            f"{self._overlay.text}"
+        )
+
+    def _update_controls(self, source_valid: bool) -> None:
+        has_result = self._result is not None
+        available = not self._busy
+        self.analyse_button.setEnabled(available and source_valid)
         self.summary_button.setEnabled(
-            has_result and not self._busy and self._view != "summary"
+            available and has_result and self._view != "summary"
         )
         self.detail_button.setEnabled(
-            has_result and not self._busy and self._view != "detail"
+            available and has_result and self._view != "detail"
+        )
+        self.discover_button.setEnabled(available and has_result)
+        self.browse_button.setEnabled(available and has_result)
+        self.automatic_button.setEnabled(
+            available and has_result and self._candidates is not None
+        )
+        self.use_candidate_button.setEnabled(
+            available and self.selected_candidate is not None
+        )
+        self.candidate_combo.setEnabled(
+            available and self._candidates is not None
+        )
+        self.remove_overlay_button.setEnabled(
+            available and self._overlay is not None
         )
 
 
 class RadioLinkController:
-    """Join Radio Link controls to MainWindow's existing worker lifecycle."""
+    """Join Radio Link controls to MainWindow's shared worker lifecycle."""
 
     analysis_name = "Radio Link"
 
     def __init__(
         self,
         adapter,
+        csv_service,
         start_worker,
         selected_source,
         selection_error,
@@ -126,6 +297,7 @@ class RadioLinkController:
         show_status,
     ):
         self.adapter = adapter
+        self.csv_service = csv_service or RadioLinkCsvService()
         self.start_worker = start_worker
         self.selected_source = selected_source
         self.selection_error = selection_error
@@ -133,14 +305,22 @@ class RadioLinkController:
         self.show_error = show_error
         self.show_status = show_status
         self.widget: RadioLinkWidget | None = None
+        self._task: str | None = None
+        self._csv_request_id = 0
 
     def create_widget(self, parent=None) -> RadioLinkWidget:
-        widget = RadioLinkWidget(self.request_analysis, parent)
+        widget = RadioLinkWidget(
+            self.request_analysis,
+            self.request_discovery,
+            self.request_automatic,
+            self.request_selected,
+            self.browse_csv,
+            parent,
+        )
         self.widget = widget
         return widget
 
     def request_analysis(self) -> None:
-        """Validate and run exactly one BIN analysis operation."""
         if self.is_busy():
             return
         error = self.selection_error()
@@ -149,47 +329,149 @@ class RadioLinkController:
             return
         source = self.selected_source()
         assert source is not None
-        self._require_widget().clear_result(
-            f"Radio Link\n\nAnalysing {source}…"
-        )
+        self._csv_request_id += 1
+        self._task = "bin"
+        self._require_widget().clear_result(f"Radio Link\n\nAnalysing {source}…")
         self.start_worker(self.analysis_name, source, self.adapter)
 
+    def request_discovery(self) -> None:
+        if self.is_busy():
+            return
+        context = self._require_widget().result
+        if context is None:
+            return
+        self._task = "discover"
+        self._require_widget().show_csv_message("Discovering nearby CSV files…")
+        self.start_worker(self.analysis_name, context, self.csv_service.discover)
+        self._require_widget().render()
+
+    def request_automatic(self) -> None:
+        widget = self._require_widget()
+        if self.is_busy() or widget.result is None or widget.candidates is None:
+            return
+        self._csv_request_id += 1
+        outcome = automatic_overlay_result(
+            widget.result,
+            widget.candidates,
+            self._csv_request_id,
+        )
+        if isinstance(outcome, str):
+            widget.show_csv_message(outcome)
+            self.show_status(outcome)
+            return
+        widget.set_overlay(outcome)
+        widget.show_csv_message(f"Using automatically paired {outcome.csv_path.name}.")
+        self.show_status("Optional EdgeTX evidence displayed")
+
+    def request_selected(self) -> None:
+        widget = self._require_widget()
+        candidate = widget.selected_candidate
+        if self.is_busy() or widget.result is None or candidate is None:
+            return
+        self._start_explicit(candidate.path, candidate.session)
+
+    def browse_csv(self) -> None:
+        widget = self._require_widget()
+        if self.is_busy() or widget.result is None:
+            return
+        file_name, _selected_filter = QFileDialog.getOpenFileName(
+            widget,
+            "Select EdgeTX CSV telemetry",
+            str(widget.result.source_path.parent),
+            "EdgeTX CSV files (*.csv *.CSV)",
+        )
+        if file_name:
+            self._start_explicit(Path(file_name).expanduser().resolve())
+
     def source_changed(self, source: Path) -> None:
-        """Invalidate cached evidence when it no longer matches selection."""
         widget = self._require_widget()
         result = widget.result
         if result is not None and result.source_path != source:
+            self._csv_request_id += 1
             widget.clear_result(
                 "Radio Link\n\n"
                 "The selected BIN changed. Choose Analyse to load its evidence."
             )
 
     def handle_success(self, result: object) -> bool:
-        """Accept only a correctly sourced result from the Radio Link adapter."""
-        if not isinstance(result, RadioLinkGuiResult):
-            return False
-        if result.source_path != self.selected_source():
-            self._require_widget().clear_result(
-                "Radio Link\n\n"
-                "The selected BIN changed while analysis was running. "
-                "The previous result was not displayed."
+        widget = self._require_widget()
+        selected = self.selected_source()
+        if isinstance(result, RadioLinkGuiResult):
+            if result.source_path != selected:
+                widget.clear_result(
+                    "Radio Link\n\n"
+                    "The selected BIN changed while analysis was running. "
+                    "The previous result was not displayed."
+                )
+                self.show_status(
+                    "Radio Link result withheld after BIN selection changed"
+                )
+                return True
+            widget.set_result(result)
+            self.show_status(
+                "Radio Link summary ready — optional EdgeTX evidence is available"
             )
-            self.show_status("Radio Link result withheld after BIN selection changed")
             return True
-        self._require_widget().set_result(result)
-        self.show_status("Radio Link summary ready — detailed evidence is available")
-        return True
+        if isinstance(result, EdgeTxCandidateSet):
+            if result.source_path != selected or widget.result is None:
+                self.show_status("Stale EdgeTX candidate results were withheld")
+                return True
+            widget.set_candidates(result)
+            self.show_status(
+                f"Found {len(result.candidates)} nearby EdgeTX CSV candidate(s)"
+            )
+            return True
+        if isinstance(result, EdgeTxGuiOverlay):
+            if (
+                result.source_path != selected
+                or widget.result is None
+                or result.request_id != self._csv_request_id
+            ):
+                self.show_status("Stale EdgeTX overlay was withheld")
+                return True
+            widget.set_overlay(result)
+            widget.show_csv_message(
+                f"Using explicitly selected {result.csv_path.name}."
+            )
+            self.show_status("Optional EdgeTX evidence displayed")
+            return True
+        return False
 
     def handle_failure(self, exc: Exception) -> None:
-        self._require_widget().clear_result("Radio Link analysis failed.")
-        self.show_error(self.analysis_name, self._error_message(exc))
+        if self._task == "bin":
+            self._require_widget().clear_result("Radio Link analysis failed.")
+            self.show_error(self.analysis_name, self._bin_error_message(exc))
+            return
+        message = f"Unable to use EdgeTX CSV: {exc}"
+        self._require_widget().show_csv_message(message)
+        self._require_widget().render()
+        self.show_status(message)
 
     def set_busy(self, busy: bool) -> None:
         if self.widget is not None:
             self.widget.set_busy(busy, self.selection_error() is None)
+        if not busy:
+            self._task = None
+
+    def _start_explicit(self, path: Path, session=None) -> None:
+        widget = self._require_widget()
+        context = widget.result
+        if context is None:
+            return
+        self._csv_request_id += 1
+        request = EdgeTxOverlayRequest(
+            context,
+            path,
+            self._csv_request_id,
+            session,
+        )
+        self._task = "explicit"
+        widget.show_csv_message(f"Reading {path.name}…")
+        self.start_worker(self.analysis_name, request, self.csv_service.explicit)
+        widget.render()
 
     @staticmethod
-    def _error_message(exc: Exception) -> str:
+    def _bin_error_message(exc: Exception) -> str:
         from core.log_reader import UnsupportedFirmwareError
 
         if isinstance(exc, UnsupportedFirmwareError):
