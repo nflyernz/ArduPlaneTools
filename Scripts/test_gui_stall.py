@@ -12,19 +12,11 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication
-
 from analyses.stall import analyse_stall_flight_log
 import gui.stall_adapter as adapter_module
 from core.config import Config
 from core.log_reader import UnsupportedFirmwareError
 from gui import MainWindow
-
-
-@pytest.fixture(scope="module")
-def qt_app():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 @pytest.fixture
