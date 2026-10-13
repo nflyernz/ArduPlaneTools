@@ -2,11 +2,23 @@
 
 from pathlib import Path
 
+import pandas as pd
+
 from analyses.battery import format_battery_report
 from core.battery import BatteryProcessor
 from core.config import Config
 from core.log_reader import FlightReader
+from core.scope import filter_telemetry
 from core.time import format_time
+
+
+def _flight_battery_instances(flight_log, flight_window) -> list[int]:
+    """Return valid BAT instance identifiers observed inside one flight."""
+    battery = filter_telemetry(flight_log.get("BAT"), flight_window)
+    if battery is None or battery.empty or "Inst" not in battery.columns:
+        return []
+    instances = pd.to_numeric(battery["Inst"], errors="coerce").dropna()
+    return sorted({int(value) for value in instances})
 
 
 def analyse_battery_log(log_path: Path) -> str:
@@ -28,12 +40,7 @@ def analyse_battery_log(log_path: Path) -> str:
 
     reports = []
     for flight_index, flight_window in enumerate(flight_log.flights, start=1):
-        instances = BatteryProcessor(
-            flight_log,
-            flight_window,
-            0,
-            config=config,
-        ).available_instances()
+        instances = _flight_battery_instances(flight_log, flight_window)
         if not instances:
             reports.append(
                 "\n".join(
