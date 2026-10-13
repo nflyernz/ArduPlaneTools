@@ -32,9 +32,10 @@ from .docs_viewer import DocumentationController
 from .events_adapter import analyse_events_log
 from .landing_adapter import analyse_landing_log
 from .module_catalog import (
-    CONNECTED_ANALYSES as _CONNECTED_ANALYSES,
     EXECUTABLE_ANALYSES as _EXECUTABLE_ANALYSES,
     MODULE_DESCRIPTIONS as _MODULE_DESCRIPTIONS,
+    connection_description,
+    connection_status,
 )
 from .pack_management_adapter import (
     BatteryPackManagementService,
@@ -44,6 +45,7 @@ from .pack_management_adapter import (
 from .pack_performance_widget import PackPerformanceController
 from .radio_link_adapter import analyse_radio_link_log
 from .radio_link_widget import RadioLinkController
+from .range_walk_widget import RangeWalkPreviewController
 from .stall_adapter import analyse_stall_log
 from .takeoff_adapter import analyse_takeoff_log
 
@@ -77,6 +79,7 @@ class MainWindow(QMainWindow):
         pack_performance_service=None,
         radio_link_adapter=analyse_radio_link_log,
         radio_link_csv_service=None,
+        range_walk_adapter=None,
     ):
         super().__init__()
         self._selected_log: Path | None = None
@@ -110,6 +113,11 @@ class MainWindow(QMainWindow):
             lambda: self._selection_error("Radio Link"),
             lambda: self._analysis_thread is not None,
             self._show_analysis_error,
+            self.statusBar().showMessage,
+        )
+        self._range_walk = RangeWalkPreviewController(
+            range_walk_adapter, self._start_worker,
+            lambda: self._analysis_thread is not None,
             self.statusBar().showMessage,
         )
         self._pack_management_state: PackManagementState | None = None
@@ -334,11 +342,7 @@ class MainWindow(QMainWindow):
         modules.setHorizontalSpacing(10)
         modules.setVerticalSpacing(6)
         for index, name in enumerate(ANALYSIS_TABS):
-            connection = (
-                "Connected to the GUI"
-                if name in _CONNECTED_ANALYSES
-                else "Not yet connected to the GUI"
-            )
+            connection = connection_description(name)
             button = QCommandLinkButton(
                 name,
                 f"{_MODULE_DESCRIPTIONS[name]}\n{connection}",
@@ -416,6 +420,12 @@ class MainWindow(QMainWindow):
 
         if name == "Radio Link":
             widget = self._radio_link.create_widget(page)
+            layout.addWidget(widget, 1)
+            self._reports[name] = widget.report
+            return page
+
+        if name == "Range-Walk Comparison":
+            widget = self._range_walk.create_widget(page)
             layout.addWidget(widget, 1)
             self._reports[name] = widget.report
             return page
@@ -834,6 +844,7 @@ class MainWindow(QMainWindow):
         self.choose_log_button.setEnabled(not busy and not self._close_after_worker)
         self._pack_performance.set_busy(busy or self._close_after_worker)
         self._radio_link.set_busy(busy or self._close_after_worker)
+        self._range_walk.set_busy(busy or self._close_after_worker)
 
     def _set_analysis_busy(self, busy: bool) -> None:
         for analysis, button in (
@@ -861,6 +872,9 @@ class MainWindow(QMainWindow):
         if self._active_analysis == "Radio Link":
             assert self._radio_link.handle_success(report)
             return
+        if self._active_analysis == "Range-Walk Comparison":
+            assert self._range_walk.handle_success(report)
+            return
         assert isinstance(report, str)
         self.report_for(self._active_analysis).setPlainText(report)
         self.statusBar().showMessage(f"{self._active_analysis} analysis complete")
@@ -876,6 +890,9 @@ class MainWindow(QMainWindow):
             return
         if self._active_analysis == "Radio Link":
             self._radio_link.handle_failure(exc)
+            return
+        if self._active_analysis == "Range-Walk Comparison":
+            self._range_walk.handle_failure(exc)
             return
         if isinstance(exc, UnsupportedFirmwareError):
             message = f"Unsupported firmware.\n{exc}"
@@ -957,11 +974,7 @@ class MainWindow(QMainWindow):
                 f"{prefix}Overview — {source} — choose a module"
             )
             return
-        state = (
-            "ready"
-            if self.current_analysis in _CONNECTED_ANALYSES
-            else "analysis not connected"
-        )
+        state = connection_status(self.current_analysis)
         self.statusBar().showMessage(
             f"{prefix}{self.current_analysis} — {source} — {state}"
         )
