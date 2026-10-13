@@ -398,6 +398,145 @@ class BatteryPackManagementPresentation:
             print("Invalid selection.")
 
 
+def pack_performance_observations(pack_store, history_store, pack_id):
+    """Return retained observations currently owned by one physical pack."""
+    observations = []
+    for observation in history_store.newest_supported_observations():
+        association = pack_store.association_for(observation.source_sha256)
+        if (
+            association.state is LogPackState.TRACKED
+            and association.pack_id == pack_id
+        ):
+            observations.append(observation)
+    return sorted(observations, key=pack_performance_observation_sort_key)
+
+
+def pack_performance_event_order_key(observation):
+    """Order retained events within one source session."""
+    return (
+        observation.event_start_us,
+        observation.flight_start_us,
+        observation.flight_number,
+        observation.battery_instance,
+        observation.event_end_us,
+        observation.observation_id,
+    )
+
+
+def pack_performance_observation_sort_key(observation):
+    """Order displayed observations identically across CLI and GUI."""
+    return (
+        observation.recorded_at_utc is None,
+        observation.recorded_at_utc or "",
+        observation.source_filename,
+        observation.flight_number,
+        observation.battery_instance,
+        observation.event_start_us,
+    )
+
+
+def first_pack_takeoffs_by_session(observations):
+    """Return the earliest retained AUTO event for each source BIN."""
+    first_by_source = {}
+    for observation in observations:
+        current = first_by_source.get(observation.source_sha256)
+        if current is None or pack_performance_event_order_key(
+            observation
+        ) < pack_performance_event_order_key(current):
+            first_by_source[observation.source_sha256] = observation
+    return sorted(
+        first_by_source.values(), key=pack_performance_observation_sort_key
+    )
+
+
+def pack_performance_row(observation):
+    """Return one observation's existing user-visible values."""
+    date = (
+        observation.recorded_at_utc[:10]
+        if observation.recorded_at_utc is not None
+        else "Unavailable"
+    )
+    return (
+        date,
+        observation.source_filename,
+        str(observation.flight_number),
+        _format_value(observation.capacity_used_mah),
+        _format_value(observation.average_current_a),
+        _format_value(observation.peak_current_a),
+        _format_value(observation.pre_load_voltage_v),
+        _format_value(observation.minimum_loaded_voltage_v),
+        _format_value(observation.voltage_sag_v),
+        _format_value(observation.voltage_recovery_v),
+    )
+
+
+def format_pack_performance_table(observations):
+    """Format Pack Performance rows without changing established wording."""
+    lines = []
+    for index, observation in enumerate(observations, start=1):
+        (
+            date,
+            source,
+            flight,
+            capacity,
+            average_current,
+            peak_current,
+            pre_load_voltage,
+            minimum_loaded_voltage,
+            voltage_sag,
+            voltage_recovery,
+        ) = pack_performance_row(observation)
+        lines.extend(
+            (
+                "",
+                f"{index}. Date: {date} | Flight: {flight}",
+                f"   Source: {source}",
+                f"   Capacity used (mAh): {capacity}",
+                f"   Current (A): average {average_current} | peak {peak_current}",
+                "   Voltage (V): "
+                f"pre-load {pre_load_voltage} | "
+                f"minimum loaded {minimum_loaded_voltage}",
+                f"   Voltage response (V): sag {voltage_sag} | "
+                f"recovery {voltage_recovery}",
+            )
+        )
+    return "\n".join(lines)
+
+
+def format_pack_performance_report(pack_store, history_store, pack_id=None):
+    """Format the complete existing Pack Performance report."""
+    lines = ["PACK PERFORMANCE REPORT", "=" * 70]
+    if not pack_store.pack_ids:
+        lines.extend(("", "No known Battery Pack IDs."))
+        return "\n".join(lines)
+    if pack_id not in pack_store.pack_ids:
+        raise BatteryPackStoreError(f"Unknown Pack ID: {pack_id}")
+
+    observations = pack_performance_observations(
+        pack_store, history_store, pack_id
+    )
+    lines.extend(("", f"Pack ID: {pack_id}"))
+    if not observations:
+        lines.extend(
+            ("", "No stored AUTO takeoff observations for this Pack ID.")
+        )
+        return "\n".join(lines)
+
+    lines.extend(
+        (
+            "",
+            "FIRST TAKEOFF BY BATTERY SESSION",
+            format_pack_performance_table(
+                first_pack_takeoffs_by_session(observations)
+            ),
+            "",
+            "ALL AUTO TAKEOFFS",
+            format_pack_performance_table(observations),
+        )
+    )
+    return "\n".join(lines)
+
+
 class BatteryPackPerformancePresentation:
     """Present durable AUTO takeoff evidence for one physical battery pack."""
 
@@ -415,13 +554,9 @@ class BatteryPackPerformancePresentation:
             print(f"Battery Pack performance data unavailable: {exc}")
             return
 
-        print()
-        print("PACK PERFORMANCE REPORT")
-        print("=" * 70)
-
         if not pack_store.pack_ids:
             print()
-            print("No known Battery Pack IDs.")
+            print(format_pack_performance_report(pack_store, history_store))
             return
 
         pack_id = BatteryPackManagementPresentation._select_pack(
@@ -430,119 +565,29 @@ class BatteryPackPerformancePresentation:
         if pack_id is None:
             return
 
-        observations = []
-        for observation in history_store.newest_supported_observations():
-            association = pack_store.association_for(
-                observation.source_sha256
-            )
-            if (
-                association.state is LogPackState.TRACKED
-                and association.pack_id == pack_id
-            ):
-                observations.append(observation)
-
-        observations.sort(key=self._observation_sort_key)
-
         print()
-        print(f"Pack ID: {pack_id}")
-        if not observations:
-            print()
-            print("No stored AUTO takeoff observations for this Pack ID.")
-            return
-
-        first_takeoffs = self._first_takeoffs_by_session(observations)
-        print()
-        print("FIRST TAKEOFF BY BATTERY SESSION")
-        self._print_table(first_takeoffs)
-        print()
-        print("ALL AUTO TAKEOFFS")
-        self._print_table(observations)
+        print(format_pack_performance_report(pack_store, history_store, pack_id))
 
     @classmethod
     def _first_takeoffs_by_session(cls, observations):
         """Return the earliest retained AUTO event for each source BIN."""
-        first_by_source = {}
-        for observation in observations:
-            current = first_by_source.get(observation.source_sha256)
-            if current is None or cls._event_order_key(
-                observation
-            ) < cls._event_order_key(current):
-                first_by_source[observation.source_sha256] = observation
-        return sorted(first_by_source.values(), key=cls._observation_sort_key)
+        return first_pack_takeoffs_by_session(observations)
 
     @staticmethod
     def _event_order_key(observation):
-        return (
-            observation.event_start_us,
-            observation.flight_start_us,
-            observation.flight_number,
-            observation.battery_instance,
-            observation.event_end_us,
-            observation.observation_id,
-        )
+        return pack_performance_event_order_key(observation)
 
     @staticmethod
     def _observation_sort_key(observation):
-        return (
-            observation.recorded_at_utc is None,
-            observation.recorded_at_utc or "",
-            observation.source_filename,
-            observation.flight_number,
-            observation.battery_instance,
-            observation.event_start_us,
-        )
+        return pack_performance_observation_sort_key(observation)
 
     @classmethod
     def _print_table(cls, observations):
-        for index, observation in enumerate(observations, start=1):
-            (
-                date,
-                source,
-                flight,
-                capacity,
-                average_current,
-                peak_current,
-                pre_load_voltage,
-                minimum_loaded_voltage,
-                voltage_sag,
-                voltage_recovery,
-            ) = cls._row(observation)
-            print()
-            print(f"{index}. Date: {date} | Flight: {flight}")
-            print(f"   Source: {source}")
-            print(f"   Capacity used (mAh): {capacity}")
-            print(
-                f"   Current (A): average {average_current} | peak {peak_current}"
-            )
-            print(
-                "   Voltage (V): "
-                f"pre-load {pre_load_voltage} | "
-                f"minimum loaded {minimum_loaded_voltage}"
-            )
-            print(
-                f"   Voltage response (V): sag {voltage_sag} | "
-                f"recovery {voltage_recovery}"
-            )
+        print(format_pack_performance_table(observations), end="")
 
     @staticmethod
     def _row(observation):
-        date = (
-            observation.recorded_at_utc[:10]
-            if observation.recorded_at_utc is not None
-            else "Unavailable"
-        )
-        return (
-            date,
-            observation.source_filename,
-            str(observation.flight_number),
-            _format_value(observation.capacity_used_mah),
-            _format_value(observation.average_current_a),
-            _format_value(observation.peak_current_a),
-            _format_value(observation.pre_load_voltage_v),
-            _format_value(observation.minimum_loaded_voltage_v),
-            _format_value(observation.voltage_sag_v),
-            _format_value(observation.voltage_recovery_v),
-        )
+        return pack_performance_row(observation)
 
 
 class BatteryAnalysisPresentation:
