@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QThread, Slot
 from PySide6.QtWidgets import (
     QCommandLinkButton,
     QComboBox,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 from core.log_reader import UnsupportedFirmwareError
 from core.battery_pack_store import LogPackState
 
+from .analysis_worker import AnalysisWorker
 from .autotune_adapter import analyse_autotune_log
 from .battery_adapter import analyse_battery_log
 from .docs_viewer import ModuleDocsWindow
@@ -41,6 +42,8 @@ from .pack_management_adapter import (
     PackManagementState,
 )
 from .pack_performance_widget import PackPerformanceController
+from .radio_link_adapter import analyse_radio_link_log
+from .radio_link_widget import RadioLinkController
 from .stall_adapter import analyse_stall_log
 from .takeoff_adapter import analyse_takeoff_log
 
@@ -58,29 +61,6 @@ ANALYSIS_TABS = (
     "Stall",
 )
 
-class _AnalysisWorker(QObject):
-    """Run one analysis adapter call away from the GUI thread."""
-
-    succeeded = Signal(object)
-    failed = Signal(object)
-    finished = Signal()
-
-    def __init__(self, task_input, adapter):
-        super().__init__()
-        self._task_input = task_input
-        self._adapter = adapter
-
-    @Slot()
-    def run(self) -> None:
-        try:
-            report = self._adapter(self._task_input)
-        except Exception as exc:
-            self.failed.emit(exc)
-        else:
-            self.succeeded.emit(report)
-        finally:
-            self.finished.emit()
-
 
 class MainWindow(QMainWindow):
     """Resizable desktop shell with shared source selection and analysis tabs."""
@@ -95,6 +75,7 @@ class MainWindow(QMainWindow):
         battery_adapter=analyse_battery_log,
         pack_management_service=None,
         pack_performance_service=None,
+        radio_link_adapter=analyse_radio_link_log,
     ):
         super().__init__()
         self._selected_log: Path | None = None
@@ -117,11 +98,20 @@ class MainWindow(QMainWindow):
             lambda: self._analysis_thread is not None,
             self.statusBar().showMessage,
         )
+        self._radio_link = RadioLinkController(
+            radio_link_adapter,
+            self._start_worker,
+            lambda: self._selected_log,
+            lambda: self._selection_error("Radio Link"),
+            lambda: self._analysis_thread is not None,
+            self._show_analysis_error,
+            self.statusBar().showMessage,
+        )
         self._pack_management_state: PackManagementState | None = None
         self._pack_management_task: str | None = None
         self._pending_pack_lookup: Path | None = None
         self._analysis_thread: QThread | None = None
-        self._analysis_worker: _AnalysisWorker | None = None
+        self._analysis_worker: AnalysisWorker | None = None
         self._active_analysis: str | None = None
         self._close_after_worker = False
         self.autotune_analyse_button: QPushButton | None = None
@@ -191,7 +181,7 @@ class MainWindow(QMainWindow):
         return None
 
     @property
-    def _autotune_worker(self) -> _AnalysisWorker | None:
+    def _autotune_worker(self) -> AnalysisWorker | None:
         """Expose the active AUTOTUNE worker for existing lifecycle tests."""
         if self._active_analysis == "AUTOTUNE":
             return self._analysis_worker
@@ -266,6 +256,7 @@ class MainWindow(QMainWindow):
         self._update_analysis_controls()
         self._update_status("BIN selected")
         self._refresh_pack_management_view("Association not loaded.")
+        self._radio_link.source_changed(selected)
         if self.current_analysis == "Battery Pack Management":
             self._request_pack_lookup()
 
@@ -309,7 +300,7 @@ class MainWindow(QMainWindow):
     def _start_worker(self, analysis: str, path: Path, adapter) -> None:
         """Start one adapter using the shared GUI worker lifecycle."""
         thread = QThread(self)
-        worker = _AnalysisWorker(path, adapter)
+        worker = AnalysisWorker(path, adapter)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.succeeded.connect(self._analysis_succeeded)
@@ -434,6 +425,12 @@ class MainWindow(QMainWindow):
 
         if name == "Pack Performance":
             widget = self._pack_performance.create_widget(page)
+            layout.addWidget(widget, 1)
+            self._reports[name] = widget.report
+            return page
+
+        if name == "Radio Link":
+            widget = self._radio_link.create_widget(page)
             layout.addWidget(widget, 1)
             self._reports[name] = widget.report
             return page
@@ -851,6 +848,7 @@ class MainWindow(QMainWindow):
             )
         self.choose_log_button.setEnabled(not busy and not self._close_after_worker)
         self._pack_performance.set_busy(busy or self._close_after_worker)
+        self._radio_link.set_busy(busy or self._close_after_worker)
 
     def _set_analysis_busy(self, busy: bool) -> None:
         for analysis, button in (
@@ -875,6 +873,9 @@ class MainWindow(QMainWindow):
         if self._active_analysis == "Pack Performance":
             assert self._pack_performance.handle_success(report)
             return
+        if self._active_analysis == "Radio Link":
+            assert self._radio_link.handle_success(report)
+            return
         assert isinstance(report, str)
         self.report_for(self._active_analysis).setPlainText(report)
         self.statusBar().showMessage(f"{self._active_analysis} analysis complete")
@@ -887,6 +888,9 @@ class MainWindow(QMainWindow):
             return
         if self._active_analysis == "Pack Performance":
             self._pack_performance.handle_failure(exc)
+            return
+        if self._active_analysis == "Radio Link":
+            self._radio_link.handle_failure(exc)
             return
         if isinstance(exc, UnsupportedFirmwareError):
             message = f"Unsupported firmware.\n{exc}"

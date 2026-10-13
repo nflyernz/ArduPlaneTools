@@ -10,3 +10,5 @@
 - **Pairing** — Evidence that a BIN and CSV belong to the same session.
 - **Alignment** — Estimated relationship between aircraft and transmitter timelines.
 - **Commanded output** — Logged PWM or command evidence, not physical motor activity.
+- **Summary view** — Compact aircraft-BIN results produced by the existing Radio Link summary formatter.
+- **Detailed evidence** — The full aircraft-BIN report from the same cached detector result.
