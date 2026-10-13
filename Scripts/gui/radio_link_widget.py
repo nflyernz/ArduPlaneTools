@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -99,12 +100,21 @@ class RadioLinkWidget(QWidget):
         csv_action_controls.addWidget(self.remove_overlay_button)
         layout.addLayout(csv_action_controls)
 
+        diagnostic_group = QGroupBox(
+            "Candidate diagnostic — preview only; does not establish pairing"
+        )
+        diagnostic_group.setObjectName("radioLinkCsvCandidateDiagnostic")
+        diagnostic_layout = QVBoxLayout(diagnostic_group)
+        diagnostic_layout.setContentsMargins(10, 8, 10, 8)
         self.candidate_hint = QLabel(
             "Analyse a BIN before discovering or selecting transmitter evidence."
         )
         self.candidate_hint.setObjectName("radioLinkCsvCandidateHint")
         self.candidate_hint.setWordWrap(True)
-        layout.addWidget(self.candidate_hint)
+        self.candidate_hint.setMinimumHeight(44)
+        diagnostic_layout.addWidget(self.candidate_hint)
+        layout.addWidget(diagnostic_group)
+        self.candidate_diagnostic_group = diagnostic_group
 
         self.report = QPlainTextEdit()
         self.report.setObjectName("radio_link_report")
@@ -215,7 +225,17 @@ class RadioLinkWidget(QWidget):
     def _show_candidate_hint(self, _index: int | None = None) -> None:
         candidate = self.selected_candidate
         if candidate is not None:
-            self.candidate_hint.setText(candidate.hint)
+            if not candidate.usable:
+                classification = "Unusable candidate"
+            elif candidate.automatic_eligible:
+                classification = "Auto-eligible candidate"
+            else:
+                classification = "Explicit selection required"
+            self.candidate_hint.setText(
+                f"{classification}: {candidate.path.name}\n"
+                f"{candidate.hint}\n"
+                "Diagnostic preview only; pairing and alignment remain unverified."
+            )
 
     def _render(self) -> None:
         if self._result is None:
