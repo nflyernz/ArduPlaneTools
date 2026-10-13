@@ -28,10 +28,20 @@ def _cleanup_qt_widgets(request):
 
 def _close_widgets_and_drain_deletes(app) -> None:
     """Close remaining top-level widgets and deliver DeferredDelete events."""
-    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtCore import QCoreApplication, QEvent, QThread
     from PySide6.QtWidgets import QApplication
 
-    for widget in QApplication.topLevelWidgets():
+    widgets = QApplication.topLevelWidgets()
+    running_threads = [
+        thread
+        for widget in widgets
+        for thread in widget.findChildren(QThread)
+        if thread.isRunning()
+    ]
+    if running_threads:
+        raise RuntimeError("Qt test cleanup found a running QThread")
+
+    for widget in widgets:
         widget.close()
         widget.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
