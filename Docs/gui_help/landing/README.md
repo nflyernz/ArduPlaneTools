@@ -1,6 +1,6 @@
 # Landing Analysis
 
-Landing Analysis reviews landing attempts detected within ArduPlane DataFlash BIN flight windows. It accepts one BIN or a directory through the CLI workflow; this GUI tab is not yet connected to execution.
+Landing Analysis reviews landing attempts detected within ArduPlane DataFlash BIN flight windows. Select one BIN in the GUI and choose **Analyse**, or select one BIN or a directory through the CLI workflow.
 
 The report separates approach, preflare, flare, optional rangefinder evidence, and landing or rollout completion. Depending on available log messages, it can show approach altitude and glide slope, event times, height, airspeed, GPS groundspeed, sink rate, flare distance to the target, GPS stop, and the attempt end reason.
 

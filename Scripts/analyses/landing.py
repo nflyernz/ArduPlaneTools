@@ -25,6 +25,189 @@ from core.log_reader import (
 from core.time import format_time_us
 
 
+def _format_row(label, value):
+    return f"{label:<28}{value}"
+
+
+def _format_value(value, decimals=1, suffix=""):
+    if value is None:
+        return "Unavailable"
+    return f"{value:.{decimals}f}{suffix}"
+
+
+def _format_time(time_us):
+    if time_us is None:
+        return "Unavailable"
+    return format_time_us(time_us)
+
+
+def _has_rangefinder_evidence(analysis):
+    return any(
+        value is not None
+        for value in (
+            analysis.rangefinder_first_nonzero_time_us,
+            analysis.rangefinder_first_nonzero_distance,
+            analysis.rangefinder_first_in_range_time_us,
+            analysis.rangefinder_first_in_range_distance,
+            analysis.rangefinder_continuous_time_us,
+        )
+    )
+
+
+def _format_end_reason(reason):
+    labels = {
+        "gps": "GPS stop",
+        "abort": "Landing aborted",
+        "flight_window_end": "Flight ended before landing stop detected",
+    }
+    return labels.get(reason, str(reason))
+
+
+def format_landing_attempt(landing_index, attempt_index, analysis) -> str:
+    """Return the existing CLI presentation for one landing attempt."""
+    attempt = analysis.attempt
+    lines = [
+        f"Landing {landing_index} Attempt {attempt_index}",
+        "-" * 70,
+        _format_row(
+            "Landing window",
+            f"{format_time_us(attempt.start_us)} -> {format_time_us(attempt.end_us)}",
+        ),
+        _format_row("Landing duration", _format_value(analysis.duration_s, 1, " s")),
+        "",
+        "APPROACH",
+        _format_row(
+            "Approach altitude",
+            _format_value(analysis.approach_start_altitude, 1, " m"),
+        ),
+        _format_row(
+            "Glide slope", _format_value(analysis.glide_slope_degrees, 1, " deg")
+        ),
+        "",
+        "PREFLARE",
+        _format_row("Time", _format_time(analysis.preflare_time_us)),
+        _format_row(
+            "Preflare height", _format_value(analysis.preflare_altitude, 1, " m")
+        ),
+        _format_row("Airspeed", _format_value(analysis.preflare_airspeed, 1, " m/s")),
+        _format_row(
+            "GPS groundspeed", _format_value(analysis.preflare_gps_speed, 1, " m/s")
+        ),
+        _format_row(
+            "Sink rate", _format_value(analysis.preflare_sink_rate, 1, " m/s")
+        ),
+        "",
+        "FLARE",
+        _format_row("Time", _format_time(analysis.flare_time_us)),
+        _format_row(
+            "Flare-timing height", _format_value(analysis.flare_altitude, 1, " m")
+        ),
+        _format_row("Sink rate", _format_value(analysis.flare_sink_rate, 1, " m/s")),
+        _format_row("Airspeed", _format_value(analysis.flare_airspeed, 1, " m/s")),
+        _format_row(
+            "GPS groundspeed", _format_value(analysis.flare_gps_speed, 1, " m/s")
+        ),
+        _format_row(
+            "Flare distance to target",
+            _format_value(analysis.flare_distance, 1, " m"),
+        ),
+    ]
+
+    if _has_rangefinder_evidence(analysis):
+        lines.extend(
+            (
+                "",
+                "RANGEFINDER",
+                _format_row(
+                    "First non-zero",
+                    _format_time(analysis.rangefinder_first_nonzero_time_us),
+                ),
+                _format_row(
+                    "First distance",
+                    _format_value(
+                        analysis.rangefinder_first_nonzero_distance, 1, " m"
+                    ),
+                ),
+                _format_row(
+                    "First in range",
+                    _format_time(analysis.rangefinder_first_in_range_time_us),
+                ),
+                _format_row(
+                    "In-range distance",
+                    _format_value(
+                        analysis.rangefinder_first_in_range_distance, 1, " m"
+                    ),
+                ),
+                _format_row(
+                    "Continuous from",
+                    _format_time(analysis.rangefinder_continuous_time_us),
+                ),
+            )
+        )
+
+    lines.extend(("", "LANDING / ROLLOUT COMPLETION"))
+    if analysis.gps_stop_time_us is not None:
+        lines.extend(
+            (
+                _format_row("GPS stop", _format_time(analysis.gps_stop_time_us)),
+                _format_row(
+                    "Flare -> stop",
+                    _format_value(analysis.flare_to_gps_stop_s, 1, " s"),
+                ),
+                _format_row(
+                    "Distance from target",
+                    _format_value(analysis.landing_end_target_distance_m, 1, " m"),
+                ),
+            )
+        )
+    lines.append(_format_row("End reason", _format_end_reason(analysis.end_reason)))
+    return "\n".join(lines)
+
+
+def format_landing_flight_result(result: AnalysisResult, flight_index: int) -> str:
+    """Return the existing CLI presentation for one detected flight window."""
+    lines = ["=" * 70, "", f"FLIGHT {flight_index}", "", "=" * 70]
+    analyses = result.report or []
+    if not analyses:
+        lines.extend(("", "No landing attempts detected."))
+    else:
+        for landing_index, attempt_index, analysis in analyses:
+            lines.extend(("", format_landing_attempt(landing_index, attempt_index, analysis)))
+    return "\n".join(lines)
+
+
+def format_landing_log_report(log_path: Path, flight_results, flight_count: int) -> str:
+    """Return the CLI-equivalent report and summary for one successfully read BIN."""
+    results = tuple(flight_results)
+    lines = [
+        "Landing Analysis",
+        "=" * 70,
+        "",
+        "Found 1 log(s)",
+        "",
+        f"[  1/1] {Path(log_path).name}",
+        f"Loaded: {flight_count} flight(s)",
+    ]
+    if flight_count == 0:
+        lines.append("No flights detected.")
+    else:
+        for flight_index, result in enumerate(results, start=1):
+            lines.extend(("", format_landing_flight_result(result, flight_index)))
+    lines.extend(
+        (
+            "",
+            "=" * 70,
+            "",
+            "SUMMARY",
+            "",
+            _format_row("Logs", "1"),
+            _format_row("Flight results", str(len(results))),
+            _format_row("Framework errors", "0"),
+        )
+    )
+    return "\n".join(lines)
+
+
 class LandingAnalysis:
     """
     Landing analysis.
@@ -129,35 +312,7 @@ class LandingAnalysis:
         Present one FlightWindow landing-analysis result.
         """
 
-        print()
-        print("=" * 70)
-        print()
-        print(
-            f"FLIGHT {flight_index}"
-        )
-        print()
-        print("=" * 70)
-
-        analyses = result.report or []
-
-        if not analyses:
-            print()
-            print(
-                "No landing attempts detected."
-            )
-            return
-
-        for (
-            landing_index,
-            attempt_index,
-            analysis,
-        ) in analyses:
-
-            self._present_attempt(
-                landing_index,
-                attempt_index,
-                analysis,
-            )
+        print("\n" + format_landing_flight_result(result, flight_index))
 
     def _present_attempt(
         self,
@@ -169,270 +324,7 @@ class LandingAnalysis:
         Present one LandingAttemptAnalysis.
         """
 
-        attempt = analysis.attempt
-
-        print()
-        print(
-            f"Landing {landing_index} "
-            f"Attempt {attempt_index}"
-        )
-        print("-" * 70)
-
-        self._row(
-            "Landing window",
-            (
-                f"{format_time_us(attempt.start_us)} -> "
-                f"{format_time_us(attempt.end_us)}"
-            ),
-        )
-
-        self._row(
-            "Landing duration",
-            self._value(
-                analysis.duration_s,
-                1,
-                " s",
-            ),
-        )
-
-        #
-        # Approach
-        #
-
-        print()
-        print("APPROACH")
-
-        self._row(
-            "Approach altitude",
-            self._value(
-                analysis.approach_start_altitude,
-                1,
-                " m",
-            ),
-        )
-
-        self._row(
-            "Glide slope",
-            self._value(
-                analysis.glide_slope_degrees,
-                1,
-                " deg",
-            ),
-        )
-
-        #
-        # Preflare
-        #
-
-        print()
-        print("PREFLARE")
-
-        self._row(
-            "Time",
-            self._time(
-                analysis.preflare_time_us
-            ),
-        )
-
-        self._row(
-            "Preflare height",
-            self._value(
-                analysis.preflare_altitude,
-                1,
-                " m",
-            ),
-        )
-
-        self._row(
-            "Airspeed",
-            self._value(
-                analysis.preflare_airspeed,
-                1,
-                " m/s",
-            ),
-        )
-
-        self._row(
-            "GPS groundspeed",
-            self._value(
-                analysis.preflare_gps_speed,
-                1,
-                " m/s",
-            ),
-        )
-
-        self._row(
-            "Sink rate",
-            self._value(
-                analysis.preflare_sink_rate,
-                1,
-                " m/s",
-            ),
-        )
-
-        #
-        # Flare
-        #
-
-        print()
-        print("FLARE")
-
-        self._row(
-            "Time",
-            self._time(
-                analysis.flare_time_us
-            ),
-        )
-
-        self._row(
-            "Flare-timing height",
-            self._value(
-                analysis.flare_altitude,
-                1,
-                " m",
-            ),
-        )
-
-        self._row(
-            "Sink rate",
-            self._value(
-                analysis.flare_sink_rate,
-                1,
-                " m/s",
-            ),
-        )
-
-        self._row(
-            "Airspeed",
-            self._value(
-                analysis.flare_airspeed,
-                1,
-                " m/s",
-            ),
-        )
-
-        self._row(
-            "GPS groundspeed",
-            self._value(
-                analysis.flare_gps_speed,
-                1,
-                " m/s",
-            ),
-        )
-
-        self._row(
-            "Flare distance to target",
-            self._value(
-                analysis.flare_distance,
-                1,
-                " m",
-            ),
-        )
-
-        #
-        # Rangefinder
-        #
-        # Rangefinder is optional. Only display this section when
-        # rangefinder evidence exists for the attempt.
-        #
-
-        if self._has_rangefinder_evidence(
-            analysis
-        ):
-
-            print()
-            print("RANGEFINDER")
-
-            self._row(
-                "First non-zero",
-                self._time(
-                    analysis
-                    .rangefinder_first_nonzero_time_us
-                ),
-            )
-
-            self._row(
-                "First distance",
-                self._value(
-                    analysis
-                    .rangefinder_first_nonzero_distance,
-                    1,
-                    " m",
-                ),
-            )
-
-            self._row(
-                "First in range",
-                self._time(
-                    analysis
-                    .rangefinder_first_in_range_time_us
-                ),
-            )
-
-            self._row(
-                "In-range distance",
-                self._value(
-                    analysis
-                    .rangefinder_first_in_range_distance,
-                    1,
-                    " m",
-                ),
-            )
-
-            self._row(
-                "Continuous from",
-                self._time(
-                    analysis
-                    .rangefinder_continuous_time_us
-                ),
-            )
-
-        #
-        # Landing / rollout completion
-        #
-
-        print()
-        print(
-            "LANDING / ROLLOUT COMPLETION"
-        )
-
-        if (
-            analysis.gps_stop_time_us
-            is not None
-        ):
-
-            self._row(
-                "GPS stop",
-                self._time(
-                    analysis.gps_stop_time_us
-                ),
-            )
-
-            self._row(
-                "Flare -> stop",
-                self._value(
-                    analysis.flare_to_gps_stop_s,
-                    1,
-                    " s",
-                ),
-            )
-
-            self._row(
-                "Distance from target",
-                self._value(
-                    analysis
-                    .landing_end_target_distance_m,
-                    1,
-                    " m",
-                ),
-            )
-
-        self._row(
-            "End reason",
-            self._end_reason(
-                analysis.end_reason
-            ),
-        )
+        print("\n" + format_landing_attempt(landing_index, attempt_index, analysis))
 
     def run(self):
         """
