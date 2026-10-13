@@ -4,6 +4,7 @@ import os
 import threading
 import time
 
+import pandas as pd
 import pytest
 
 
@@ -66,8 +67,27 @@ def test_adapter_reads_once_and_processes_each_flight_and_instance(
 ):
     selected = tmp_path / "pipeline.BIN"
     config = object()
-    flights = (FlightWindow(1, 2), FlightWindow(3, 4))
-    flight_log = type("FlightLog", (), {"flights": flights})()
+    flights = (
+        FlightWindow(1_000_000, 2_000_000),
+        FlightWindow(3_000_000, 4_000_000),
+    )
+
+    class _FlightLog:
+        def __init__(self):
+            self.flights = flights
+            self.battery = pd.DataFrame(
+                (
+                    {"TimeUS": 1_100_000, "Inst": 2},
+                    {"TimeUS": 1_200_000, "Inst": 0},
+                    {"TimeUS": 3_100_000, "Inst": 1},
+                )
+            )
+
+        def get(self, name):
+            assert name == "BAT"
+            return self.battery
+
+    flight_log = _FlightLog()
     analyses = {}
     calls = []
 
@@ -89,10 +109,6 @@ def test_adapter_reads_once_and_processes_each_flight_and_instance(
             self.instance = instance
             calls.append(("processor", supplied_log, window, instance, config))
 
-        def available_instances(self):
-            calls.append(("instances", self.window))
-            return [0, 2] if self.window is flights[0] else [1]
-
         def analyse(self):
             result = object()
             analyses[(id(self.window), self.instance)] = result
@@ -113,6 +129,8 @@ def test_adapter_reads_once_and_processes_each_flight_and_instance(
     assert report.index("FLIGHT 1 — BATTERY INSTANCE 0") < report.index(
         "FLIGHT 1 — BATTERY INSTANCE 2"
     ) < report.index("FLIGHT 2 — BATTERY INSTANCE 1")
+    assert report.count("BATTERY INSTANCE 2") == 1
+    assert "FLIGHT 2 — BATTERY INSTANCE 2" not in report
     assert calls.count(("read",)) == 1
     assert [call for call in calls if call[0] == "analyse"] == [
         ("analyse", flights[0], 0),
@@ -133,12 +151,17 @@ def test_adapter_distinguishes_no_flights_no_telemetry_and_invalid_analysis(
 
     class _Reader:
         flights = ()
+        battery = pd.DataFrame()
 
         def __init__(self, _path, config=None):
             assert config is not None
 
         def read(self):
-            return type("FlightLog", (), {"flights": self.flights})()
+            return self
+
+        def get(self, name):
+            assert name == "BAT"
+            return self.battery
 
     monkeypatch.setattr(adapter_module, "FlightReader", _Reader)
     no_flights = adapter_module.analyse_battery_log(selected)
@@ -146,23 +169,24 @@ def test_adapter_distinguishes_no_flights_no_telemetry_and_invalid_analysis(
 
     flight = FlightWindow(1_000_000, 2_000_000)
     _Reader.flights = (flight,)
+    _Reader.battery = pd.DataFrame(({"TimeUS": 5_000_000, "Inst": 7},))
 
     class _NoTelemetryProcessor:
         def __init__(self, *_args, **_kwargs):
-            pass
-
-        @staticmethod
-        def available_instances():
-            return []
+            pytest.fail("flight without BAT telemetry created a processor")
 
     monkeypatch.setattr(adapter_module, "BatteryProcessor", _NoTelemetryProcessor)
     no_telemetry = adapter_module.analyse_battery_log(selected)
     assert "No battery telemetry is available for this flight." in no_telemetry
+    assert "BATTERY INSTANCE 7" not in no_telemetry
 
-    class _InvalidProcessor(_NoTelemetryProcessor):
-        @staticmethod
-        def available_instances():
-            return [0]
+    _Reader.battery = pd.DataFrame(({"TimeUS": 1_500_000, "Inst": 4},))
+
+    class _InvalidProcessor:
+        def __init__(self, _flight_log, window, instance, config=None):
+            assert window is flight
+            assert instance == 4
+            assert config is not None
 
         @staticmethod
         def analyse():
@@ -170,8 +194,9 @@ def test_adapter_distinguishes_no_flights_no_telemetry_and_invalid_analysis(
 
     monkeypatch.setattr(adapter_module, "BatteryProcessor", _InvalidProcessor)
     unavailable = adapter_module.analyse_battery_log(selected)
-    assert "FLIGHT 1 — BATTERY INSTANCE 0" in unavailable
+    assert "FLIGHT 1 — BATTERY INSTANCE 4" in unavailable
     assert "No valid battery analysis is available." in unavailable
+    assert "No battery telemetry is available" not in unavailable
 
 
 def test_adapter_never_uses_pack_persistence_and_leaves_data_unchanged(
@@ -189,15 +214,19 @@ def test_adapter_never_uses_pack_persistence_and_leaves_data_unchanged(
 
         @staticmethod
         def read():
-            return type("FlightLog", (), {"flights": (flight,)})()
+            class _FlightLog:
+                flights = (flight,)
+
+                @staticmethod
+                def get(name):
+                    assert name == "BAT"
+                    return pd.DataFrame(({"TimeUS": 1_500_000, "Inst": 0},))
+
+            return _FlightLog()
 
     class _Processor:
         def __init__(self, *_args, **_kwargs):
             pass
-
-        @staticmethod
-        def available_instances():
-            return [0]
 
         @staticmethod
         def analyse():
