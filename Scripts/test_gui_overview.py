@@ -92,6 +92,7 @@ def test_every_overview_entry_describes_and_opens_its_module(qt_app, window):
                 "Battery",
                 "Battery Pack Management",
                 "Pack Performance",
+                "Radio Link",
                 "AUTOTUNE",
                 "TAKEOFF",
                 "Stall",

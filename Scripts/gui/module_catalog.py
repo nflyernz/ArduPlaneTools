@@ -20,6 +20,7 @@ CONNECTED_ANALYSES = frozenset(
         "Battery",
         "Battery Pack Management",
         "Pack Performance",
+        "Radio Link",
         "AUTOTUNE",
         "TAKEOFF",
         "Stall",
@@ -29,4 +30,5 @@ CONNECTED_ANALYSES = frozenset(
 EXECUTABLE_ANALYSES = CONNECTED_ANALYSES - {
     "Battery Pack Management",
     "Pack Performance",
+    "Radio Link",
 }
