@@ -6,7 +6,7 @@ Aircraft BIN evidence remains authoritative for episode count and boundaries, ar
 
 After BIN analysis, **Discover nearby** lists EdgeTX CSV files beside the BIN and displays the same diagnostic hints used by the CLI. **Auto pair** accepts a candidate only when exactly one file satisfies the existing automatic-pairing rules. **Use selected** or **Browse CSV…** records an explicit user association; this does not prove that the files came from the same session. An unusable candidate does not prevent choosing another file.
 
-Optional transmitter evidence appears below the unchanged aircraft report and identifies its CSV, pairing status, alignment status and warnings. **Remove overlay** removes that evidence without discarding the BIN result. Selecting another BIN invalidates the parsed aircraft context, candidate list and overlay.
+Optional transmitter evidence appears below the unchanged aircraft report and identifies its CSV, pairing status, alignment status and warnings. **Remove CSV evidence** removes that evidence without discarding the BIN result. Selecting another BIN invalidates the parsed aircraft context, candidate list and overlay.
 
 Pairing and timeline alignment are separate evidence decisions. Coarse alignment may support qualified telemetry-availability context, but it is not a bounded clock uncertainty. Episode-specific numeric RF values require the existing bounded-alignment and sample-age evidence. Zero-filled or missing telemetry is not treated as a measured RF value, and partial CSV coverage remains labelled.
 
