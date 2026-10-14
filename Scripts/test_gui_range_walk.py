@@ -38,10 +38,8 @@ def _wait_until(qt_app, predicate, timeout=3.0):
     assert predicate()
 
 
-def _request(path, down="1024", neutral="0", near_down="", request_id=1):
-    return RangeWalkPreviewRequest(
-        Path(path), down, neutral, near_down, request_id
-    )
+def _request(path, *, inverse=False, request_id=1):
+    return RangeWalkPreviewRequest(Path(path), inverse, request_id)
 
 
 def _result(request, text="preview result"):
@@ -52,6 +50,10 @@ def _result(request, text="preview result"):
         BASE,
         1,
         (),
+        "higher",
+        "higher",
+        True,
+        "Auto selected higher.",
         text,
     )
 
@@ -103,21 +105,27 @@ def make_window(qt_app, tmp_path):
     qt_app.processEvents()
 
 
-@pytest.mark.parametrize(("down", "near_down"), (("1024", ""), ("-1024", "-900")))
-def test_adapter_detects_positive_and_negative_calibrated_holds(
-    tmp_path, down, near_down
+@pytest.mark.parametrize(
+    ("down", "expected_direction"),
+    ((1024, "higher"), (-1024, "lower")),
+)
+def test_adapter_auto_detects_positive_and_negative_holds(
+    tmp_path, down, expected_direction
 ):
-    session = _session(tmp_path, down=float(down))
+    session = _session(tmp_path, down=down)
 
-    result = analyse_range_walk_preview(
-        _request(session.path, down=down, near_down=near_down)
-    )
+    result = analyse_range_walk_preview(_request(session.path))
 
     assert result.source_path == session.path.resolve()
     assert result.row_count == len(session.rows)
     assert result.recording_start == session.rows[0].clock
     assert result.recording_end == session.rows[-1].clock
+    assert result.direction_used == expected_direction
+    assert result.auto_preferred == expected_direction
+    assert result.direction_reliable
     assert len(result.markers) == 5
+    sign = "+" if expected_direction == "higher" else "-"
+    assert f"Direction used: {expected_direction} ({sign}Ele)" in result.text
     assert "Marker candidates: 5" in result.text
     assert "not confirmed physical landmarks" in result.text
     assert "CSV/marker preview only — comparison not yet connected" in result.text
@@ -136,6 +144,48 @@ def test_adapter_reports_extra_and_missing_candidates_without_inference(tmp_path
     assert len(missing_result.markers) == 3
     assert "Marker candidates: 3" in missing_result.text
     assert "No baseline, landmark mapping, RF comparison" in missing_result.text
+
+
+def test_auto_ignores_accidental_short_stick_movements(tmp_path):
+    session = _session(tmp_path, short=(5, 11, 17, 23))
+
+    result = analyse_range_walk_preview(_request(session.path))
+
+    assert result.direction_used == "higher"
+    assert len(result.markers) == 5
+    assert [marker.onset for marker in result.markers] == [
+        BASE + timedelta(seconds=value) for value in (2, 8, 14, 20, 26)
+    ]
+
+
+def test_inverse_uses_opposite_direction_and_does_not_promote_short_movement(tmp_path):
+    session = _session(tmp_path, short=(5,))
+
+    result = analyse_range_walk_preview(_request(session.path, inverse=True))
+
+    assert result.direction_used == "lower"
+    assert result.auto_preferred == "higher"
+    assert len(result.markers) == 0
+    assert "No clear elevator stick deflections detected. Try Inverse." in result.text
+
+
+def test_ambiguous_directions_are_reported_and_deterministic(tmp_path):
+    session = _session(
+        tmp_path,
+        holds=(2, 8),
+        up=(14, 20),
+    )
+
+    auto = analyse_range_walk_preview(_request(session.path))
+    inverse = analyse_range_walk_preview(_request(session.path, inverse=True))
+
+    assert auto.direction_used == "higher"
+    assert auto.auto_preferred is None
+    assert not auto.direction_reliable
+    assert len(auto.markers) == 2
+    assert "ambiguous or insufficient" in auto.assessment
+    assert inverse.direction_used == "lower"
+    assert len(inverse.markers) == 2
 
 
 @pytest.mark.parametrize(
@@ -193,26 +243,6 @@ def test_estimator_requires_a_clearly_dominant_neutral(tmp_path):
     assert "No clearly dominant" in suggestions.explanation
 
 
-@pytest.mark.parametrize(
-    ("down", "neutral", "near_down", "message"),
-    (
-        ("", "0", "", "Full elevator-down Ele is required"),
-        ("down", "0", "", "Full elevator-down Ele must be numeric"),
-        ("0", "0", "", "must differ from neutral"),
-        ("1024", "0", "-1", "must lie between neutral and down"),
-    ),
-)
-def test_adapter_rejects_missing_or_invalid_calibration(
-    tmp_path, down, neutral, near_down, message
-):
-    session = _session(tmp_path)
-
-    with pytest.raises(ValueError, match=message):
-        analyse_range_walk_preview(
-            _request(session.path, down, neutral, near_down)
-        )
-
-
 def test_adapter_uses_existing_missing_ele_validation(tmp_path):
     session = _session(
         tmp_path,
@@ -220,8 +250,10 @@ def test_adapter_uses_existing_missing_ele_validation(tmp_path):
         header=[field for field in HEADER if field != "Ele"],
     )
 
-    with pytest.raises(ValueError, match="one numeric Ele"):
-        analyse_range_walk_preview(_request(session.path))
+    result = analyse_range_walk_preview(_request(session.path))
+
+    assert len(result.markers) == 0
+    assert "No clear elevator stick deflections detected. Try Inverse." in result.text
 
 
 def test_choose_csv_and_detect_without_shared_bin(
@@ -243,15 +275,13 @@ def test_choose_csv_and_detect_without_shared_bin(
     widget.choose_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
     assert "Observed Ele range: 0 to 1024" in widget.report.toPlainText()
-    assert not widget.detect_button.isEnabled()
-    assert "calibration unavailable or invalid" in widget.state_label.text()
-    widget.higher_direction.click()
-    assert "Suggested neutral: 0" in widget.suggestion_label.text()
-    assert "full-down for the higher direction: 1024" in widget.suggestion_label.text()
-    assert not widget.detect_button.isEnabled()
-    widget.confirm_calibration.click()
+    assert widget.auto_button.isChecked()
+    assert "Sustained neutral: 0" in widget.suggestion_label.text()
+    assert "higher endpoint: 1024" in widget.suggestion_label.text()
+    assert widget.findChild(type(widget.source_path_edit), "rangeWalkNeutralCalibration") is None
+    assert widget.findChild(type(widget.source_path_edit), "rangeWalkNearDownCalibration") is None
     assert widget.detect_button.isEnabled()
-    assert "Ready to detect" in widget.state_label.text()
+    assert "Auto mode" in widget.state_label.text()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
@@ -261,8 +291,10 @@ def test_choose_csv_and_detect_without_shared_bin(
     assert session.path.name in report
     assert str(session.path.resolve()) in report
     assert "CSV rows: 330" in report
+    assert "Direction used: higher (+Ele)" in report
     assert "Marker candidates: 5" in report
     assert "onset 15:00:02.000" in report
+    assert "higher (+Ele) direction; 5 marker candidate(s)" in widget.state_label.text()
     assert window.selected_log is None
 
 
@@ -283,8 +315,6 @@ def test_source_change_clears_old_result_and_withholds_stale_worker_output(
     widget = window._range_walk.widget
     window._range_walk.select_source(first)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
-    widget.higher_direction.click()
-    widget.confirm_calibration.click()
     widget.detect_button.click()
     assert started.wait(1)
 
@@ -297,8 +327,7 @@ def test_source_change_clears_old_result_and_withholds_stale_worker_output(
     assert widget.source_path == second
     assert "stale first result" not in widget.report.toPlainText()
     assert "Observed Ele range" in widget.report.toPlainText()
-    assert not widget.confirm_calibration.isChecked()
-    assert not widget.higher_direction.isChecked()
+    assert widget.auto_button.isChecked()
 
 
 def test_source_change_during_inspection_withholds_old_suggestions(
@@ -320,46 +349,32 @@ def test_source_change_during_inspection_withholds_old_suggestions(
     window._range_walk.select_source(first)
     assert started.wait(1)
     assert window._range_walk.select_source(second)
-    assert not widget.confirm_calibration.isChecked()
+    assert widget.auto_button.isChecked()
     release.set()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
     assert widget.source_path == second
-    widget.lower_direction.click()
-    assert "full-down for the lower direction: -1024" in (
-        widget.suggestion_label.text()
-    )
-    assert "full-down for the higher direction: 1024" not in (
-        widget.suggestion_label.text()
-    )
+    assert "lower endpoint: -1024" in widget.suggestion_label.text()
+    assert "higher endpoint: 1024" not in widget.suggestion_label.text()
 
 
-def test_invalid_preview_recovers_without_changing_csv_source(
+def test_no_clear_deflections_are_reported_without_changing_csv_source(
     qt_app, tmp_path, make_window
 ):
-    session = _session(tmp_path)
+    session = _session(tmp_path, holds=(), short=(2,))
     window = make_window()
     widget = window._range_walk.widget
     window._range_walk.select_source(session.path)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
-    widget.manual_group.setChecked(True)
-    widget.neutral_edit.setText("0")
-
-    assert not widget.detect_button.isEnabled()
-    assert "Full elevator-down Ele is required" in widget.state_label.text()
-    assert widget.source_path == session.path.resolve()
-
-    widget.down_edit.setText("invalid")
-    assert not widget.detect_button.isEnabled()
-    assert "must be numeric" in widget.state_label.text()
-    widget.down_edit.setText("1024")
-    assert widget.near_down_edit.text() == ""
-    assert not widget.detect_button.isEnabled()
-    widget.confirm_calibration.click()
     assert widget.detect_button.isEnabled()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
-    assert "Marker candidates: 5" in widget.report.toPlainText()
+
+    assert "Marker candidates: 0" in widget.report.toPlainText()
+    assert "No clear elevator stick deflections detected. Try Inverse." in (
+        widget.report.toPlainText()
+    )
+    assert widget.source_path == session.path.resolve()
 
 
 def test_worker_exclusion_safe_close_and_no_other_routing_or_persistence(
@@ -382,8 +397,6 @@ def test_worker_exclusion_safe_close_and_no_other_routing_or_persistence(
     widget = window._range_walk.widget
     window._range_walk.select_source(session.path)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
-    widget.higher_direction.click()
-    widget.confirm_calibration.click()
     widget.detect_button.click()
     assert started.wait(1)
     qt_app.processEvents()
@@ -418,8 +431,6 @@ def test_shared_bin_changes_do_not_change_range_walk_preview(
     widget = window._range_walk.widget
     window._range_walk.select_source(session.path)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
-    widget.higher_direction.click()
-    widget.confirm_calibration.click()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
     report = widget.report.toPlainText()
@@ -433,7 +444,7 @@ def test_shared_bin_changes_do_not_change_range_walk_preview(
     assert widget.report.toPlainText() == report
 
 
-def test_calibration_guidance_and_failed_detection_keep_valid_csv(
+def test_auto_inverse_guidance_and_failed_detection_keep_valid_csv(
     qt_app, tmp_path, make_window
 ):
     session = _session(tmp_path, down=-1024)
@@ -447,19 +458,11 @@ def test_calibration_guidance_and_failed_detection_keep_valid_csv(
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
     guidance = widget.calibration_guidance.text()
-    assert "recorded in this EdgeTX CSV" in guidance
-    assert "sustained neutral and endpoint values" in guidance
-    assert "cannot determine which direction is elevator-down" in guidance
+    assert "complete sustained holds and neutral returns" in guidance
+    assert "Use Inverse to inspect the opposite direction" in guidance
     assert "Observed Ele range: -1024 to 0" in widget.report.toPlainText()
-    assert "Suggested neutral: 0" in widget.suggestion_label.text()
-    assert "87.5%" in widget.near_down_edit.placeholderText()
-
-    widget.lower_direction.click()
-    assert "full-down for the lower direction: -1024" in (
-        widget.suggestion_label.text()
-    )
-    assert not widget.detect_button.isEnabled()
-    widget.confirm_calibration.click()
+    assert "Sustained neutral: 0" in widget.suggestion_label.text()
+    assert "lower endpoint: -1024" in widget.suggestion_label.text()
     assert widget.detect_button.isEnabled()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
@@ -470,78 +473,66 @@ def test_calibration_guidance_and_failed_detection_keep_valid_csv(
     assert widget.detect_button.isEnabled()
 
 
-def test_direction_change_requires_new_confirmation(qt_app, tmp_path, make_window):
+def test_auto_is_default_and_inverse_is_adjacent(qt_app, tmp_path, make_window):
     session = _session(tmp_path, up=(30,))
     window = make_window()
     widget = window._range_walk.widget
     window._range_walk.select_source(session.path)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
-    widget.higher_direction.click()
-    widget.confirm_calibration.click()
+    assert widget.auto_button.isChecked()
+    assert not widget.inverse_button.isChecked()
     assert widget.detect_button.isEnabled()
 
-    widget.lower_direction.click()
-    assert not widget.confirm_calibration.isChecked()
-    assert not widget.detect_button.isEnabled()
-    assert "confirm it before" in widget.state_label.text()
+    widget.inverse_button.click()
+    assert widget.inverse_button.isChecked()
+    assert widget.detect_button.isEnabled()
+    assert "Inverse mode" in widget.state_label.text()
 
 
-def test_suggested_lower_direction_detects_negative_holds(
+def test_auto_detects_negative_holds_and_inverse_uses_positive_direction(
     qt_app, tmp_path, make_window
 ):
-    session = _session(tmp_path, down=-1024)
+    session = _session(tmp_path, down=-1024, up=(30,))
     window = make_window()
     widget = window._range_walk.widget
     window._range_walk.select_source(session.path)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
-    widget.lower_direction.click()
-    widget.confirm_calibration.click()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
+    assert "Direction used: lower (-Ele)" in widget.report.toPlainText()
     assert "Marker candidates: 5" in widget.report.toPlainText()
-
-
-def test_manual_override_supports_negative_down_and_blank_threshold(
-    qt_app, tmp_path, make_window
-):
-    session = _session(tmp_path, down=-1024)
-    window = make_window()
-    widget = window._range_walk.widget
-    window._range_walk.select_source(session.path)
-    _wait_until(qt_app, lambda: window._analysis_thread is None)
-
-    widget.manual_group.setChecked(True)
-    widget.down_edit.setText("-1024")
-    widget.neutral_edit.setText("0")
-    assert widget.near_down_edit.text() == ""
-    assert not widget.detect_button.isEnabled()
-    widget.confirm_calibration.click()
+    widget.inverse_button.click()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
-    assert "Marker candidates: 5" in widget.report.toPlainText()
+    assert "Direction used: higher (+Ele)" in widget.report.toPlainText()
+    assert "Marker candidates: 1" in widget.report.toPlainText()
 
 
-def test_unreliable_endpoint_requires_manual_fallback(
+def test_missing_neutral_evidence_reports_insufficient_data(
     qt_app, tmp_path, make_window
 ):
-    session = _session(tmp_path, holds=(), short=(2,))
+    session = _session(tmp_path)
+    path = session.path
+    lines = path.read_text().splitlines()
+    ele_index = lines[0].split(",").index("Ele")
+    rewritten = [lines[0]]
+    for index, line in enumerate(lines[1:]):
+        cells = line.split(",")
+        cells[ele_index] = str(1024 if (index // 10) % 2 else -1024)
+        rewritten.append(",".join(cells))
+    path.write_text("\n".join(rewritten) + "\n")
     window = make_window()
     widget = window._range_walk.widget
-    window._range_walk.select_source(session.path)
+    window._range_walk.select_source(path)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
-    widget.higher_direction.click()
-    assert "Unavailable" in widget.suggestion_label.text()
-    assert not widget.confirm_calibration.isEnabled()
-    assert not widget.detect_button.isEnabled()
-    assert "Advanced / Manual calibration" in widget.state_label.text()
-
-    widget.manual_group.setChecked(True)
-    widget.down_edit.setText("1024")
-    widget.neutral_edit.setText("0")
-    widget.confirm_calibration.click()
     assert widget.detect_button.isEnabled()
+    widget.detect_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    report = widget.report.toPlainText()
+    assert "Marker candidates: 0" in report
+    assert "No clear elevator stick deflections detected. Try Inverse." in report
