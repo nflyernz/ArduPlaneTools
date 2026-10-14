@@ -1,0 +1,245 @@
+"""Portable tests for the session-only Range-Walk Walk 1 baseline."""
+
+import os
+from datetime import timedelta
+from pathlib import Path
+
+import pytest
+
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+pytest.importorskip("PySide6")
+
+from core.range_walk import LandmarkMarker, WalkSettings
+from gui.range_walk_adapter import (
+    RangeWalkPreviewResult,
+    create_walk1_baseline,
+    format_walk1_baseline_summary,
+)
+from gui.range_walk_widget import RangeWalkPreviewWidget
+from test_range_walk import BASE
+
+
+def _preview(count=5, source=Path("walk1.csv")):
+    markers = tuple(
+        LandmarkMarker(
+            BASE + timedelta(seconds=2 + 6 * index),
+            BASE + timedelta(seconds=4 + 6 * index),
+            21,
+        )
+        for index in range(count)
+    )
+    return RangeWalkPreviewResult(
+        source.resolve(),
+        1,
+        BASE,
+        BASE + timedelta(seconds=32),
+        330,
+        markers,
+        "higher",
+        "higher",
+        True,
+        "Auto selected higher.",
+        "preview result",
+    )
+
+
+def _baseline(preview, numbers=(1, 2, 3, 4, 5), **overrides):
+    values = {
+        "landmark_names": ("Gate", "Tree", "Fence", "Shed", "Far field"),
+        "antenna": "Original vertical antenna, receiver bay",
+        "turnaround": "Stop before the far boundary fence",
+        "label": "",
+        "settings": WalkSettings(),
+    }
+    values.update(overrides)
+    return create_walk1_baseline(preview, numbers, **values)
+
+
+def test_exactly_five_candidates_map_chronologically_without_redetection():
+    preview = _preview()
+
+    baseline = _baseline(preview)
+
+    assert baseline.label == "Walk 1 — walk1"
+    assert baseline.candidates is preview.markers
+    assert baseline.candidate_numbers == (1, 2, 3, 4, 5)
+    assert all(
+        selected is detected
+        for selected, detected in zip(baseline.landmarks, preview.markers)
+    )
+    assert baseline.settings == WalkSettings()
+    summary = format_walk1_baseline_summary(baseline)
+    assert "Walk 1 baseline saved in this session" in summary
+    assert "TX power: Unknown" in summary
+    assert "prevent a later like-for-like comparison claim" in summary
+    assert "no file was written" in summary
+
+
+def test_extra_candidates_can_be_excluded_without_reordering():
+    preview = _preview(7)
+
+    baseline = _baseline(preview, (1, 2, 4, 6, 7))
+
+    assert baseline.candidate_numbers == (1, 2, 4, 6, 7)
+    assert baseline.landmarks == tuple(
+        preview.markers[index - 1] for index in (1, 2, 4, 6, 7)
+    )
+
+
+@pytest.mark.parametrize(
+    ("count", "numbers", "message"),
+    (
+        (4, (1, 2, 3, 4, None), "five confirmed landmarks"),
+        (6, (1, 2, 2, 4, 5), "distinct, increasing"),
+        (6, (1, 3, 2, 4, 5), "distinct, increasing"),
+        (6, (1, None, 3, 4, 5), "five confirmed landmarks"),
+    ),
+)
+def test_missing_duplicate_and_out_of_order_mappings_are_rejected(
+    count, numbers, message
+):
+    with pytest.raises(ValueError, match=message):
+        _baseline(_preview(count), numbers)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    (
+        ({"landmark_names": ("Gate", "", "Fence", "Shed", "Far")}, "physical name"),
+        ({"antenna": "  "}, "original receiver antenna"),
+        ({"turnaround": ""}, "safe turnaround"),
+    ),
+)
+def test_required_walk1_metadata_is_validated(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        _baseline(_preview(), **overrides)
+
+
+def _complete_widget_draft(widget):
+    widget.antenna_edit.setText("Original antenna under right wing")
+    widget.turnaround_edit.setText("Turn at the fifth fence post")
+    for number, field in enumerate(widget.landmark_name_edits, start=1):
+        field.setText(f"Physical point {number}")
+
+
+def test_page_navigation_preserves_mapping_and_metadata(qt_app):
+    widget = RangeWalkPreviewWidget(lambda: None, lambda: None)
+    preview = _preview()
+    widget.show_result(preview)
+
+    assert widget.pages.currentIndex() == 0
+    assert widget.next_button.isEnabled()
+    widget.next_button.click()
+    _complete_widget_draft(widget)
+    widget.candidate_combos[2].setCurrentIndex(3)
+    widget.back_button.click()
+    widget.next_button.click()
+
+    assert widget.pages.currentIndex() == 1
+    assert widget.antenna_edit.text() == "Original antenna under right wing"
+    assert widget.candidate_combos[2].currentData() == 3
+    assert "15:00:14.000" in widget.candidate_evidence_labels[2].text()
+    widget.close()
+
+
+def test_widget_saves_in_memory_baseline_with_exact_preview_markers(qt_app):
+    widget = RangeWalkPreviewWidget(lambda: None, lambda: None)
+    preview = _preview()
+    widget.show_result(preview)
+    widget.next_button.click()
+    _complete_widget_draft(widget)
+
+    widget.save_baseline_button.click()
+
+    saved = widget.saved_baseline
+    assert saved is not None
+    assert saved.source_path == preview.source_path
+    assert saved.candidates is preview.markers
+    assert all(left is right for left, right in zip(saved.landmarks, preview.markers))
+    assert "memory only" in widget.baseline_state_label.text()
+    assert "Unknown" in widget.baseline_summary.toPlainText()
+    widget.close()
+
+
+def test_fewer_than_five_candidates_prevent_widget_acceptance(qt_app):
+    widget = RangeWalkPreviewWidget(lambda: None, lambda: None)
+    widget.show_result(_preview(4))
+    widget.next_button.click()
+    _complete_widget_draft(widget)
+
+    widget.save_baseline_button.click()
+
+    assert widget.saved_baseline is None
+    assert "five confirmed landmarks" in widget.baseline_state_label.text()
+    widget.close()
+
+
+def test_extra_candidate_mapping_and_unknown_settings_are_retained(qt_app):
+    widget = RangeWalkPreviewWidget(lambda: None, lambda: None)
+    widget.show_result(_preview(7))
+    widget.next_button.click()
+    _complete_widget_draft(widget)
+    for combo, number in zip(widget.candidate_combos, (1, 2, 4, 6, 7)):
+        combo.setCurrentIndex(number)
+    widget.tx_power_edit.setText("100 mW")
+
+    widget.save_baseline_button.click()
+
+    saved = widget.saved_baseline
+    assert saved is not None
+    assert saved.candidate_numbers == (1, 2, 4, 6, 7)
+    assert saved.settings == WalkSettings(tx_power="100 mW")
+    assert "Packet rate: Unknown" in widget.baseline_summary.toPlainText()
+    widget.close()
+
+
+def test_evidence_changes_invalidate_saved_baseline_but_navigation_does_not(qt_app):
+    widget = RangeWalkPreviewWidget(lambda: None, lambda: None)
+    widget.set_source(Path("walk1.csv"))
+    widget.show_result(_preview())
+    widget.next_button.click()
+    _complete_widget_draft(widget)
+    widget.save_baseline_button.click()
+    saved = widget.saved_baseline
+
+    widget.back_button.click()
+    widget.next_button.click()
+    assert widget.saved_baseline is saved
+
+    widget.back_button.click()
+    widget.inverse_button.click()
+    assert widget.saved_baseline is None
+    assert not widget.next_button.isEnabled()
+
+    widget.show_result(_preview())
+    widget.next_button.click()
+    widget.save_baseline_button.click()
+    assert widget.saved_baseline is not None
+    widget.show_busy()
+    assert widget.saved_baseline is None
+
+    widget.show_result(_preview())
+    widget.next_button.click()
+    widget.save_baseline_button.click()
+    assert widget.saved_baseline is not None
+    widget.set_source(Path("replacement.csv"))
+    assert widget.saved_baseline is None
+    assert widget.pages.currentIndex() == 0
+    widget.close()
+
+
+def test_range_walk_help_describes_baseline_scope_and_invalidation():
+    root = Path(__file__).parents[1]
+    readme = (root / "Docs/gui_help/range_walk_comparison/README.md").read_text()
+    procedure = (
+        root / "Docs/gui_help/range_walk_comparison/procedure.md"
+    ).read_text()
+
+    for text in (readme, procedure):
+        assert "Walk 1 — Baseline & Landmarks" in text or "Walk 1 baseline" in text
+        assert "memory only" in text
+        assert "extra candidates" in text
+        assert "changing the CSV" in text
+    assert "Later walks and RF comparison" in readme
+    assert "does not yet process later walks" in procedure
