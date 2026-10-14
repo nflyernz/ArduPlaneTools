@@ -2,7 +2,11 @@
 
 Range-Walk Comparison compares repeatable, transmitter-recorded EdgeTX CSV walks using five confirmed physical landmarks and four outward moving sections. The GUI currently provides a first-step **CSV/marker preview only**; the complete comparison remains available through the interactive CLI workflow.
 
-In the GUI, choose one EdgeTX CSV, enter that model/run's calibrated full elevator-down and neutral `Ele` values, optionally enter a calibrated near-down threshold, and choose **Detect markers**. The preview reports the radio-local recording span, row count, and every complete elevator-down hold found by the existing detector. Positive and negative elevator endpoint directions are supported by the supplied calibration.
+In the GUI, choose one EdgeTX CSV. The preview examines sustained `Ele` plateaus and may suggest a neutral value and higher or lower endpoints. Select whether the deliberate elevator-down holds use the higher or lower value, check the suggestion against the recorded test, and explicitly confirm it before choosing **Detect markers**. The software never infers which numerical direction means elevator-down.
+
+An isolated minimum or maximum is not accepted as an endpoint suggestion. If the CSV has no clearly dominant sustained neutral value or no sustained endpoint in the selected direction, use **Advanced / Manual calibration** to enter the operator-confirmed full-down and neutral values. The optional near-down threshold may remain blank to use the detector's existing 87.5% calibrated-span default. Both positive and negative endpoint directions remain supported.
+
+The preview reports the radio-local recording span, row count, and every complete elevator-down hold found by the existing detector.
 
 Preview candidates are not confirmed physical landmarks. Loading one CSV does not establish Walk 1, map candidates to the five route positions, calculate RF section evidence, infer distance or failsafe behavior, or compare antennas. Missing or zero-filled RF telemetry does not affect elevator marker detection.
 

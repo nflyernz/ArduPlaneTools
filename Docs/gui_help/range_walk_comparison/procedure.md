@@ -31,9 +31,10 @@ Missing or zero-filled telemetry is unavailable evidence, not measured poor sign
 ## Calibrate and preview in the GUI
 
 1. Open **Range-Walk Comparison** and choose the original EdgeTX CSV. A shared aircraft BIN is not required.
-2. `Ele` is the transmitter channel value recorded in the CSV. Enter the operator-confirmed value recorded during the deliberate full elevator-down hold and the value recorded with the elevator stick centred.
-3. Values are model-specific and may be positive or negative. The displayed minimum and maximum are calibration clues only; they do not determine which direction is down or which value is neutral.
-4. The near-down threshold is optional. Leaving it blank uses 87.5% of the calibrated neutral-to-down span.
-5. Choose **Detect markers** and review every candidate's onset, release and duration. Candidate detection does not confirm the five physical landmarks.
+2. `Ele` is the transmitter channel value recorded in the CSV. The GUI may suggest neutral and endpoint values from sustained observations; an isolated minimum or maximum is not used as a calibrated endpoint.
+3. Select whether the deliberate full elevator-down holds use the higher or lower `Ele` value. Values are model-specific and may be positive or negative. The software does not infer control direction from the sign or extrema.
+4. Check the proposed neutral and full-down values against the recorded test, then explicitly confirm the calibration. Suggestions are evidence clues, not verified control direction.
+5. If a reliable suggestion is unavailable, open **Advanced / Manual calibration** and enter the operator-confirmed full-down and neutral values. The optional near-down threshold may remain blank to use 87.5% of the calibrated neutral-to-down span.
+6. Choose **Detect markers** and review every candidate's onset, release and duration. Candidate detection does not confirm the five physical landmarks.
 
 The current GUI stops at CSV and marker preview. Baseline acceptance, five-landmark mapping, later walks, RF section comparison, graphs and antenna comparison remain in the established CLI workflow.
