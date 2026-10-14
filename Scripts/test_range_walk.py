@@ -99,6 +99,24 @@ def test_model_specific_reversed_sign_and_variable_cadence(tmp_path):
         MarkerCalibration(-1024, 0, near_down=900)
 
 
+def test_marker_neutral_return_tolerance_is_configurable(tmp_path):
+    session = _session(tmp_path, holds=(2,))
+    # After the hold, 300 is inside a 33% neutral band for a 1024 span, but
+    # outside the established 20% default. Delay the next exact-neutral row.
+    for index in range(40, 51):
+        session.rows[index] = replace(session.rows[index], ele=300)
+
+    default = detect_markers(session, MarkerCalibration(1024, 0))
+    gui_preview = detect_markers(
+        session,
+        MarkerCalibration(1024, 0, neutral_tolerance=0.33),
+    )
+
+    assert default == ()
+    assert len(gui_preview) == 1
+    assert gui_preview[0].release == BASE + timedelta(seconds=4)
+
+
 def test_five_explicit_landmarks_extra_candidate_and_missing_boundaries(tmp_path):
     session = _session(tmp_path, extra=(23,))
     walk = _walk(session, selected=(1, 2, 3, 4, 6), baseline=True)

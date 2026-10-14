@@ -37,11 +37,14 @@ class MarkerCalibration:
     neutral: float
     min_hold_s: float = 1.5
     near_down: float | None = None
+    neutral_tolerance: float = 0.20
 
     def __post_init__(self):
         if (not all(math.isfinite(value) for value in
-                    (self.down, self.neutral, self.min_hold_s)) or
-                self.down == self.neutral or self.min_hold_s <= 0):
+                    (self.down, self.neutral, self.min_hold_s,
+                     self.neutral_tolerance)) or
+                self.down == self.neutral or self.min_hold_s <= 0 or
+                not 0 < self.neutral_tolerance <= 1):
             raise ValueError("Calibrated down must differ from neutral; hold must be positive")
         if self.near_down is not None:
             if (not math.isfinite(self.near_down) or
@@ -56,7 +59,9 @@ class MarkerCalibration:
         return (value - threshold) * (1 if delta > 0 else -1) >= 0
 
     def is_neutral(self, value: float) -> bool:
-        return abs(value - self.neutral) <= 0.20 * abs(self.down - self.neutral)
+        return abs(value - self.neutral) <= self.neutral_tolerance * abs(
+            self.down - self.neutral
+        )
 
 
 def _cadence_s(rows: list[EdgeTxRow]) -> float:

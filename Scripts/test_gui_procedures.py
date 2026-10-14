@@ -40,11 +40,12 @@ def window(qt_app):
     qt_app.processEvents()
 
 
-def test_only_radio_link_and_stall_have_test_procedure_buttons(window):
+def test_only_documented_field_modules_have_test_procedure_buttons(window):
     subject, _radio_calls, _stall_calls = window
 
     assert set(subject.procedure_buttons) == set(PROCEDURE_MODULES) == {
         "Radio Link",
+        "Range-Walk Comparison",
         "Stall",
     }
     for module in PROCEDURE_MODULES:
@@ -92,6 +93,34 @@ def test_only_radio_link_and_stall_have_test_procedure_buttons(window):
             ),
         ),
         (
+            "Range-Walk Comparison",
+            (
+                "Safe ground preparation",
+                "isolate propulsion",
+                "Do not arm the aircraft",
+                "fresh EdgeTX CSV-logging session",
+                "original receiver antenna installation",
+                "Walk 1 is the baseline",
+                "separate reconnaissance walk is not required",
+                "five safe physical landmarks",
+                "Landmark 5 is the safe turnaround",
+                "full elevator-down position",
+                "Return the elevator stick to neutral",
+                "do not manufacture a missing marker",
+                "must not be assumed to have equal distance",
+                "not measured poor signal",
+                "CSV and marker preview",
+                "estimates neutral and endpoints only from sustained observations",
+                "Leave Auto selected",
+                "clearly stronger",
+                "Use Inverse",
+                "reports the ambiguity",
+                "requires no manual neutral or near-down entry",
+                "33% neutral-return tolerance",
+                "Candidate detection does not confirm",
+            ),
+        ),
+        (
             "Stall",
             (
                 "Before flight / Recovery requirements",
@@ -133,7 +162,11 @@ def test_procedure_opens_directly_without_bin_or_analysis_dispatch(
 
 
 def test_procedure_files_are_local_nonempty_markdown():
-    for module, slug in (("Radio Link", "radio_link"), ("Stall", "stall")):
+    for module, slug in (
+        ("Radio Link", "radio_link"),
+        ("Range-Walk Comparison", "range_walk_comparison"),
+        ("Stall", "stall"),
+    ):
         path = DOCS_ROOT / slug / "procedure.md"
         text = path.read_text(encoding="utf-8")
         assert path.is_file()
@@ -205,3 +238,28 @@ def test_procedure_close_removes_reference_and_main_close_closes_all(
     assert subject._docs_windows == {}
     assert not isValid(second)
     assert not isValid(docs)
+
+
+def test_range_walk_procedure_closes_and_reopens_without_bin(qt_app, window):
+    subject, radio_calls, stall_calls = window
+    button = subject.procedure_buttons["Range-Walk Comparison"]
+
+    button.click()
+    qt_app.processEvents()
+    first = subject._procedure_windows["Range-Walk Comparison"]
+    assert subject.selected_log is None
+    assert "Range-Walk Comparison field-test procedure" in (
+        first.browser.toPlainText()
+    )
+    assert radio_calls == [] and stall_calls == []
+
+    first.close()
+    _wait_until(
+        qt_app,
+        lambda: "Range-Walk Comparison" not in subject._procedure_windows,
+    )
+    button.click()
+    qt_app.processEvents()
+    second = subject._procedure_windows["Range-Walk Comparison"]
+    assert second is not first
+    assert second.isVisible()

@@ -27,7 +27,7 @@ MODULE_SLUGS = {
 }
 
 DOCS_ROOT = Path(__file__).resolve().parents[2] / "Docs" / "gui_help"
-PROCEDURE_MODULES = frozenset(("Radio Link", "Stall"))
+PROCEDURE_MODULES = frozenset(("Radio Link", "Range-Walk Comparison", "Stall"))
 
 
 def _read_markdown(path: Path) -> str:

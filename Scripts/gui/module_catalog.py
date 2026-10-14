@@ -32,3 +32,21 @@ EXECUTABLE_ANALYSES = CONNECTED_ANALYSES - {
     "Pack Performance",
     "Radio Link",
 }
+
+
+def connection_description(module: str) -> str:
+    """Describe full or intentionally partial GUI availability."""
+    if module == "Range-Walk Comparison":
+        return "CSV/marker preview available; comparison not yet connected"
+    return (
+        "Connected to the GUI"
+        if module in CONNECTED_ANALYSES
+        else "Not yet connected to the GUI"
+    )
+
+
+def connection_status(module: str) -> str:
+    """Return the compact status-bar form of GUI availability."""
+    if module == "Range-Walk Comparison":
+        return "CSV/marker preview ready; comparison not connected"
+    return "ready" if module in CONNECTED_ANALYSES else "analysis not connected"
