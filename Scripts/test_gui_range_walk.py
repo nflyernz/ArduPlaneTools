@@ -1,6 +1,7 @@
 """Portable adapter and GUI tests for Range-Walk CSV marker preview."""
 
 import os
+from datetime import timedelta
 from pathlib import Path
 import threading
 import time
@@ -21,8 +22,10 @@ from gui.range_walk_adapter import (
     RangeWalkPreviewRequest,
     RangeWalkPreviewResult,
     analyse_range_walk_preview,
+    estimate_ele_calibration,
     inspect_range_walk_csv,
 )
+from core.edgetx import EdgeTxRow, EdgeTxSession
 from test_range_walk import BASE, HEADER, _session
 
 
@@ -51,6 +54,21 @@ def _result(request, text="preview result"):
         (),
         text,
     )
+
+
+def _ele_session(tmp_path, values, name="calibration.csv"):
+    rows = [
+        EdgeTxRow(
+            BASE + timedelta(seconds=index / 10),
+            {},
+            None,
+            "",
+            "unavailable",
+            value,
+        )
+        for index, value in enumerate(values)
+    ]
+    return EdgeTxSession(tmp_path / name, ("Ele",), rows, [])
 
 
 @pytest.fixture
@@ -135,6 +153,44 @@ def test_csv_inspection_reports_ele_extrema_without_assigning_direction(
 
     assert (inspection.ele_min, inspection.ele_max) == expected_range
     assert inspection.request_id == 7
+    assert inspection.calibration.neutral == 0
+    assert (inspection.calibration.high if down > 0 else inspection.calibration.low) == down
+
+
+def test_estimator_suggests_piper_like_neutral_and_sustained_endpoints(tmp_path):
+    session = _ele_session(
+        tmp_path,
+        [2] * 100 + [1024] * 20 + [2] * 40 + [-1024] * 20 + [2] * 100,
+    )
+
+    suggestions = estimate_ele_calibration(session)
+
+    assert suggestions.neutral == pytest.approx(2)
+    assert suggestions.high == pytest.approx(1024)
+    assert suggestions.low == pytest.approx(-1024)
+    assert "sustained Ele plateaus" in suggestions.explanation
+
+
+def test_estimator_rejects_isolated_endpoint_outliers(tmp_path):
+    session = _ele_session(tmp_path, [2] * 100 + [1024, -1024] + [2] * 100)
+
+    suggestions = estimate_ele_calibration(session)
+
+    assert suggestions.neutral == pytest.approx(2)
+    assert suggestions.high is None
+    assert suggestions.low is None
+    assert "no separated endpoint was sustained" in suggestions.explanation
+
+
+def test_estimator_requires_a_clearly_dominant_neutral(tmp_path):
+    session = _ele_session(tmp_path, [0] * 20 + [500] * 20 + [-500] * 20)
+
+    suggestions = estimate_ele_calibration(session)
+
+    assert suggestions.neutral is None
+    assert suggestions.high is None
+    assert suggestions.low is None
+    assert "No clearly dominant" in suggestions.explanation
 
 
 @pytest.mark.parametrize(
@@ -188,9 +244,12 @@ def test_choose_csv_and_detect_without_shared_bin(
     _wait_until(qt_app, lambda: window._analysis_thread is None)
     assert "Observed Ele range: 0 to 1024" in widget.report.toPlainText()
     assert not widget.detect_button.isEnabled()
-    assert "calibration missing or invalid" in widget.state_label.text()
-    widget.down_edit.setText("1024")
-    widget.neutral_edit.setText("0")
+    assert "calibration unavailable or invalid" in widget.state_label.text()
+    widget.higher_direction.click()
+    assert "Suggested neutral: 0" in widget.suggestion_label.text()
+    assert "full-down for the higher direction: 1024" in widget.suggestion_label.text()
+    assert not widget.detect_button.isEnabled()
+    widget.confirm_calibration.click()
     assert widget.detect_button.isEnabled()
     assert "Ready to detect" in widget.state_label.text()
     widget.detect_button.click()
@@ -224,8 +283,8 @@ def test_source_change_clears_old_result_and_withholds_stale_worker_output(
     widget = window._range_walk.widget
     window._range_walk.select_source(first)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
-    widget.down_edit.setText("1024")
-    widget.neutral_edit.setText("0")
+    widget.higher_direction.click()
+    widget.confirm_calibration.click()
     widget.detect_button.click()
     assert started.wait(1)
 
@@ -238,6 +297,41 @@ def test_source_change_clears_old_result_and_withholds_stale_worker_output(
     assert widget.source_path == second
     assert "stale first result" not in widget.report.toPlainText()
     assert "Observed Ele range" in widget.report.toPlainText()
+    assert not widget.confirm_calibration.isChecked()
+    assert not widget.higher_direction.isChecked()
+
+
+def test_source_change_during_inspection_withholds_old_suggestions(
+    qt_app, tmp_path, make_window
+):
+    first = _session(tmp_path, name="first.csv", down=1024).path.resolve()
+    second = _session(tmp_path, name="second.csv", down=-1024).path.resolve()
+    started = threading.Event()
+    release = threading.Event()
+
+    def inspection_adapter(request):
+        if request.source_path == first:
+            started.set()
+            assert release.wait(2)
+        return inspect_range_walk_csv(request)
+
+    window = make_window(range_walk_inspection_adapter=inspection_adapter)
+    widget = window._range_walk.widget
+    window._range_walk.select_source(first)
+    assert started.wait(1)
+    assert window._range_walk.select_source(second)
+    assert not widget.confirm_calibration.isChecked()
+    release.set()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    assert widget.source_path == second
+    widget.lower_direction.click()
+    assert "full-down for the lower direction: -1024" in (
+        widget.suggestion_label.text()
+    )
+    assert "full-down for the higher direction: 1024" not in (
+        widget.suggestion_label.text()
+    )
 
 
 def test_invalid_preview_recovers_without_changing_csv_source(
@@ -248,6 +342,7 @@ def test_invalid_preview_recovers_without_changing_csv_source(
     widget = window._range_walk.widget
     window._range_walk.select_source(session.path)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
+    widget.manual_group.setChecked(True)
     widget.neutral_edit.setText("0")
 
     assert not widget.detect_button.isEnabled()
@@ -259,6 +354,8 @@ def test_invalid_preview_recovers_without_changing_csv_source(
     assert "must be numeric" in widget.state_label.text()
     widget.down_edit.setText("1024")
     assert widget.near_down_edit.text() == ""
+    assert not widget.detect_button.isEnabled()
+    widget.confirm_calibration.click()
     assert widget.detect_button.isEnabled()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
@@ -285,8 +382,8 @@ def test_worker_exclusion_safe_close_and_no_other_routing_or_persistence(
     widget = window._range_walk.widget
     window._range_walk.select_source(session.path)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
-    widget.down_edit.setText("1024")
-    widget.neutral_edit.setText("0")
+    widget.higher_direction.click()
+    widget.confirm_calibration.click()
     widget.detect_button.click()
     assert started.wait(1)
     qt_app.processEvents()
@@ -321,8 +418,8 @@ def test_shared_bin_changes_do_not_change_range_walk_preview(
     widget = window._range_walk.widget
     window._range_walk.select_source(session.path)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
-    widget.down_edit.setText("1024")
-    widget.neutral_edit.setText("0")
+    widget.higher_direction.click()
+    widget.confirm_calibration.click()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
     report = widget.report.toPlainText()
@@ -351,17 +448,18 @@ def test_calibration_guidance_and_failed_detection_keep_valid_csv(
 
     guidance = widget.calibration_guidance.text()
     assert "recorded in this EdgeTX CSV" in guidance
-    assert "full elevator-down hold" in guidance
-    assert "stick centred" in guidance
-    assert "positive or negative" in guidance
-    assert "does not assume which direction means down" in guidance
+    assert "sustained neutral and endpoint values" in guidance
+    assert "cannot determine which direction is elevator-down" in guidance
     assert "Observed Ele range: -1024 to 0" in widget.report.toPlainText()
-    assert widget.down_edit.text() == ""
-    assert widget.neutral_edit.text() == ""
+    assert "Suggested neutral: 0" in widget.suggestion_label.text()
     assert "87.5%" in widget.near_down_edit.placeholderText()
 
-    widget.down_edit.setText("-1024")
-    widget.neutral_edit.setText("0")
+    widget.lower_direction.click()
+    assert "full-down for the lower direction: -1024" in (
+        widget.suggestion_label.text()
+    )
+    assert not widget.detect_button.isEnabled()
+    widget.confirm_calibration.click()
     assert widget.detect_button.isEnabled()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
@@ -369,4 +467,81 @@ def test_calibration_guidance_and_failed_detection_keep_valid_csv(
     assert "Detection failed" in widget.state_label.text()
     assert "preview failed" in widget.state_label.text()
     assert widget.source_path == session.path.resolve()
+    assert widget.detect_button.isEnabled()
+
+
+def test_direction_change_requires_new_confirmation(qt_app, tmp_path, make_window):
+    session = _session(tmp_path, up=(30,))
+    window = make_window()
+    widget = window._range_walk.widget
+    window._range_walk.select_source(session.path)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    widget.higher_direction.click()
+    widget.confirm_calibration.click()
+    assert widget.detect_button.isEnabled()
+
+    widget.lower_direction.click()
+    assert not widget.confirm_calibration.isChecked()
+    assert not widget.detect_button.isEnabled()
+    assert "confirm it before" in widget.state_label.text()
+
+
+def test_suggested_lower_direction_detects_negative_holds(
+    qt_app, tmp_path, make_window
+):
+    session = _session(tmp_path, down=-1024)
+    window = make_window()
+    widget = window._range_walk.widget
+    window._range_walk.select_source(session.path)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    widget.lower_direction.click()
+    widget.confirm_calibration.click()
+    widget.detect_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    assert "Marker candidates: 5" in widget.report.toPlainText()
+
+
+def test_manual_override_supports_negative_down_and_blank_threshold(
+    qt_app, tmp_path, make_window
+):
+    session = _session(tmp_path, down=-1024)
+    window = make_window()
+    widget = window._range_walk.widget
+    window._range_walk.select_source(session.path)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    widget.manual_group.setChecked(True)
+    widget.down_edit.setText("-1024")
+    widget.neutral_edit.setText("0")
+    assert widget.near_down_edit.text() == ""
+    assert not widget.detect_button.isEnabled()
+    widget.confirm_calibration.click()
+    widget.detect_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    assert "Marker candidates: 5" in widget.report.toPlainText()
+
+
+def test_unreliable_endpoint_requires_manual_fallback(
+    qt_app, tmp_path, make_window
+):
+    session = _session(tmp_path, holds=(), short=(2,))
+    window = make_window()
+    widget = window._range_walk.widget
+    window._range_walk.select_source(session.path)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    widget.higher_direction.click()
+    assert "Unavailable" in widget.suggestion_label.text()
+    assert not widget.confirm_calibration.isEnabled()
+    assert not widget.detect_button.isEnabled()
+    assert "Advanced / Manual calibration" in widget.state_label.text()
+
+    widget.manual_group.setChecked(True)
+    widget.down_edit.setText("1024")
+    widget.neutral_edit.setText("0")
+    widget.confirm_calibration.click()
     assert widget.detect_button.isEnabled()

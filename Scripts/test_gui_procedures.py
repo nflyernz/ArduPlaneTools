@@ -110,7 +110,11 @@ def test_only_documented_field_modules_have_test_procedure_buttons(window):
                 "must not be assumed to have equal distance",
                 "not measured poor signal",
                 "CSV and marker preview",
-                "calibration clues only",
+                "suggest neutral and endpoint values from sustained observations",
+                "does not infer control direction",
+                "explicitly confirm the calibration",
+                "Advanced / Manual calibration",
+                "87.5%",
                 "Candidate detection does not confirm",
             ),
         ),
@@ -156,7 +160,11 @@ def test_procedure_opens_directly_without_bin_or_analysis_dispatch(
 
 
 def test_procedure_files_are_local_nonempty_markdown():
-    for module, slug in (("Radio Link", "radio_link"), ("Stall", "stall")):
+    for module, slug in (
+        ("Radio Link", "radio_link"),
+        ("Range-Walk Comparison", "range_walk_comparison"),
+        ("Stall", "stall"),
+    ):
         path = DOCS_ROOT / slug / "procedure.md"
         text = path.read_text(encoding="utf-8")
         assert path.is_file()
