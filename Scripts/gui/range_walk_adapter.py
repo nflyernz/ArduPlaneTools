@@ -7,7 +7,13 @@ from pathlib import Path
 from statistics import median
 
 from core.edgetx import EdgeTxSession, read_edgetx_csv
-from core.range_walk import LandmarkMarker, MarkerCalibration, detect_markers
+from core.range_walk import (
+    LandmarkMarker,
+    MarkerCalibration,
+    WalkSettings,
+    detect_markers,
+    select_landmarks,
+)
 
 
 @dataclass(frozen=True)
@@ -66,6 +72,114 @@ class RangeWalkPreviewResult:
     direction_reliable: bool
     assessment: str
     text: str
+
+
+@dataclass(frozen=True)
+class Walk1Baseline:
+    """Validated session-only Walk 1 state using the GUI-detected evidence."""
+
+    source_path: Path
+    label: str
+    antenna: str
+    landmark_names: tuple[str, ...]
+    turnaround: str
+    settings: WalkSettings
+    candidates: tuple[LandmarkMarker, ...]
+    candidate_numbers: tuple[int, ...]
+    landmarks: tuple[LandmarkMarker, ...]
+    direction_used: str
+
+
+def create_walk1_baseline(
+    preview: RangeWalkPreviewResult,
+    candidate_numbers: tuple[int | None, ...],
+    landmark_names: tuple[str, ...],
+    antenna: str,
+    label: str,
+    settings: WalkSettings,
+) -> Walk1Baseline:
+    """Validate and retain a Walk 1 baseline without redetecting markers."""
+    if len(landmark_names) != 5 or any(not name.strip() for name in landmark_names):
+        raise ValueError("Enter a physical name for all five landmarks")
+    if not antenna.strip():
+        raise ValueError("Enter the original receiver antenna installation")
+    names = tuple(name.strip() for name in landmark_names)
+    selected = select_landmarks(
+        preview.markers,
+        candidate_numbers,
+        baseline=True,
+    )
+    landmarks = tuple(marker for marker in selected if marker is not None)
+    numbers = tuple(number for number in candidate_numbers if number is not None)
+    return Walk1Baseline(
+        source_path=preview.source_path,
+        label=label.strip() or f"Walk 1 — {preview.source_path.stem}",
+        antenna=antenna.strip(),
+        landmark_names=names,
+        turnaround=names[4],
+        settings=settings,
+        candidates=preview.markers,
+        candidate_numbers=numbers,
+        landmarks=landmarks,
+        direction_used=preview.direction_used,
+    )
+
+
+def format_walk1_baseline_summary(baseline: Walk1Baseline) -> str:
+    """Format a compact saved-in-session baseline summary."""
+    lines = [
+        "Walk 1 baseline saved in this session",
+        "=====================================",
+        f"Label: {baseline.label}",
+        f"Source CSV: {baseline.source_path}",
+        f"Original receiver antenna: {baseline.antenna}",
+        f"Detection direction: {_direction_label(baseline.direction_used)}",
+        "",
+        "Confirmed landmarks",
+    ]
+    for position, (name, number, marker) in enumerate(
+        zip(
+            baseline.landmark_names,
+            baseline.candidate_numbers,
+            baseline.landmarks,
+        ),
+        start=1,
+    ):
+        suffix = " — turnaround" if position == 5 else ""
+        lines.append(
+            f"  {position}. {name}{suffix}: candidate {number}; "
+            f"{marker.onset.time().isoformat(timespec='milliseconds')} to "
+            f"{marker.release.time().isoformat(timespec='milliseconds')}; "
+            f"hold {marker.hold_s:.3f} s"
+        )
+    lines.extend(
+        [
+            f"Safe turnaround: {baseline.turnaround}",
+            "",
+            "Configured RF settings",
+            f"  TX power: {baseline.settings.tx_power or 'Unknown'}",
+            f"  Packet rate: {baseline.settings.packet_rate or 'Unknown'}",
+            f"  RF mode/band: {baseline.settings.rf_mode or 'Unknown'}",
+            f"  Dynamic TX power: {baseline.settings.dynamic_power or 'Unknown'}",
+        ]
+    )
+    if not all(
+        (
+            baseline.settings.tx_power,
+            baseline.settings.packet_rate,
+            baseline.settings.rf_mode,
+            baseline.settings.dynamic_power,
+        )
+    ):
+        lines.extend(
+            [
+                "",
+                "Warning: unknown RF settings prevent a later like-for-like "
+                "comparison claim.",
+            ]
+        )
+    lines.append("This baseline is held in memory only; no file was written.")
+    return "\n".join(lines)
 
 
 def analyse_range_walk_preview(

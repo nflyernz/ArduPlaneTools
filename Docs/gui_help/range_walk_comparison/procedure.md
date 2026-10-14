@@ -1,6 +1,6 @@
 # Range-Walk Comparison field-test procedure
 
-This procedure records repeatable transmitter-side evidence for comparing receiver antenna arrangements. The current GUI supports CSV and marker-candidate preview only; it does not yet confirm a baseline or compare multiple walks.
+This procedure records repeatable transmitter-side evidence for comparing receiver antenna arrangements. The current GUI supports CSV and marker preview on Page 1 and an in-memory Walk 1 baseline with five mapped landmarks on Page 2. It does not yet process later walks or compare RF evidence.
 
 ## Safe ground preparation
 
@@ -36,5 +36,9 @@ Missing or zero-filled telemetry is unavailable evidence, not measured poor sign
 4. Use **Inverse** to inspect the opposite direction. If Auto cannot establish a preferred direction, it reports the ambiguity, chooses deterministically and still gives Inverse a deterministic opposite.
 5. The normal GUI workflow requires no manual neutral or near-down entry. Marker detection retains the existing 87.5% full-down threshold and minimum hold duration and uses a 33% neutral-return tolerance for the estimated neutral-to-endpoint span.
 6. Choose **Detect markers** and review the direction used, evidence assessment, candidate count, onset, release and duration. Candidate detection does not confirm the five physical landmarks.
+7. Choose **Next: Walk 1 Setup**. Record the original antenna installation and five physical landmark names. Use the required landmark 5 name for the safe turnaround; there is no separate turnaround-description entry.
+8. With exactly five candidates, the GUI maps candidates 1–5 chronologically. If extra candidates exist, exclude them by selecting exactly five distinct candidates in increasing order without reordering them. If fewer than five exist, return to the field evidence rather than manufacturing a marker.
+9. Expand **RF Settings** to record configured TX power, packet rate, RF mode/band and dynamic TX power where known. Unknown values are allowed but prevent later like-for-like comparison claims. Do not infer configured values from telemetry TPWR or RFMD.
+10. Review the candidate onset, release and hold beside every named landmark, then choose **Save Walk 1 in session**. The saved baseline retains the exact Page 1 marker evidence and uses landmark 5 as the turnaround.
 
-The current GUI stops at CSV and marker preview. Baseline acceptance, five-landmark mapping, later walks, RF section comparison, graphs and antenna comparison remain in the established CLI workflow.
+The GUI baseline is held in memory only. Moving between Page 1 and Page 2 preserves the current draft, while changing the CSV, Auto/Inverse direction or marker detection invalidates a saved baseline based on the earlier evidence. Closing the application discards it. Later walks, History, RF section comparison, graphs and antenna comparison remain outside this GUI slice.
