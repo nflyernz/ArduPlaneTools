@@ -1,6 +1,6 @@
 # Range-Walk Comparison
 
-Range-Walk Comparison compares repeatable, transmitter-recorded EdgeTX CSV walks using five confirmed physical landmarks and four outward moving sections. The GUI currently provides a first-step **CSV/marker preview only**; the complete comparison remains available through the interactive CLI workflow.
+Range-Walk Comparison compares repeatable, transmitter-recorded EdgeTX CSV walks using five confirmed physical landmarks and four outward moving sections. The GUI currently provides two setup pages: **CSV & Markers** and **Walk 1 — Baseline & Landmarks**. Later walks and RF comparison remain available only through the interactive CLI workflow.
 
 In the GUI, choose one EdgeTX CSV and use **Auto** to examine both higher and lower `Ele` deflections. Auto estimates a dominant sustained neutral value and sustained endpoints, runs the existing marker detector in both available directions, and prefers a direction only when it has a clearly stronger sequence of complete holds and neutral returns. It does not assume that five markers must exist.
 
@@ -8,9 +8,15 @@ Use **Inverse** to inspect the direction opposite Auto's preferred direction. Wh
 
 The normal GUI workflow has no manual neutral or near-down calibration. It retains the existing 87.5% full-down threshold and minimum hold duration, while accepting a neutral return within 33% of the estimated neutral-to-endpoint span. The established CLI calibration and its 20% neutral tolerance remain unchanged.
 
-The preview reports the radio-local recording span, row count, and every complete elevator-down hold found by the existing detector.
+Page 1 reports the radio-local recording span, row count, and every complete elevator-down hold found by the existing detector. After detection, choose **Next: Walk 1 Setup** to use those exact detected markers; the GUI does not redetect them with different calibration settings.
 
-Preview candidates are not confirmed physical landmarks. Loading one CSV does not establish Walk 1, map candidates to the five route positions, calculate RF section evidence, infer distance or failsafe behavior, or compare antennas. Missing or zero-filled RF telemetry does not affect elevator marker detection.
+On Page 2, describe the original receiver antenna installation, name five physical landmarks and describe the safe turnaround at landmark 5. Exactly five detected candidates are preselected chronologically. If extra candidates exist, exclude them by selecting five distinct candidates in increasing order. Fewer than five candidates cannot establish a complete baseline, and the GUI never manufactures a missing marker.
+
+Optional RF Settings record the operator's configured TX power, packet rate, RF mode/band and dynamic-power state. Unknown settings are retained, with a warning that unknown or mismatched settings prevent later like-for-like RF comparison claims. Telemetry-reported TPWR or RFMD is not substituted for configured settings.
+
+**Save Walk 1 in session** validates and retains the source CSV, exact detected marker objects, mapping, physical names, turnaround, antenna description and settings in memory only. It writes no project or history file. Page navigation preserves the draft; changing the CSV, Auto/Inverse direction or marker detection invalidates a saved baseline tied to older evidence.
+
+Preview candidates are not confirmed physical landmarks until the operator maps and saves them on Page 2. Loading one CSV does not calculate RF section evidence, infer distance or failsafe behavior, or compare antennas. Missing or zero-filled RF telemetry does not affect elevator marker detection.
 
 Walk 1 is always the original-antenna baseline. Later walks retain the same landmark order. Deliberate calibrated full elevator-down holds provide marker candidates, which the user confirms rather than the tool manufacturing missing landmarks. Stationary marker holds remain separate from moving sections.
 
