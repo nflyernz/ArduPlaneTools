@@ -4,16 +4,13 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QCheckBox,
     QFileDialog,
-    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
-    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
@@ -25,7 +22,6 @@ from .range_walk_adapter import (
     RangeWalkPreviewResult,
     analyse_range_walk_preview,
     inspect_range_walk_csv,
-    marker_calibration,
 )
 
 
@@ -64,71 +60,38 @@ class RangeWalkPreviewWidget(QWidget):
         source_layout.addWidget(self.choose_button)
         layout.addLayout(source_layout)
 
-        calibration_group = QGroupBox("Suggested elevator calibration")
-        calibration_layout = QVBoxLayout(calibration_group)
+        detection_group = QGroupBox("Elevator marker direction")
+        detection_layout = QVBoxLayout(detection_group)
         guidance = QLabel(
-            "Ele is the transmitter channel value recorded in this EdgeTX CSV. "
-            "The CSV can suggest sustained neutral and endpoint values, but it "
-            "cannot determine which direction is elevator-down. Confirm the "
-            "direction against the deliberate recorded holds."
+            "Auto compares complete sustained holds and neutral returns in both "
+            "Ele directions. Use Inverse to inspect the opposite direction."
         )
         guidance.setWordWrap(True)
-        calibration_layout.addWidget(guidance)
+        detection_layout.addWidget(guidance)
         self.calibration_guidance = guidance
 
-        direction_layout = QHBoxLayout()
-        direction_layout.addWidget(QLabel("Elevator-down direction:"))
-        self.higher_direction = QRadioButton("Higher Ele value (+)")
-        self.higher_direction.setObjectName("rangeWalkHigherDirection")
-        self.lower_direction = QRadioButton("Lower Ele value (−)")
-        self.lower_direction.setObjectName("rangeWalkLowerDirection")
-        self.direction_group = QButtonGroup(self)
-        self.direction_group.addButton(self.higher_direction)
-        self.direction_group.addButton(self.lower_direction)
-        direction_layout.addWidget(self.higher_direction)
-        direction_layout.addWidget(self.lower_direction)
-        direction_layout.addStretch(1)
-        calibration_layout.addLayout(direction_layout)
+        mode_layout = QHBoxLayout()
+        mode_layout.addWidget(QLabel("Detection:"))
+        self.auto_button = QPushButton("Auto")
+        self.auto_button.setObjectName("rangeWalkAutoDirection")
+        self.auto_button.setCheckable(True)
+        self.inverse_button = QPushButton("Inverse")
+        self.inverse_button.setObjectName("rangeWalkInverseDirection")
+        self.inverse_button.setCheckable(True)
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.setExclusive(True)
+        self.mode_group.addButton(self.auto_button)
+        self.mode_group.addButton(self.inverse_button)
+        self.auto_button.setChecked(True)
+        mode_layout.addWidget(self.auto_button)
+        mode_layout.addWidget(self.inverse_button)
+        mode_layout.addStretch(1)
+        detection_layout.addLayout(mode_layout)
         self.suggestion_label = QLabel("Choose a CSV to obtain calibration suggestions.")
         self.suggestion_label.setObjectName("rangeWalkCalibrationSuggestion")
         self.suggestion_label.setWordWrap(True)
-        calibration_layout.addWidget(self.suggestion_label)
-        self.confirm_calibration = QCheckBox(
-            "I confirm this calibration matches the recorded elevator-down holds."
-        )
-        self.confirm_calibration.setObjectName("rangeWalkConfirmCalibration")
-        calibration_layout.addWidget(self.confirm_calibration)
-        layout.addWidget(calibration_group)
-
-        manual_group = QGroupBox("Advanced / Manual calibration")
-        manual_group.setCheckable(True)
-        manual_group.setChecked(False)
-        manual_layout = QFormLayout(manual_group)
-        self.down_edit = QLineEdit()
-        self.down_edit.setObjectName("rangeWalkDownCalibration")
-        self.down_edit.setPlaceholderText("Example: 900 or -900")
-        self.neutral_edit = QLineEdit()
-        self.neutral_edit.setObjectName("rangeWalkNeutralCalibration")
-        self.neutral_edit.setPlaceholderText("Example: 0")
-        self.near_down_edit = QLineEdit()
-        self.near_down_edit.setObjectName("rangeWalkNearDownCalibration")
-        self.near_down_edit.setPlaceholderText(
-            "Optional — blank uses 87.5% of calibrated span"
-        )
-        manual_layout.addRow(
-            "Calibrated full elevator-down Ele:", self.down_edit
-        )
-        manual_layout.addRow("Calibrated neutral Ele:", self.neutral_edit)
-        manual_layout.addRow(
-            "Near-down threshold:", self.near_down_edit
-        )
-        threshold_note = QLabel(
-            "Optional: blank uses 87.5% of the calibrated neutral-to-down span."
-        )
-        threshold_note.setWordWrap(True)
-        manual_layout.addRow(threshold_note)
-        layout.addWidget(manual_group)
-        self.manual_group = manual_group
+        detection_layout.addWidget(self.suggestion_label)
+        layout.addWidget(detection_group)
 
         action_layout = QHBoxLayout()
         action_layout.addStretch(1)
@@ -150,15 +113,11 @@ class RangeWalkPreviewWidget(QWidget):
         self.report.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.report.setPlainText(
             "Range-Walk CSV / marker preview\n\n"
-            "Choose one EdgeTX CSV and enter its local elevator calibration."
+            "Choose one EdgeTX CSV, then use Auto or Inverse marker detection."
         )
         layout.addWidget(self.report, 1)
-        for field in (self.down_edit, self.neutral_edit, self.near_down_edit):
-            field.textChanged.connect(self._calibration_changed)
-        self.higher_direction.toggled.connect(self._direction_changed)
-        self.lower_direction.toggled.connect(self._direction_changed)
-        self.manual_group.toggled.connect(self._manual_changed)
-        self.confirm_calibration.toggled.connect(self._update_controls)
+        self.auto_button.clicked.connect(self._mode_changed)
+        self.inverse_button.clicked.connect(self._mode_changed)
         self._update_controls()
 
     @property
@@ -169,23 +128,20 @@ class RangeWalkPreviewWidget(QWidget):
         self._source_path = path
         self._inspection = None
         self._outcome = ""
-        self._clear_direction()
-        self.confirm_calibration.setChecked(False)
-        self.manual_group.setChecked(False)
+        self.auto_button.setChecked(True)
         self.source_path_edit.setText(str(path))
         self.source_path_edit.setToolTip(str(path))
         self.source_path_edit.setCursorPosition(0)
         self.report.setPlainText(
             "Range-Walk CSV / marker preview\n\n"
             f"Selected: {path}\n\n"
-            "Enter calibration and choose Detect markers."
+            "Reading sustained elevator evidence before detection."
         )
         self._update_controls()
 
     def set_inspection(self, inspection: RangeWalkCsvInspection) -> None:
         self._inspection = inspection
         self._outcome = ""
-        self.confirm_calibration.setChecked(False)
         suggestions = inspection.calibration
         self.report.setPlainText(
             "Range-Walk CSV / marker preview\n\n"
@@ -203,25 +159,6 @@ class RangeWalkPreviewWidget(QWidget):
         self._update_suggestion_label()
         self._update_controls()
 
-    def calibration(self) -> tuple[str, str, str]:
-        if not self.manual_group.isChecked():
-            suggestions = self._inspection.calibration if self._inspection else None
-            endpoint = None
-            if suggestions is not None:
-                endpoint = (
-                    suggestions.high
-                    if self.higher_direction.isChecked()
-                    else suggestions.low if self.lower_direction.isChecked() else None
-                )
-            if suggestions is None or suggestions.neutral is None or endpoint is None:
-                return "", "", ""
-            return f"{endpoint:g}", f"{suggestions.neutral:g}", ""
-        return (
-            self.down_edit.text(),
-            self.neutral_edit.text(),
-            self.near_down_edit.text(),
-        )
-
     def set_busy(self, busy: bool, task: str | None = None) -> None:
         self._busy = busy
         self._busy_task = task if busy else None
@@ -235,7 +172,7 @@ class RangeWalkPreviewWidget(QWidget):
         self.report.setPlainText(
             "Range-Walk CSV / marker preview\n\n"
             f"Reading {self._source_path} to inspect its recorded Ele range…\n\n"
-            "No elevator direction or calibration value will be assigned."
+            "Auto will evaluate both sustained elevator directions."
         )
 
     def show_busy(self) -> None:
@@ -248,7 +185,8 @@ class RangeWalkPreviewWidget(QWidget):
 
     def show_result(self, result: RangeWalkPreviewResult) -> None:
         self._outcome = (
-            f"Detection completed — {len(result.markers)} marker candidate(s)."
+            f"Detection completed — {_direction_label(result.direction_used)} direction; "
+            f"{len(result.markers)} marker candidate(s)."
         )
         self.report.setPlainText(result.text)
         self._update_controls()
@@ -265,73 +203,32 @@ class RangeWalkPreviewWidget(QWidget):
         )
         self._update_controls()
 
-    def _calibration_changed(self) -> None:
+    def _mode_changed(self) -> None:
         self._outcome = ""
-        self.confirm_calibration.setChecked(False)
-        self._update_controls()
-
-    def _direction_changed(self) -> None:
-        self._outcome = ""
-        self.confirm_calibration.setChecked(False)
         self._update_suggestion_label()
         self._update_controls()
-
-    def _manual_changed(self) -> None:
-        self._outcome = ""
-        self.confirm_calibration.setChecked(False)
-        self._update_suggestion_label()
-        self._update_controls()
-
-    def _clear_direction(self) -> None:
-        self.direction_group.setExclusive(False)
-        self.higher_direction.setChecked(False)
-        self.lower_direction.setChecked(False)
-        self.direction_group.setExclusive(True)
 
     def _update_suggestion_label(self) -> None:
-        if self.manual_group.isChecked():
-            text = "Manual calibration is active. Enter the confirmed values below."
-        elif self._inspection is None:
+        if self._inspection is None:
             text = "Choose a CSV to obtain calibration suggestions."
         else:
             suggestions = self._inspection.calibration
             neutral = _format_suggestion(suggestions.neutral)
-            if self.higher_direction.isChecked():
-                endpoint = _format_suggestion(suggestions.high)
-                direction = "higher"
-            elif self.lower_direction.isChecked():
-                endpoint = _format_suggestion(suggestions.low)
-                direction = "lower"
-            else:
-                endpoint = "choose a direction"
-                direction = "selected"
             text = (
-                f"Suggested neutral: {neutral}. Suggested full-down for the "
-                f"{direction} direction: {endpoint}. {suggestions.explanation} "
-                "Suggestions do not verify control direction."
+                f"Sustained neutral: {neutral}; higher endpoint: "
+                f"{_format_suggestion(suggestions.high)}; lower endpoint: "
+                f"{_format_suggestion(suggestions.low)}. {suggestions.explanation} "
+                f"Mode: {'Inverse' if self.inverse_button.isChecked() else 'Auto'}."
             )
         self.suggestion_label.setText(text)
-
-    def _calibration_error(self) -> str | None:
-        try:
-            marker_calibration(*self.calibration())
-        except ValueError as exc:
-            return str(exc)
-        return None
 
     def _update_controls(self) -> None:
         available = not self._busy
         self.choose_button.setEnabled(available)
-        calibration_error = self._calibration_error()
-        proposed = self._inspection is not None and calibration_error is None
-        confirmed = proposed and self.confirm_calibration.isChecked()
-        self.detect_button.setEnabled(available and confirmed)
-        self.higher_direction.setEnabled(available and self._inspection is not None)
-        self.lower_direction.setEnabled(available and self._inspection is not None)
-        self.manual_group.setEnabled(available and self._inspection is not None)
-        self.confirm_calibration.setEnabled(available and proposed)
-        for field in (self.down_edit, self.neutral_edit, self.near_down_edit):
-            field.setEnabled(available and self.manual_group.isChecked())
+        ready = self._inspection is not None
+        self.detect_button.setEnabled(available and ready)
+        self.auto_button.setEnabled(available)
+        self.inverse_button.setEnabled(available)
         if self._busy:
             state = (
                 "Reading selected CSV and observed Ele range…"
@@ -344,20 +241,18 @@ class RangeWalkPreviewWidget(QWidget):
             state = self._outcome
         elif self._inspection is None:
             state = "CSV selected — observed Ele range is not yet available."
-        elif calibration_error is not None:
-            state = (
-                f"CSV selected — calibration unavailable or invalid: {calibration_error}. "
-                "Choose a supported direction or use Advanced / Manual calibration."
-            )
-        elif not self.confirm_calibration.isChecked():
-            state = "Calibration proposed — confirm it before detecting markers."
         else:
-            state = "Ready to detect marker candidates."
+            mode = "Inverse" if self.inverse_button.isChecked() else "Auto"
+            state = f"Ready to detect marker candidates in {mode} mode."
         self.state_label.setText(state)
 
 
 def _format_suggestion(value: float | None) -> str:
     return "Unavailable" if value is None else f"{value:g}"
+
+
+def _direction_label(direction: str) -> str:
+    return "higher (+Ele)" if direction == "higher" else "lower (-Ele)"
 
 
 class RangeWalkPreviewController:
@@ -427,12 +322,9 @@ class RangeWalkPreviewController:
         if self.is_busy() or widget.source_path is None:
             return
         self._request_id += 1
-        down, neutral, near_down = widget.calibration()
         request = RangeWalkPreviewRequest(
             widget.source_path,
-            down,
-            neutral,
-            near_down,
+            widget.inverse_button.isChecked(),
             self._request_id,
         )
         self._task = "detect"
@@ -454,7 +346,8 @@ class RangeWalkPreviewController:
             return True
         widget.show_result(result)
         self.show_status(
-            f"Range-Walk marker preview ready — {len(result.markers)} candidate(s)"
+            f"Range-Walk marker preview ready — {result.direction_used}; "
+            f"{len(result.markers)} candidate(s)"
         )
         return True
 
