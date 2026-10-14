@@ -3,8 +3,9 @@
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from statistics import median
 
-from core.edgetx import read_edgetx_csv
+from core.edgetx import EdgeTxSession, read_edgetx_csv
 from core.range_walk import LandmarkMarker, MarkerCalibration, detect_markers
 
 
@@ -38,6 +39,17 @@ class RangeWalkCsvInspection:
     row_count: int
     ele_min: float
     ele_max: float
+    calibration: "EleCalibrationSuggestions"
+
+
+@dataclass(frozen=True)
+class EleCalibrationSuggestions:
+    """Sustained CSV plateaus that may support operator-confirmed calibration."""
+
+    neutral: float | None
+    high: float | None
+    low: float | None
+    explanation: str
 
 
 @dataclass(frozen=True)
@@ -95,7 +107,114 @@ def inspect_range_walk_csv(
         len(session.rows),
         min(values),
         max(values),
+        estimate_ele_calibration(session),
     )
+
+
+def estimate_ele_calibration(session: EdgeTxSession) -> EleCalibrationSuggestions:
+    """Suggest neutral and sustained endpoints without assigning down direction."""
+    if session.header.count("Ele") != 1 or any(
+        row.ele is None for row in session.rows
+    ):
+        return EleCalibrationSuggestions(
+            None, None, None, "A numeric Ele value is required on every CSV row."
+        )
+    rows = session.rows
+    values = [row.ele for row in rows]
+    if len(rows) < 3 or min(values) == max(values):
+        return EleCalibrationSuggestions(
+            None, None, None, "The recording has no usable sustained Ele range."
+        )
+    gaps = [
+        (later.clock - earlier.clock).total_seconds()
+        for earlier, later in zip(rows, rows[1:])
+    ]
+    cadence = median(gaps) if gaps else 0.1
+    ordered = sorted(values)
+    lower = ordered[int(0.05 * (len(ordered) - 1))]
+    upper = ordered[int(0.95 * (len(ordered) - 1))]
+    tolerance = max(1.0, abs(upper - lower) * 0.015)
+
+    current = [values[0]]
+    current_sum = values[0]
+    start = rows[0].clock
+    sustained: list[tuple[float, int]] = []
+    for previous, row in zip(rows, rows[1:]):
+        value = row.ele
+        gap = (row.clock - previous.clock).total_seconds()
+        center = current_sum / len(current)
+        if gap <= 2.5 * cadence and abs(value - center) <= tolerance:
+            current.append(value)
+            current_sum += value
+            continue
+        if (previous.clock - start).total_seconds() >= 1.0:
+            sustained.append((median(current), len(current)))
+        current = [value]
+        current_sum = value
+        start = row.clock
+    if (rows[-1].clock - start).total_seconds() >= 1.0:
+        sustained.append((median(current), len(current)))
+    if not sustained:
+        return EleCalibrationSuggestions(
+            None, None, None, "No Ele value was sustained long enough to calibrate."
+        )
+
+    groups: list[list[tuple[float, int]]] = []
+    for plateau in sorted(sustained):
+        if groups and abs(plateau[0] - _weighted_center(groups[-1])) <= 2 * tolerance:
+            groups[-1].append(plateau)
+        else:
+            groups.append([plateau])
+    ranked = sorted(groups, key=_group_count, reverse=True)
+    neutral_group = ranked[0]
+    neutral_count = _group_count(neutral_group)
+    runner_up = _group_count(ranked[1]) if len(ranked) > 1 else 0
+    if neutral_count < max(5, 0.20 * len(rows)) or (
+        runner_up and neutral_count < 1.5 * runner_up
+    ):
+        return EleCalibrationSuggestions(
+            None,
+            None,
+            None,
+            "No clearly dominant sustained Ele value identifies neutral; use manual calibration.",
+        )
+
+    neutral = _weighted_center(neutral_group)
+    centers = [
+        _weighted_center(group) for group in groups if group is not neutral_group
+    ]
+    minimum_separation = max(4 * tolerance, 0.10 * abs(upper - lower))
+    high_values = [value for value in centers if value - neutral >= minimum_separation]
+    low_values = [value for value in centers if neutral - value >= minimum_separation]
+    high = max(high_values, default=None)
+    low = min(low_values, default=None)
+    if high is None and low is None:
+        return EleCalibrationSuggestions(
+            neutral,
+            None,
+            None,
+            "Neutral is suggested, but no separated endpoint was sustained; use manual calibration.",
+        )
+    available = []
+    if high is not None:
+        available.append("higher endpoint")
+    if low is not None:
+        available.append("lower endpoint")
+    return EleCalibrationSuggestions(
+        neutral,
+        high,
+        low,
+        "Suggested from sustained Ele plateaus: " + " and ".join(available) + ".",
+    )
+
+
+def _group_count(group: list[tuple[float, int]]) -> int:
+    return sum(count for _value, count in group)
+
+
+def _weighted_center(group: list[tuple[float, int]]) -> float:
+    count = _group_count(group)
+    return sum(value * samples for value, samples in group) / count
 
 
 def marker_calibration(
