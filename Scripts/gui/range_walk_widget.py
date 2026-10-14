@@ -33,6 +33,7 @@ class RangeWalkPreviewWidget(QWidget):
         self._source_path: Path | None = None
         self._inspection: RangeWalkCsvInspection | None = None
         self._outcome = ""
+        self._has_result = False
         self._busy = False
         self._busy_task: str | None = None
         layout = QVBoxLayout(self)
@@ -128,6 +129,7 @@ class RangeWalkPreviewWidget(QWidget):
         self._source_path = path
         self._inspection = None
         self._outcome = ""
+        self._has_result = False
         self.auto_button.setChecked(True)
         self.source_path_edit.setText(str(path))
         self.source_path_edit.setToolTip(str(path))
@@ -142,20 +144,8 @@ class RangeWalkPreviewWidget(QWidget):
     def set_inspection(self, inspection: RangeWalkCsvInspection) -> None:
         self._inspection = inspection
         self._outcome = ""
-        suggestions = inspection.calibration
-        self.report.setPlainText(
-            "Range-Walk CSV / marker preview\n\n"
-            f"Source CSV: {inspection.source_path.name}\n"
-            f"Path: {inspection.source_path}\n"
-            f"Radio-local recording: {inspection.recording_start} to "
-            f"{inspection.recording_end}\n"
-            f"CSV rows: {inspection.row_count}\n"
-            f"Observed Ele range: {inspection.ele_min:g} to "
-            f"{inspection.ele_max:g}\n\n"
-            "These extrema are calibration clues only; isolated extrema are not "
-            "used as calibrated endpoints.\n"
-            f"{suggestions.explanation}"
-        )
+        self._has_result = False
+        self.report.setPlainText(self._inspection_text(inspection))
         self._update_suggestion_label()
         self._update_controls()
 
@@ -177,6 +167,7 @@ class RangeWalkPreviewWidget(QWidget):
 
     def show_busy(self) -> None:
         assert self._source_path is not None
+        self._has_result = False
         self.report.setPlainText(
             "Range-Walk CSV / marker preview\n\n"
             f"Reading {self._source_path} and detecting markers…\n\n"
@@ -184,6 +175,7 @@ class RangeWalkPreviewWidget(QWidget):
         )
 
     def show_result(self, result: RangeWalkPreviewResult) -> None:
+        self._has_result = True
         self._outcome = (
             f"Detection completed — {_direction_label(result.direction_used)} direction; "
             f"{len(result.markers)} marker candidate(s)."
@@ -192,6 +184,7 @@ class RangeWalkPreviewWidget(QWidget):
         self._update_controls()
 
     def show_error(self, message: str, task: str | None) -> None:
+        self._has_result = False
         operation = "Detection" if task == "detect" else "CSV inspection"
         self._outcome = (
             f"{operation} failed — {message} The selected CSV is retained."
@@ -204,9 +197,40 @@ class RangeWalkPreviewWidget(QWidget):
         self._update_controls()
 
     def _mode_changed(self) -> None:
-        self._outcome = ""
+        had_result = self._has_result
+        self._has_result = False
+        self._outcome = (
+            "Detection mode changed — previous result cleared. Choose Detect markers."
+            if had_result
+            else ""
+        )
+        if self._inspection is not None:
+            message = (
+                "\n\nDetection mode changed; the previous result is no longer "
+                "shown. Choose Detect markers to run the selected mode."
+                if had_result
+                else ""
+            )
+            self.report.setPlainText(self._inspection_text(self._inspection) + message)
         self._update_suggestion_label()
         self._update_controls()
+
+    @staticmethod
+    def _inspection_text(inspection: RangeWalkCsvInspection) -> str:
+        suggestions = inspection.calibration
+        return (
+            "Range-Walk CSV / marker preview\n\n"
+            f"Source CSV: {inspection.source_path.name}\n"
+            f"Path: {inspection.source_path}\n"
+            f"Radio-local recording: {inspection.recording_start} to "
+            f"{inspection.recording_end}\n"
+            f"CSV rows: {inspection.row_count}\n"
+            f"Observed Ele range: {inspection.ele_min:g} to "
+            f"{inspection.ele_max:g}\n\n"
+            "These extrema are calibration clues only; isolated extrema are not "
+            "used as calibrated endpoints.\n"
+            f"{suggestions.explanation}"
+        )
 
     def _update_suggestion_label(self) -> None:
         if self._inspection is None:

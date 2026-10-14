@@ -74,6 +74,7 @@ def analyse_range_walk_preview(
     """Parse one CSV and run the existing calibrated marker detector."""
     source = Path(request.source_path).expanduser().resolve()
     session = read_edgetx_csv(source)
+    _require_numeric_ele(session)
     suggestions = estimate_ele_calibration(session)
     evaluations = {
         "higher": _direction_markers(session, suggestions.neutral, suggestions.high),
@@ -169,6 +170,8 @@ def _direction_assessment(
     low_count = len(evaluations["lower"])
     selected_count = len(evaluations[direction])
     if selected_count == 0:
+        if inverse:
+            return "No complete elevator holds were detected in the inverse direction."
         return "No clear elevator stick deflections detected. Try Inverse."
     if inverse:
         qualifier = "clear Auto preference" if reliable else "deterministic Auto fallback"
@@ -194,10 +197,7 @@ def inspect_range_walk_csv(
     """Read observed Ele bounds without interpreting endpoint direction."""
     source = Path(request.source_path).expanduser().resolve()
     session = read_edgetx_csv(source)
-    if session.header.count("Ele") != 1 or any(
-        row.ele is None for row in session.rows
-    ):
-        raise ValueError("Range walk requires one numeric Ele value on every CSV row")
+    _require_numeric_ele(session)
     values = [row.ele for row in session.rows]
     return RangeWalkCsvInspection(
         source,
@@ -209,6 +209,13 @@ def inspect_range_walk_csv(
         max(values),
         estimate_ele_calibration(session),
     )
+
+
+def _require_numeric_ele(session: EdgeTxSession) -> None:
+    if session.header.count("Ele") != 1 or any(
+        row.ele is None for row in session.rows
+    ):
+        raise ValueError("Range walk requires one numeric Ele value on every CSV row")
 
 
 def estimate_ele_calibration(session: EdgeTxSession) -> EleCalibrationSuggestions:

@@ -166,7 +166,10 @@ def test_inverse_uses_opposite_direction_and_does_not_promote_short_movement(tmp
     assert result.direction_used == "lower"
     assert result.auto_preferred == "higher"
     assert len(result.markers) == 0
-    assert "No clear elevator stick deflections detected. Try Inverse." in result.text
+    assert "No complete elevator holds were detected in the inverse direction." in (
+        result.text
+    )
+    assert "Try Inverse" not in result.text
 
 
 def test_ambiguous_directions_are_reported_and_deterministic(tmp_path):
@@ -243,17 +246,30 @@ def test_estimator_requires_a_clearly_dominant_neutral(tmp_path):
     assert "No clearly dominant" in suggestions.explanation
 
 
-def test_adapter_uses_existing_missing_ele_validation(tmp_path):
+def test_adapter_rejects_missing_ele_consistently_with_inspection(tmp_path):
     session = _session(
         tmp_path,
         name="missing_ele.csv",
         header=[field for field in HEADER if field != "Ele"],
     )
 
-    result = analyse_range_walk_preview(_request(session.path))
+    with pytest.raises(ValueError, match="one numeric Ele value on every CSV row"):
+        analyse_range_walk_preview(_request(session.path))
+    with pytest.raises(ValueError, match="one numeric Ele value on every CSV row"):
+        inspect_range_walk_csv(RangeWalkInspectionRequest(session.path, 1))
 
-    assert len(result.markers) == 0
-    assert "No clear elevator stick deflections detected. Try Inverse." in result.text
+
+def test_adapter_rejects_a_non_numeric_ele_row(tmp_path):
+    session = _session(tmp_path)
+    lines = session.path.read_text().splitlines()
+    ele_index = lines[0].split(",").index("Ele")
+    cells = lines[20].split(",")
+    cells[ele_index] = "not-a-number"
+    lines[20] = ",".join(cells)
+    session.path.write_text("\n".join(lines) + "\n")
+
+    with pytest.raises(ValueError, match="one numeric Ele value on every CSV row"):
+        analyse_range_walk_preview(_request(session.path))
 
 
 def test_choose_csv_and_detect_without_shared_bin(
@@ -505,6 +521,10 @@ def test_auto_detects_negative_holds_and_inverse_uses_positive_direction(
     assert "Direction used: lower (-Ele)" in widget.report.toPlainText()
     assert "Marker candidates: 5" in widget.report.toPlainText()
     widget.inverse_button.click()
+    assert window._analysis_thread is None
+    assert "Direction used:" not in widget.report.toPlainText()
+    assert "previous result is no longer shown" in widget.report.toPlainText()
+    assert "previous result cleared" in widget.state_label.text()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
