@@ -17,9 +17,11 @@ from gui import MainWindow
 from gui.pack_management_adapter import BatteryPackManagementService
 from gui.pack_performance_adapter import BatteryPackPerformanceService
 from gui.range_walk_adapter import (
+    RangeWalkInspectionRequest,
     RangeWalkPreviewRequest,
     RangeWalkPreviewResult,
     analyse_range_walk_preview,
+    inspect_range_walk_csv,
 )
 from test_range_walk import BASE, HEADER, _session
 
@@ -119,6 +121,23 @@ def test_adapter_reports_extra_and_missing_candidates_without_inference(tmp_path
 
 
 @pytest.mark.parametrize(
+    ("down", "expected_range"),
+    ((1024, (0, 1024)), (-1024, (-1024, 0))),
+)
+def test_csv_inspection_reports_ele_extrema_without_assigning_direction(
+    tmp_path, down, expected_range
+):
+    session = _session(tmp_path, down=down)
+
+    inspection = inspect_range_walk_csv(
+        RangeWalkInspectionRequest(session.path, 7)
+    )
+
+    assert (inspection.ele_min, inspection.ele_max) == expected_range
+    assert inspection.request_id == 7
+
+
+@pytest.mark.parametrize(
     ("down", "neutral", "near_down", "message"),
     (
         ("", "0", "", "Full elevator-down Ele is required"),
@@ -166,8 +185,14 @@ def test_choose_csv_and_detect_without_shared_bin(
     assert window.selected_log is None
     assert not widget.detect_button.isEnabled()
     widget.choose_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert "Observed Ele range: 0 to 1024" in widget.report.toPlainText()
+    assert not widget.detect_button.isEnabled()
+    assert "calibration missing or invalid" in widget.state_label.text()
     widget.down_edit.setText("1024")
     widget.neutral_edit.setText("0")
+    assert widget.detect_button.isEnabled()
+    assert "Ready to detect" in widget.state_label.text()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
@@ -198,6 +223,7 @@ def test_source_change_clears_old_result_and_withholds_stale_worker_output(
     window = make_window(adapter)
     widget = window._range_walk.widget
     window._range_walk.select_source(first)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
     widget.down_edit.setText("1024")
     widget.neutral_edit.setText("0")
     widget.detect_button.click()
@@ -211,9 +237,7 @@ def test_source_change_clears_old_result_and_withholds_stale_worker_output(
 
     assert widget.source_path == second
     assert "stale first result" not in widget.report.toPlainText()
-    assert "Stale Range-Walk marker preview was withheld" in (
-        window.statusBar().currentMessage()
-    )
+    assert "Observed Ele range" in widget.report.toPlainText()
 
 
 def test_invalid_preview_recovers_without_changing_csv_source(
@@ -223,14 +247,19 @@ def test_invalid_preview_recovers_without_changing_csv_source(
     window = make_window()
     widget = window._range_walk.widget
     window._range_walk.select_source(session.path)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
     widget.neutral_edit.setText("0")
 
-    widget.detect_button.click()
-    _wait_until(qt_app, lambda: window._analysis_thread is None)
-    assert "Full elevator-down Ele is required" in widget.report.toPlainText()
+    assert not widget.detect_button.isEnabled()
+    assert "Full elevator-down Ele is required" in widget.state_label.text()
     assert widget.source_path == session.path.resolve()
 
+    widget.down_edit.setText("invalid")
+    assert not widget.detect_button.isEnabled()
+    assert "must be numeric" in widget.state_label.text()
     widget.down_edit.setText("1024")
+    assert widget.near_down_edit.text() == ""
+    assert widget.detect_button.isEnabled()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
     assert "Marker candidates: 5" in widget.report.toPlainText()
@@ -255,6 +284,7 @@ def test_worker_exclusion_safe_close_and_no_other_routing_or_persistence(
     )
     widget = window._range_walk.widget
     window._range_walk.select_source(session.path)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
     widget.down_edit.setText("1024")
     widget.neutral_edit.setText("0")
     widget.detect_button.click()
@@ -267,6 +297,7 @@ def test_worker_exclusion_safe_close_and_no_other_routing_or_persistence(
         if button.text() == "Analyse"
     ]
     assert not widget.choose_button.isEnabled()
+    assert "Detection running" in widget.state_label.text()
     assert not window.choose_log_button.isEnabled()
     window.start_stall_analysis()
     assert stall_calls == []
@@ -289,6 +320,7 @@ def test_shared_bin_changes_do_not_change_range_walk_preview(
     window = make_window()
     widget = window._range_walk.widget
     window._range_walk.select_source(session.path)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
     widget.down_edit.setText("1024")
     widget.neutral_edit.setText("0")
     widget.detect_button.click()
@@ -302,3 +334,39 @@ def test_shared_bin_changes_do_not_change_range_walk_preview(
     assert window.selected_log == aircraft.resolve()
     assert widget.source_path == session.path.resolve()
     assert widget.report.toPlainText() == report
+
+
+def test_calibration_guidance_and_failed_detection_keep_valid_csv(
+    qt_app, tmp_path, make_window
+):
+    session = _session(tmp_path, down=-1024)
+
+    def failure(_request):
+        raise RuntimeError("preview failed")
+
+    window = make_window(failure)
+    widget = window._range_walk.widget
+    window._range_walk.select_source(session.path)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    guidance = widget.calibration_guidance.text()
+    assert "recorded in this EdgeTX CSV" in guidance
+    assert "full elevator-down hold" in guidance
+    assert "stick centred" in guidance
+    assert "positive or negative" in guidance
+    assert "does not assume which direction means down" in guidance
+    assert "Observed Ele range: -1024 to 0" in widget.report.toPlainText()
+    assert widget.down_edit.text() == ""
+    assert widget.neutral_edit.text() == ""
+    assert "87.5%" in widget.near_down_edit.placeholderText()
+
+    widget.down_edit.setText("-1024")
+    widget.neutral_edit.setText("0")
+    assert widget.detect_button.isEnabled()
+    widget.detect_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    assert "Detection failed" in widget.state_label.text()
+    assert "preview failed" in widget.state_label.text()
+    assert widget.source_path == session.path.resolve()
+    assert widget.detect_button.isEnabled()

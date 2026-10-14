@@ -20,6 +20,27 @@ class RangeWalkPreviewRequest:
 
 
 @dataclass(frozen=True)
+class RangeWalkInspectionRequest:
+    """Read one newly selected CSV without assigning its calibration."""
+
+    source_path: Path
+    request_id: int
+
+
+@dataclass(frozen=True)
+class RangeWalkCsvInspection:
+    """Observed CSV facts that can help an operator enter calibration."""
+
+    source_path: Path
+    request_id: int
+    recording_start: datetime
+    recording_end: datetime
+    row_count: int
+    ele_min: float
+    ele_max: float
+
+
+@dataclass(frozen=True)
 class RangeWalkPreviewResult:
     """Portable marker candidates and their read-only presentation."""
 
@@ -37,14 +58,9 @@ def analyse_range_walk_preview(
 ) -> RangeWalkPreviewResult:
     """Parse one CSV and run the existing calibrated marker detector."""
     source = Path(request.source_path).expanduser().resolve()
-    down = _required_number(request.down, "Full elevator-down Ele")
-    neutral = _required_number(request.neutral, "Neutral Ele")
-    near_down = (
-        _required_number(request.near_down, "Near-down threshold")
-        if request.near_down.strip()
-        else None
+    calibration = marker_calibration(
+        request.down, request.neutral, request.near_down
     )
-    calibration = MarkerCalibration(down, neutral, near_down=near_down)
     session = read_edgetx_csv(source)
     markers = detect_markers(session, calibration)
     start = session.rows[0].clock
@@ -58,6 +74,44 @@ def analyse_range_walk_preview(
         markers,
         _format_preview(source, start, end, len(session.rows), markers),
     )
+
+
+def inspect_range_walk_csv(
+    request: RangeWalkInspectionRequest,
+) -> RangeWalkCsvInspection:
+    """Read observed Ele bounds without interpreting endpoint direction."""
+    source = Path(request.source_path).expanduser().resolve()
+    session = read_edgetx_csv(source)
+    if session.header.count("Ele") != 1 or any(
+        row.ele is None for row in session.rows
+    ):
+        raise ValueError("Range walk requires one numeric Ele value on every CSV row")
+    values = [row.ele for row in session.rows]
+    return RangeWalkCsvInspection(
+        source,
+        request.request_id,
+        session.rows[0].clock,
+        session.rows[-1].clock,
+        len(session.rows),
+        min(values),
+        max(values),
+    )
+
+
+def marker_calibration(
+    down_text: str,
+    neutral_text: str,
+    near_down_text: str,
+) -> MarkerCalibration:
+    """Parse explicit operator input and apply existing core validation."""
+    down = _required_number(down_text, "Full elevator-down Ele")
+    neutral = _required_number(neutral_text, "Neutral Ele")
+    near_down = (
+        _required_number(near_down_text, "Near-down threshold")
+        if near_down_text.strip()
+        else None
+    )
+    return MarkerCalibration(down, neutral, near_down=near_down)
 
 
 def _required_number(raw: str, label: str) -> float:

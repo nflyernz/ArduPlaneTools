@@ -16,9 +16,13 @@ from PySide6.QtWidgets import (
 )
 
 from .range_walk_adapter import (
+    RangeWalkCsvInspection,
+    RangeWalkInspectionRequest,
     RangeWalkPreviewRequest,
     RangeWalkPreviewResult,
     analyse_range_walk_preview,
+    inspect_range_walk_csv,
+    marker_calibration,
 )
 
 
@@ -28,7 +32,10 @@ class RangeWalkPreviewWidget(QWidget):
     def __init__(self, choose_source, detect, parent=None):
         super().__init__(parent)
         self._source_path: Path | None = None
+        self._inspection: RangeWalkCsvInspection | None = None
+        self._outcome = ""
         self._busy = False
+        self._busy_task: str | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -56,6 +63,16 @@ class RangeWalkPreviewWidget(QWidget):
 
         calibration_group = QGroupBox("Elevator marker calibration")
         calibration_layout = QFormLayout(calibration_group)
+        guidance = QLabel(
+            "Ele is the transmitter channel value recorded in this EdgeTX CSV. "
+            "Enter the value observed during the deliberate full elevator-down "
+            "hold and the value observed with the stick centred. Values are "
+            "model-specific and may be positive or negative; the software does "
+            "not assume which direction means down."
+        )
+        guidance.setWordWrap(True)
+        calibration_layout.addRow(guidance)
+        self.calibration_guidance = guidance
         self.down_edit = QLineEdit()
         self.down_edit.setObjectName("rangeWalkDownCalibration")
         self.down_edit.setPlaceholderText("Example: 900 or -900")
@@ -74,6 +91,11 @@ class RangeWalkPreviewWidget(QWidget):
         calibration_layout.addRow(
             "Near-down threshold:", self.near_down_edit
         )
+        threshold_note = QLabel(
+            "Optional: blank uses 87.5% of the calibrated neutral-to-down span."
+        )
+        threshold_note.setWordWrap(True)
+        calibration_layout.addRow(threshold_note)
         layout.addWidget(calibration_group)
 
         action_layout = QHBoxLayout()
@@ -84,6 +106,12 @@ class RangeWalkPreviewWidget(QWidget):
         action_layout.addWidget(self.detect_button)
         layout.addLayout(action_layout)
 
+        self.state_label = QLabel()
+        self.state_label.setObjectName("rangeWalkPreviewState")
+        self.state_label.setWordWrap(True)
+        self.state_label.setMinimumHeight(38)
+        layout.addWidget(self.state_label)
+
         self.report = QPlainTextEdit()
         self.report.setObjectName("range_walk_preview_report")
         self.report.setReadOnly(True)
@@ -93,6 +121,8 @@ class RangeWalkPreviewWidget(QWidget):
             "Choose one EdgeTX CSV and enter its local elevator calibration."
         )
         layout.addWidget(self.report, 1)
+        for field in (self.down_edit, self.neutral_edit, self.near_down_edit):
+            field.textChanged.connect(self._calibration_changed)
         self._update_controls()
 
     @property
@@ -101,6 +131,8 @@ class RangeWalkPreviewWidget(QWidget):
 
     def set_source(self, path: Path) -> None:
         self._source_path = path
+        self._inspection = None
+        self._outcome = ""
         self.source_path_edit.setText(str(path))
         self.source_path_edit.setToolTip(str(path))
         self.source_path_edit.setCursorPosition(0)
@@ -111,6 +143,23 @@ class RangeWalkPreviewWidget(QWidget):
         )
         self._update_controls()
 
+    def set_inspection(self, inspection: RangeWalkCsvInspection) -> None:
+        self._inspection = inspection
+        self._outcome = ""
+        self.report.setPlainText(
+            "Range-Walk CSV / marker preview\n\n"
+            f"Source CSV: {inspection.source_path.name}\n"
+            f"Path: {inspection.source_path}\n"
+            f"Radio-local recording: {inspection.recording_start} to "
+            f"{inspection.recording_end}\n"
+            f"CSV rows: {inspection.row_count}\n"
+            f"Observed Ele range: {inspection.ele_min:g} to "
+            f"{inspection.ele_max:g}\n\n"
+            "These extrema are calibration clues only. Confirm full-down and "
+            "neutral from the recorded test; they are not assigned automatically."
+        )
+        self._update_controls()
+
     def calibration(self) -> tuple[str, str, str]:
         return (
             self.down_edit.text(),
@@ -118,10 +167,21 @@ class RangeWalkPreviewWidget(QWidget):
             self.near_down_edit.text(),
         )
 
-    def set_busy(self, busy: bool) -> None:
+    def set_busy(self, busy: bool, task: str | None = None) -> None:
         self._busy = busy
-        self.detect_button.setText("Detecting…" if busy else "Detect markers")
+        self._busy_task = task if busy else None
+        self.detect_button.setText(
+            "Detecting…" if busy and task == "detect" else "Detect markers"
+        )
         self._update_controls()
+
+    def show_inspection_busy(self) -> None:
+        assert self._source_path is not None
+        self.report.setPlainText(
+            "Range-Walk CSV / marker preview\n\n"
+            f"Reading {self._source_path} to inspect its recorded Ele range…\n\n"
+            "No elevator direction or calibration value will be assigned."
+        )
 
     def show_busy(self) -> None:
         assert self._source_path is not None
@@ -131,12 +191,61 @@ class RangeWalkPreviewWidget(QWidget):
             "The GUI remains available; no progress percentage is available."
         )
 
+    def show_result(self, result: RangeWalkPreviewResult) -> None:
+        self._outcome = (
+            f"Detection completed — {len(result.markers)} marker candidate(s)."
+        )
+        self.report.setPlainText(result.text)
+        self._update_controls()
+
+    def show_error(self, message: str, task: str | None) -> None:
+        operation = "Detection" if task == "detect" else "CSV inspection"
+        self._outcome = (
+            f"{operation} failed — {message} The selected CSV is retained."
+        )
+        self.report.setPlainText(
+            "Range-Walk CSV Preview Error\n"
+            "============================\n"
+            f"{message}"
+        )
+        self._update_controls()
+
+    def _calibration_changed(self) -> None:
+        self._outcome = ""
+        self._update_controls()
+
+    def _calibration_error(self) -> str | None:
+        try:
+            marker_calibration(*self.calibration())
+        except ValueError as exc:
+            return str(exc)
+        return None
+
     def _update_controls(self) -> None:
         available = not self._busy
         self.choose_button.setEnabled(available)
-        self.detect_button.setEnabled(available and self._source_path is not None)
+        calibration_error = self._calibration_error()
+        ready = self._inspection is not None and calibration_error is None
+        self.detect_button.setEnabled(available and ready)
         for field in (self.down_edit, self.neutral_edit, self.near_down_edit):
             field.setEnabled(available)
+        if self._busy:
+            state = (
+                "Reading selected CSV and observed Ele range…"
+                if self._busy_task == "inspect"
+                else "Detection running…"
+            )
+        elif self._source_path is None:
+            state = "No CSV selected — choose one EdgeTX transmitter log."
+        elif self._outcome:
+            state = self._outcome
+        elif self._inspection is None:
+            state = "CSV selected — observed Ele range is not yet available."
+        elif calibration_error is not None:
+            state = f"CSV selected — calibration missing or invalid: {calibration_error}."
+        else:
+            state = "Ready to detect marker candidates."
+        self.state_label.setText(state)
 
 
 class RangeWalkPreviewController:
@@ -144,13 +253,23 @@ class RangeWalkPreviewController:
 
     analysis_name = "Range-Walk Comparison"
 
-    def __init__(self, adapter, start_worker, is_busy, show_status):
+    def __init__(
+        self,
+        adapter,
+        inspection_adapter,
+        start_worker,
+        is_busy,
+        show_status,
+    ):
         self.adapter = adapter or analyse_range_walk_preview
+        self.inspection_adapter = inspection_adapter or inspect_range_walk_csv
         self.start_worker = start_worker
         self.is_busy = is_busy
         self.show_status = show_status
         self.widget: RangeWalkPreviewWidget | None = None
         self._request_id = 0
+        self._task: str | None = None
+        self._pending_inspection: Path | None = None
 
     def create_widget(self, parent=None) -> RangeWalkPreviewWidget:
         widget = RangeWalkPreviewWidget(
@@ -185,6 +304,10 @@ class RangeWalkPreviewController:
         self._request_id += 1
         self._require_widget().set_source(source)
         self.show_status(f"Range-Walk preview CSV selected — {source}")
+        if self.is_busy():
+            self._pending_inspection = source
+        else:
+            self._start_inspection(source)
         return True
 
     def request_preview(self) -> None:
@@ -200,13 +323,16 @@ class RangeWalkPreviewController:
             near_down,
             self._request_id,
         )
+        self._task = "detect"
         self.start_worker(self.analysis_name, request, self.adapter)
         widget.show_busy()
         self.show_status(f"Detecting marker candidates — {widget.source_path}")
 
     def handle_success(self, result: object) -> bool:
         if not isinstance(result, RangeWalkPreviewResult):
-            return False
+            if not isinstance(result, RangeWalkCsvInspection):
+                return False
+            return self._handle_inspection(result)
         widget = self._require_widget()
         if (
             result.source_path != widget.source_path
@@ -214,7 +340,7 @@ class RangeWalkPreviewController:
         ):
             self.show_status("Stale Range-Walk marker preview was withheld")
             return True
-        widget.report.setPlainText(result.text)
+        widget.show_result(result)
         self.show_status(
             f"Range-Walk marker preview ready — {len(result.markers)} candidate(s)"
         )
@@ -222,16 +348,44 @@ class RangeWalkPreviewController:
 
     def handle_failure(self, exc: Exception) -> None:
         message = f"Unable to preview Range-Walk CSV: {exc}"
-        self._require_widget().report.setPlainText(
-            "Range-Walk CSV Preview Error\n"
-            "============================\n"
-            f"{message}"
-        )
+        self._require_widget().show_error(message, self._task)
         self.show_status(message)
 
     def set_busy(self, busy: bool) -> None:
         if self.widget is not None:
-            self.widget.set_busy(busy)
+            self.widget.set_busy(busy, self._task)
+        if not busy:
+            self._task = None
+
+    def worker_finished(self, was_range_walk: bool) -> None:
+        if not was_range_walk or self.is_busy() or self._pending_inspection is None:
+            return
+        source = self._pending_inspection
+        self._pending_inspection = None
+        if self._require_widget().source_path == source:
+            self._start_inspection(source)
+
+    def _start_inspection(self, source: Path) -> None:
+        self._task = "inspect"
+        request = RangeWalkInspectionRequest(source, self._request_id)
+        self.start_worker(self.analysis_name, request, self.inspection_adapter)
+        self._require_widget().show_inspection_busy()
+        self.show_status(f"Reading Range-Walk CSV calibration clues — {source}")
+
+    def _handle_inspection(self, result: RangeWalkCsvInspection) -> bool:
+        widget = self._require_widget()
+        if (
+            result.source_path != widget.source_path
+            or result.request_id != self._request_id
+        ):
+            self.show_status("Stale Range-Walk CSV inspection was withheld")
+            return True
+        widget.set_inspection(result)
+        self.show_status(
+            f"Range-Walk CSV ready — observed Ele {result.ele_min:g} to "
+            f"{result.ele_max:g}"
+        )
+        return True
 
     def _source_error(self, message: str) -> None:
         self._require_widget().report.setPlainText(
