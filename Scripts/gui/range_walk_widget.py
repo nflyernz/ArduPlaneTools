@@ -294,12 +294,8 @@ class RangeWalkPreviewWidget(QWidget):
         self.antenna_edit = QLineEdit()
         self.antenna_edit.setObjectName("rangeWalkBaselineAntenna")
         self.antenna_edit.setPlaceholderText("Required original receiver installation")
-        self.turnaround_edit = QLineEdit()
-        self.turnaround_edit.setObjectName("rangeWalkBaselineTurnaround")
-        self.turnaround_edit.setPlaceholderText("Required safe turnaround description")
         metadata.addRow("Walk 1 label (optional):", self.walk1_label_edit)
         metadata.addRow("Original receiver antenna:*", self.antenna_edit)
-        metadata.addRow("Landmark 5 safe turnaround:*", self.turnaround_edit)
         baseline_layout.addLayout(metadata)
 
         mapping_group = QGroupBox("Five physical landmarks")
@@ -342,6 +338,9 @@ class RangeWalkPreviewWidget(QWidget):
         self.rf_settings_group = QGroupBox("RF Settings (expandable; optional)")
         self.rf_settings_group.setCheckable(True)
         self.rf_settings_group.setChecked(False)
+        rf_title_font = self.rf_settings_group.font()
+        rf_title_font.setPointSizeF(rf_title_font.pointSizeF() + 1.0)
+        self.rf_settings_group.setFont(rf_title_font)
         rf_outer = QVBoxLayout(self.rf_settings_group)
         self.rf_settings_content = QWidget()
         rf_form = QFormLayout(self.rf_settings_content)
@@ -354,6 +353,9 @@ class RangeWalkPreviewWidget(QWidget):
         rf_form.addRow("Configured RF mode/band:", self.rf_mode_edit)
         rf_form.addRow("Dynamic TX power state:", self.dynamic_power_edit)
         rf_outer.addWidget(self.rf_settings_content)
+        normal_font = self.font()
+        normal_font.setPointSizeF(normal_font.pointSizeF())
+        self.rf_settings_content.setFont(normal_font)
         warning = QLabel(
             "Unknown values are allowed, but unknown or mismatched settings prevent "
             "later claims of like-for-like RF comparison. Values are operator-entered; "
@@ -361,6 +363,7 @@ class RangeWalkPreviewWidget(QWidget):
         )
         warning.setWordWrap(True)
         rf_outer.addWidget(warning)
+        warning.setFont(normal_font)
         self.rf_settings_group.toggled.connect(self.rf_settings_content.setVisible)
         self.rf_settings_content.setVisible(False)
         for field in (
@@ -369,7 +372,6 @@ class RangeWalkPreviewWidget(QWidget):
             self.rf_mode_edit,
             self.dynamic_power_edit,
             self.antenna_edit,
-            self.turnaround_edit,
             self.walk1_label_edit,
         ):
             field.textChanged.connect(self._draft_changed)
@@ -457,9 +459,8 @@ class RangeWalkPreviewWidget(QWidget):
             return
         marker = self._result.markers[number - 1]
         self.candidate_evidence_labels[index].setText(
-            f"{marker.onset.time().isoformat(timespec='milliseconds')} → "
-            f"{marker.release.time().isoformat(timespec='milliseconds')}; "
-            f"{marker.hold_s:.3f} s"
+            f"{marker.onset:%H:%M:%S} → {marker.release:%H:%M:%S} "
+            f"({marker.hold_s:.1f} s)"
         )
 
     def _save_baseline(self) -> None:
@@ -474,7 +475,6 @@ class RangeWalkPreviewWidget(QWidget):
                 tuple(combo.currentData() for combo in self.candidate_combos),
                 tuple(field.text() for field in self.landmark_name_edits),
                 self.antenna_edit.text(),
-                self.turnaround_edit.text(),
                 self.walk1_label_edit.text(),
                 WalkSettings(
                     self.tx_power_edit.text().strip(),

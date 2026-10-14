@@ -95,7 +95,6 @@ def create_walk1_baseline(
     candidate_numbers: tuple[int | None, ...],
     landmark_names: tuple[str, ...],
     antenna: str,
-    turnaround: str,
     label: str,
     settings: WalkSettings,
 ) -> Walk1Baseline:
@@ -104,8 +103,7 @@ def create_walk1_baseline(
         raise ValueError("Enter a physical name for all five landmarks")
     if not antenna.strip():
         raise ValueError("Enter the original receiver antenna installation")
-    if not turnaround.strip():
-        raise ValueError("Enter the safe turnaround description for landmark 5")
+    names = tuple(name.strip() for name in landmark_names)
     selected = select_landmarks(
         preview.markers,
         candidate_numbers,
@@ -117,8 +115,8 @@ def create_walk1_baseline(
         source_path=preview.source_path,
         label=label.strip() or f"Walk 1 — {preview.source_path.stem}",
         antenna=antenna.strip(),
-        landmark_names=tuple(name.strip() for name in landmark_names),
-        turnaround=turnaround.strip(),
+        landmark_names=names,
+        turnaround=names[4],
         settings=settings,
         candidates=preview.markers,
         candidate_numbers=numbers,
