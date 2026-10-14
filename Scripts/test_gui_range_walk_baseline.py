@@ -143,6 +143,20 @@ def test_page_navigation_preserves_mapping_and_metadata(qt_app):
     widget.close()
 
 
+def test_new_csv_updates_default_label_but_preserves_a_custom_label(qt_app):
+    widget = RangeWalkPreviewWidget(lambda: None, lambda: None)
+    widget.show_result(_preview(source=Path("first.csv")))
+    assert widget.walk1_label_edit.text() == "Walk 1 — first"
+
+    widget.show_result(_preview(source=Path("second.csv")))
+    assert widget.walk1_label_edit.text() == "Walk 1 — second"
+
+    widget.walk1_label_edit.setText("Original antenna field run")
+    widget.show_result(_preview(source=Path("third.csv")))
+    assert widget.walk1_label_edit.text() == "Original antenna field run"
+    widget.close()
+
+
 def test_widget_saves_in_memory_baseline_with_exact_preview_markers(qt_app):
     widget = RangeWalkPreviewWidget(lambda: None, lambda: None)
     preview = _preview()

@@ -43,6 +43,7 @@ class RangeWalkPreviewWidget(QWidget):
         self._inspection: RangeWalkCsvInspection | None = None
         self._result: RangeWalkPreviewResult | None = None
         self._saved_baseline: Walk1Baseline | None = None
+        self._default_walk1_label = ""
         self._outcome = ""
         self._has_result = False
         self._busy = False
@@ -275,7 +276,7 @@ class RangeWalkPreviewWidget(QWidget):
         baseline_layout.addWidget(heading)
         explanation = QLabel(
             "Walk 1 uses the original receiver antenna installation and establishes "
-            "the five physical landmarks. Candidate 5 maps to the safe turnaround. "
+            "the five physical landmarks. Landmark 5 is the safe turnaround. "
             "This draft is stored in memory only."
         )
         explanation.setWordWrap(True)
@@ -405,8 +406,13 @@ class RangeWalkPreviewWidget(QWidget):
             f"{_direction_label(result.direction_used)} direction from "
             f"{result.source_path.name}."
         )
-        if not self.walk1_label_edit.text().strip():
-            self.walk1_label_edit.setText(f"Walk 1 — {result.source_path.stem}")
+        default_label = f"Walk 1 — {result.source_path.stem}"
+        if (
+            not self.walk1_label_edit.text().strip()
+            or self.walk1_label_edit.text() == self._default_walk1_label
+        ):
+            self.walk1_label_edit.setText(default_label)
+        self._default_walk1_label = default_label
         for position, combo in enumerate(self.candidate_combos, start=1):
             combo.blockSignals(True)
             combo.clear()
