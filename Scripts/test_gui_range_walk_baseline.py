@@ -10,6 +10,8 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
+from PySide6.QtWidgets import QLineEdit
+
 from core.range_walk import LandmarkMarker, WalkSettings
 from gui.range_walk_adapter import (
     RangeWalkPreviewResult,
@@ -48,7 +50,6 @@ def _baseline(preview, numbers=(1, 2, 3, 4, 5), **overrides):
     values = {
         "landmark_names": ("Gate", "Tree", "Fence", "Shed", "Far field"),
         "antenna": "Original vertical antenna, receiver bay",
-        "turnaround": "Stop before the far boundary fence",
         "label": "",
         "settings": WalkSettings(),
     }
@@ -107,8 +108,8 @@ def test_missing_duplicate_and_out_of_order_mappings_are_rejected(
     ("overrides", "message"),
     (
         ({"landmark_names": ("Gate", "", "Fence", "Shed", "Far")}, "physical name"),
+        ({"landmark_names": ("Gate", "Tree", "Fence", "Shed", "")}, "physical name"),
         ({"antenna": "  "}, "original receiver antenna"),
-        ({"turnaround": ""}, "safe turnaround"),
     ),
 )
 def test_required_walk1_metadata_is_validated(overrides, message):
@@ -118,7 +119,6 @@ def test_required_walk1_metadata_is_validated(overrides, message):
 
 def _complete_widget_draft(widget):
     widget.antenna_edit.setText("Original antenna under right wing")
-    widget.turnaround_edit.setText("Turn at the fifth fence post")
     for number, field in enumerate(widget.landmark_name_edits, start=1):
         field.setText(f"Physical point {number}")
 
@@ -139,7 +139,9 @@ def test_page_navigation_preserves_mapping_and_metadata(qt_app):
     assert widget.pages.currentIndex() == 1
     assert widget.antenna_edit.text() == "Original antenna under right wing"
     assert widget.candidate_combos[2].currentData() == 3
-    assert "15:00:14.000" in widget.candidate_evidence_labels[2].text()
+    assert widget.candidate_evidence_labels[2].text() == (
+        "15:00:14 → 15:00:16 (2.0 s)"
+    )
     widget.close()
 
 
@@ -169,10 +171,38 @@ def test_widget_saves_in_memory_baseline_with_exact_preview_markers(qt_app):
     saved = widget.saved_baseline
     assert saved is not None
     assert saved.source_path == preview.source_path
+    assert saved.turnaround == "Physical point 5"
     assert saved.candidates is preview.markers
     assert all(left is right for left, right in zip(saved.landmarks, preview.markers))
     assert "memory only" in widget.baseline_state_label.text()
     assert "Unknown" in widget.baseline_summary.toPlainText()
+    widget.close()
+
+
+def test_page_has_no_duplicate_turnaround_input_and_requires_landmark5(qt_app):
+    widget = RangeWalkPreviewWidget(lambda: None, lambda: None)
+    widget.show_result(_preview())
+    widget.next_button.click()
+
+    assert widget.findChild(QLineEdit, "rangeWalkBaselineTurnaround") is None
+    assert "Incomplete draft" in widget.baseline_state_label.text()
+    widget.antenna_edit.setText("Original antenna under right wing")
+    for field in widget.landmark_name_edits[:4]:
+        field.setText("Named point")
+    widget.save_baseline_button.click()
+
+    assert widget.saved_baseline is None
+    assert widget.baseline_state_label.text().startswith("Incomplete draft")
+    assert "physical name for all five landmarks" in widget.baseline_state_label.text()
+    widget.close()
+
+
+def test_rf_settings_title_font_is_larger_without_changing_field_font(qt_app):
+    widget = RangeWalkPreviewWidget(lambda: None, lambda: None)
+
+    assert widget.rf_settings_group.font().pointSizeF() > widget.font().pointSizeF()
+    assert widget.rf_settings_content.font().pointSizeF() == widget.font().pointSizeF()
+    assert widget.tx_power_edit.font().pointSizeF() == widget.font().pointSizeF()
     widget.close()
 
 
@@ -246,6 +276,9 @@ def test_evidence_changes_invalidate_saved_baseline_but_navigation_does_not(qt_a
 def test_range_walk_help_describes_baseline_scope_and_invalidation():
     root = Path(__file__).parents[1]
     readme = (root / "Docs/gui_help/range_walk_comparison/README.md").read_text()
+    glossary = (
+        root / "Docs/gui_help/range_walk_comparison/glossary.md"
+    ).read_text()
     procedure = (
         root / "Docs/gui_help/range_walk_comparison/procedure.md"
     ).read_text()
@@ -257,3 +290,8 @@ def test_range_walk_help_describes_baseline_scope_and_invalidation():
         assert "changing the CSV" in text
     assert "Later walks and RF comparison" in readme
     assert "does not yet process later walks" in procedure
+    for text in (readme, glossary, procedure):
+        assert "no separate" in text
+        assert "landmark 5" in text.lower()
+    assert "without reordering" in readme
+    assert "Optional operator-entered" in glossary

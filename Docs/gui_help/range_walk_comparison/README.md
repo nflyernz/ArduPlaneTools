@@ -10,11 +10,11 @@ The normal GUI workflow has no manual neutral or near-down calibration. It retai
 
 Page 1 reports the radio-local recording span, row count, and every complete elevator-down hold found by the existing detector. After detection, choose **Next: Walk 1 Setup** to use those exact detected markers; the GUI does not redetect them with different calibration settings.
 
-On Page 2, describe the original receiver antenna installation, name five physical landmarks and describe the safe turnaround at landmark 5. Exactly five detected candidates are preselected chronologically. If extra candidates exist, exclude them by selecting five distinct candidates in increasing order. Fewer than five candidates cannot establish a complete baseline, and the GUI never manufactures a missing marker.
+On Page 2, describe the original receiver antenna installation and name five physical landmarks. The required name for landmark 5 describes the safe turnaround; there is no separate turnaround field. Exactly five detected candidates are preselected chronologically. If extra candidates exist, exclude them by selecting five distinct candidates in increasing order without reordering them. Fewer than five candidates cannot establish a complete baseline, and the GUI never manufactures a missing marker.
 
 Optional RF Settings record the operator's configured TX power, packet rate, RF mode/band and dynamic-power state. Unknown settings are retained, with a warning that unknown or mismatched settings prevent later like-for-like RF comparison claims. Telemetry-reported TPWR or RFMD is not substituted for configured settings.
 
-**Save Walk 1 in session** validates and retains the source CSV, exact detected marker objects, mapping, physical names, turnaround, antenna description and settings in memory only. It writes no project or history file. Page navigation preserves the draft; changing the CSV, Auto/Inverse direction or marker detection invalidates a saved baseline tied to older evidence.
+**Save Walk 1 in session** validates and retains the source CSV, exact detected marker objects, chronological mapping, physical names, landmark 5 turnaround, antenna description and optional operator-entered RF settings in memory only. It writes no project or history file. Page navigation preserves the draft; changing the CSV, Auto/Inverse direction or marker detection invalidates a saved baseline tied to older evidence.
 
 Preview candidates are not confirmed physical landmarks until the operator maps and saves them on Page 2. Loading one CSV does not calculate RF section evidence, infer distance or failsafe behavior, or compare antennas. Missing or zero-filled RF telemetry does not affect elevator marker detection.
 

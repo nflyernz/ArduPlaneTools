@@ -1,8 +1,10 @@
 # Range-Walk glossary
 
 - **Walk 1 baseline** — The fixed original-antenna walk used for every comparison.
-- **Landmark** — One user-named physical position confirmed from an elevator-down hold.
-- **Turnaround** — Landmark 5, where the outward measured route ends safely.
+- **Landmark** — One user-named physical position assigned to a detected candidate in chronological order.
+- **Turnaround** — The required name for landmark 5, where the outward measured route ends safely; it has no separate description field.
+- **Extra candidate** — A detected hold excluded from the five chronological landmark assignments, never moved out of recorded order.
+- **RF Settings** — Optional operator-entered TX power, packet rate, RF mode/band and dynamic-power state retained for later comparability checks.
 - **Moving section** — Release of marker N to onset of marker N+1; five landmarks define four sections.
 - **Marker hold** — Stationary interval retained as separate landmark evidence.
 - **1RSS** — Receiver-reported primary RSSI in dBm returned through telemetry.
