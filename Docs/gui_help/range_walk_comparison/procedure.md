@@ -31,10 +31,10 @@ Missing or zero-filled telemetry is unavailable evidence, not measured poor sign
 ## Calibrate and preview in the GUI
 
 1. Open **Range-Walk Comparison** and choose the original EdgeTX CSV. A shared aircraft BIN is not required.
-2. `Ele` is the transmitter channel value recorded in the CSV. The GUI may suggest neutral and endpoint values from sustained observations; an isolated minimum or maximum is not used as a calibrated endpoint.
-3. Select whether the deliberate full elevator-down holds use the higher or lower `Ele` value. Values are model-specific and may be positive or negative. The software does not infer control direction from the sign or extrema.
-4. Check the proposed neutral and full-down values against the recorded test, then explicitly confirm the calibration. Suggestions are evidence clues, not verified control direction.
-5. If a reliable suggestion is unavailable, open **Advanced / Manual calibration** and enter the operator-confirmed full-down and neutral values. The optional near-down threshold may remain blank to use 87.5% of the calibrated neutral-to-down span.
-6. Choose **Detect markers** and review every candidate's onset, release and duration. Candidate detection does not confirm the five physical landmarks.
+2. `Ele` is the transmitter channel value recorded in the CSV. The GUI estimates neutral and endpoints only from sustained observations; an isolated minimum, maximum or brief movement is not a calibrated endpoint or marker.
+3. Leave **Auto** selected to evaluate both higher and lower deflections. Auto prefers a direction only when its sequence of complete sustained holds and neutral returns is clearly stronger. It does not infer five markers from the field procedure.
+4. Use **Inverse** to inspect the opposite direction. If Auto cannot establish a preferred direction, it reports the ambiguity, chooses deterministically and still gives Inverse a deterministic opposite.
+5. The normal GUI workflow requires no manual neutral or near-down entry. Marker detection retains the existing 87.5% full-down threshold and minimum hold duration and uses a 33% neutral-return tolerance for the estimated neutral-to-endpoint span.
+6. Choose **Detect markers** and review the direction used, evidence assessment, candidate count, onset, release and duration. Candidate detection does not confirm the five physical landmarks.
 
 The current GUI stops at CSV and marker preview. Baseline acceptance, five-landmark mapping, later walks, RF section comparison, graphs and antenna comparison remain in the established CLI workflow.

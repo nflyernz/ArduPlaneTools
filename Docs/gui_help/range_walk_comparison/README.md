@@ -2,9 +2,11 @@
 
 Range-Walk Comparison compares repeatable, transmitter-recorded EdgeTX CSV walks using five confirmed physical landmarks and four outward moving sections. The GUI currently provides a first-step **CSV/marker preview only**; the complete comparison remains available through the interactive CLI workflow.
 
-In the GUI, choose one EdgeTX CSV. The preview examines sustained `Ele` plateaus and may suggest a neutral value and higher or lower endpoints. Select whether the deliberate elevator-down holds use the higher or lower value, check the suggestion against the recorded test, and explicitly confirm it before choosing **Detect markers**. The software never infers which numerical direction means elevator-down.
+In the GUI, choose one EdgeTX CSV and use **Auto** to examine both higher and lower `Ele` deflections. Auto estimates a dominant sustained neutral value and sustained endpoints, runs the existing marker detector in both available directions, and prefers a direction only when it has a clearly stronger sequence of complete holds and neutral returns. It does not assume that five markers must exist.
 
-An isolated minimum or maximum is not accepted as an endpoint suggestion. If the CSV has no clearly dominant sustained neutral value or no sustained endpoint in the selected direction, use **Advanced / Manual calibration** to enter the operator-confirmed full-down and neutral values. The optional near-down threshold may remain blank to use the detector's existing 87.5% calibrated-span default. Both positive and negative endpoint directions remain supported.
+Use **Inverse** to inspect the direction opposite Auto's preferred direction. When Auto cannot establish a clear preference, it chooses deterministically, reports the ambiguity, and Inverse still selects the opposite direction. An isolated minimum or maximum and a brief stick movement are not accepted as sustained markers.
+
+The normal GUI workflow has no manual neutral or near-down calibration. It retains the existing 87.5% full-down threshold and minimum hold duration, while accepting a neutral return within 33% of the estimated neutral-to-endpoint span. The established CLI calibration and its 20% neutral tolerance remain unchanged.
 
 The preview reports the radio-local recording span, row count, and every complete elevator-down hold found by the existing detector.
 
