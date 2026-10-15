@@ -99,7 +99,7 @@ def test_only_documented_field_modules_have_test_procedure_buttons(window):
                 "isolate propulsion",
                 "Do not arm the aircraft",
                 "fresh EdgeTX CSV-logging session",
-                "original receiver antenna installation",
+                "Baseline radio configuration",
                 "Walk 1 is the baseline",
                 "separate reconnaissance walk is not required",
                 "five safe physical landmarks",

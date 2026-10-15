@@ -14,6 +14,7 @@ from core.range_walk import (
     detect_markers,
     select_landmarks,
 )
+from core.range_walk_history import fingerprint_csv
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ class RangeWalkPreviewResult:
     direction_reliable: bool
     assessment: str
     text: str
+    source_sha256: str
 
 
 @dataclass(frozen=True)
@@ -88,6 +90,10 @@ class Walk1Baseline:
     candidate_numbers: tuple[int, ...]
     landmarks: tuple[LandmarkMarker, ...]
     direction_used: str
+    direction_assessment: str
+    recording_start: datetime
+    recording_end: datetime
+    source_sha256: str
 
 
 def create_walk1_baseline(
@@ -102,7 +108,7 @@ def create_walk1_baseline(
     if len(landmark_names) != 5 or any(not name.strip() for name in landmark_names):
         raise ValueError("Enter a physical name for all five landmarks")
     if not antenna.strip():
-        raise ValueError("Enter the original receiver antenna installation")
+        raise ValueError("Enter the baseline radio configuration")
     names = tuple(name.strip() for name in landmark_names)
     selected = select_landmarks(
         preview.markers,
@@ -122,17 +128,21 @@ def create_walk1_baseline(
         candidate_numbers=numbers,
         landmarks=landmarks,
         direction_used=preview.direction_used,
+        direction_assessment=preview.assessment,
+        recording_start=preview.recording_start,
+        recording_end=preview.recording_end,
+        source_sha256=preview.source_sha256,
     )
 
 
 def format_walk1_baseline_summary(baseline: Walk1Baseline) -> str:
     """Format a compact saved-in-session baseline summary."""
     lines = [
-        "Walk 1 baseline saved in this session",
-        "=====================================",
+        "Walk 1 baseline",
+        "===============",
         f"Label: {baseline.label}",
         f"Source CSV: {baseline.source_path}",
-        f"Original receiver antenna: {baseline.antenna}",
+        f"Baseline radio configuration: {baseline.antenna}",
         f"Detection direction: {_direction_label(baseline.direction_used)}",
         "",
         "Confirmed landmarks",
@@ -178,7 +188,7 @@ def format_walk1_baseline_summary(baseline: Walk1Baseline) -> str:
                 "comparison claim.",
             ]
         )
-    lines.append("This baseline is held in memory only; no file was written.")
+    lines.append("Validated baseline retains the exact confirmed marker evidence.")
     return "\n".join(lines)
 
 
@@ -187,7 +197,10 @@ def analyse_range_walk_preview(
 ) -> RangeWalkPreviewResult:
     """Parse one CSV and run the existing calibrated marker detector."""
     source = Path(request.source_path).expanduser().resolve()
+    source_sha256 = fingerprint_csv(source)
     session = read_edgetx_csv(source)
+    if fingerprint_csv(source) != source_sha256:
+        raise ValueError("CSV changed while marker evidence was being detected")
     _require_numeric_ele(session)
     suggestions = estimate_ele_calibration(session)
     evaluations = {
@@ -227,6 +240,7 @@ def analyse_range_walk_preview(
             direction,
             assessment,
         ),
+        source_sha256,
     )
 
 

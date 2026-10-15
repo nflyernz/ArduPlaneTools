@@ -10,7 +10,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QLineEdit
+from PySide6.QtWidgets import QLabel, QLineEdit
 
 from core.range_walk import LandmarkMarker, WalkSettings
 from gui.range_walk_adapter import (
@@ -43,6 +43,7 @@ def _preview(count=5, source=Path("walk1.csv")):
         True,
         "Auto selected higher.",
         "preview result",
+        "0" * 64,
     )
 
 
@@ -71,10 +72,10 @@ def test_exactly_five_candidates_map_chronologically_without_redetection():
     )
     assert baseline.settings == WalkSettings()
     summary = format_walk1_baseline_summary(baseline)
-    assert "Walk 1 baseline saved in this session" in summary
+    assert "Walk 1 baseline" in summary
     assert "TX power: Unknown" in summary
     assert "prevent a later like-for-like comparison claim" in summary
-    assert "no file was written" in summary
+    assert "exact confirmed marker evidence" in summary
 
 
 def test_extra_candidates_can_be_excluded_without_reordering():
@@ -109,7 +110,7 @@ def test_missing_duplicate_and_out_of_order_mappings_are_rejected(
     (
         ({"landmark_names": ("Gate", "", "Fence", "Shed", "Far")}, "physical name"),
         ({"landmark_names": ("Gate", "Tree", "Fence", "Shed", "")}, "physical name"),
-        ({"antenna": "  "}, "original receiver antenna"),
+        ({"antenna": "  "}, "baseline radio configuration"),
     ),
 )
 def test_required_walk1_metadata_is_validated(overrides, message):
@@ -185,6 +186,12 @@ def test_page_has_no_duplicate_turnaround_input_and_requires_landmark5(qt_app):
     widget.next_button.click()
 
     assert widget.findChild(QLineEdit, "rangeWalkBaselineTurnaround") is None
+    assert "Baseline radio configuration:*" in {
+        label.text() for label in widget.findChildren(QLabel)
+    }
+    assert widget.antenna_edit.placeholderText() == (
+        "Receiver, antennas, placement and orientation"
+    )
     assert "Incomplete draft" in widget.baseline_state_label.text()
     widget.antenna_edit.setText("Original antenna under right wing")
     for field in widget.landmark_name_edits[:4]:
@@ -285,13 +292,30 @@ def test_range_walk_help_describes_baseline_scope_and_invalidation():
 
     for text in (readme, procedure):
         assert "Walk 1 — Baseline & Landmarks" in text or "Walk 1 baseline" in text
-        assert "memory only" in text
         assert "extra candidates" in text
         assert "changing the CSV" in text
-    assert "Later walks and RF comparison" in readme
+    assert "Later-walk entry and RF comparison" in readme
     assert "does not yet process later walks" in procedure
     for text in (readme, glossary, procedure):
         assert "no separate" in text
         assert "landmark 5" in text.lower()
     assert "without reordering" in readme
     assert "Optional operator-entered" in glossary
+    for required in (
+        "same five physical landmarks",
+        "same landmark order",
+        "same turnaround",
+        "same walking route",
+        "same RF settings",
+        "The radio configuration is the variable being tested.",
+        "Record exactly what changes between walks",
+    ):
+        assert required in readme
+        assert required in procedure
+    assert "checksum-named copy" in procedure
+    assert "comparisons are not yet available" in readme
+    for text in (readme, glossary, procedure):
+        assert "Baseline radio configuration" in text
+    assert "Update saved Walk 1" in readme
+    assert "Update saved Walk 1" in glossary
+    assert "Update saved Walk 1" in procedure

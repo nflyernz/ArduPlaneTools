@@ -26,6 +26,7 @@ from gui.range_walk_adapter import (
     inspect_range_walk_csv,
 )
 from core.edgetx import EdgeTxRow, EdgeTxSession
+from core.range_walk_history import fingerprint_csv
 from test_range_walk import BASE, HEADER, _session
 
 
@@ -55,6 +56,7 @@ def _result(request, text="preview result"):
         True,
         "Auto selected higher.",
         text,
+        "0" * 64,
     )
 
 
@@ -123,6 +125,7 @@ def test_adapter_auto_detects_positive_and_negative_holds(
     assert result.direction_used == expected_direction
     assert result.auto_preferred == expected_direction
     assert result.direction_reliable
+    assert result.source_sha256 == fingerprint_csv(session.path)
     assert len(result.markers) == 5
     sign = "+" if expected_direction == "higher" else "-"
     assert f"Direction used: {expected_direction} ({sign}Ele)" in result.text
