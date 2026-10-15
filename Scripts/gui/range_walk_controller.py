@@ -1,6 +1,8 @@
 """Background controller for the Range-Walk GUI workflow."""
 
 from pathlib import Path
+import shutil
+import tempfile
 
 from PySide6.QtWidgets import QFileDialog
 
@@ -26,6 +28,11 @@ from .range_walk_history_adapter import (
     SavedWalk1Result,
     UpdateWalk1Request,
 )
+from analyses.range_walk_persisted import (
+    RangeWalkComparisonRequest,
+    RangeWalkComparisonResult,
+    RangeWalkComparisonService,
+)
 from .range_walk_widget import RangeWalkPreviewWidget
 
 
@@ -39,6 +46,7 @@ class RangeWalkPreviewController:
         adapter,
         inspection_adapter,
         history_service,
+        comparison_service,
         start_worker,
         is_busy,
         show_status,
@@ -46,6 +54,7 @@ class RangeWalkPreviewController:
         self.adapter = adapter or analyse_range_walk_preview
         self.inspection_adapter = inspection_adapter or inspect_range_walk_csv
         self.history_service = history_service or RangeWalkHistoryService()
+        self.comparison_service = comparison_service or RangeWalkComparisonService()
         self.start_worker = start_worker
         self.is_busy = is_busy
         self.show_status = show_status
@@ -54,6 +63,9 @@ class RangeWalkPreviewController:
         self._task: str | None = None
         self._pending_inspection: Path | None = None
         self._pending_save_revision: int | None = None
+        self._comparison_directory = tempfile.TemporaryDirectory(
+            prefix="apt-range-walk-comparison-"
+        )
 
     def create_widget(self, parent=None) -> RangeWalkPreviewWidget:
         widget = RangeWalkPreviewWidget(
@@ -61,6 +73,8 @@ class RangeWalkPreviewController:
             self.request_preview,
             self.request_persist,
             self.request_history,
+            self.request_comparison,
+            self.export_graph,
             parent,
         )
         self.widget = widget
@@ -148,7 +162,47 @@ class RangeWalkPreviewController:
         self._require_widget().show_history_busy()
         self.show_status("Loading saved Range-Walk baselines")
 
+    def request_comparison(self, baseline_id: str, walk_ids: tuple[str, ...]) -> None:
+        if self.is_busy():
+            return
+        self._request_id += 1
+        output = Path(self._comparison_directory.name) / str(self._request_id)
+        request = RangeWalkComparisonRequest(
+            baseline_id, walk_ids, output, self._request_id
+        )
+        self._task = "compare"
+        self.start_worker(
+            self.analysis_name, request, self.comparison_service.compare
+        )
+        self._require_widget().show_comparison_busy()
+        self.show_status("Comparing saved Range-Walk RF evidence")
+
+    def export_graph(self, source: Path) -> None:
+        widget = self._require_widget()
+        suggested = source.name
+        destination, _selected_filter = QFileDialog.getSaveFileName(
+            widget,
+            "Export Range-Walk graph",
+            suggested,
+            "PNG image (*.png)",
+        )
+        if not destination:
+            return
+        target = Path(destination)
+        if target.suffix.lower() != ".png":
+            target = target.with_suffix(".png")
+        try:
+            shutil.copyfile(source, target)
+        except OSError as exc:
+            message = f"Unable to export Range-Walk graph: {exc}"
+            widget.show_comparison_error(message)
+            self.show_status(message)
+            return
+        self.show_status(f"Range-Walk graph exported — {target}")
+
     def handle_success(self, result: object) -> bool:
+        if isinstance(result, RangeWalkComparisonResult):
+            return self._handle_comparison(result)
         if isinstance(result, SavedAdditionalWalkResult):
             return self._handle_saved_additional_walk(result)
         if isinstance(result, SavedWalk1Result):
@@ -181,6 +235,9 @@ class RangeWalkPreviewController:
         elif operation == "history":
             message = f"Unable to load Range-Walk history: {exc}"
             self._require_widget().show_history_error(message)
+        elif operation == "compare":
+            message = f"Unable to compare Range-Walk evidence: {exc}"
+            self._require_widget().show_comparison_error(message)
         else:
             message = f"Unable to preview Range-Walk CSV: {exc}"
             self._require_widget().show_error(message, operation)
@@ -253,10 +310,21 @@ class RangeWalkPreviewController:
         if result.request_id != self._request_id:
             self.show_status("Stale Range-Walk history result was withheld")
             return True
-        self._require_widget().show_history(result.text, result.records)
+        self._require_widget().show_history(result.text, result.records, result.walks)
         self.show_status(
             f"Loaded {len(result.records)} baseline(s) and "
             f"{len(result.walks)} additional walk(s)"
+        )
+        return True
+
+    def _handle_comparison(self, result: RangeWalkComparisonResult) -> bool:
+        widget = self._require_widget()
+        if result.request_id != self._request_id or not widget.matches_comparison(result):
+            self.show_status("Stale Range-Walk comparison result was withheld")
+            return True
+        widget.show_comparison(result)
+        self.show_status(
+            f"Range-Walk comparison ready — {len(result.walks) - 1} later walk(s)"
         )
         return True
 

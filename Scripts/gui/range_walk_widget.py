@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -10,10 +12,14 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -36,6 +42,10 @@ from .range_walk_adapter import (
     inspect_range_walk_csv,
 )
 from .range_walk_setup import apply_parent_baseline, configure_walk_type
+from analyses.range_walk_persisted import (
+    COMPARISON_INTERPRETATION,
+    RangeWalkComparisonResult,
+)
 
 
 class RangeWalkPreviewWidget(QWidget):
@@ -47,11 +57,15 @@ class RangeWalkPreviewWidget(QWidget):
         detect,
         persist_baseline=None,
         load_history=None,
+        compare=None,
+        export_graph=None,
         parent=None,
     ):
         super().__init__(parent)
         self._persist_baseline = persist_baseline
         self._load_history = load_history
+        self._compare = compare
+        self._export_graph = export_graph
         self._source_path: Path | None = None
         self._inspection: RangeWalkCsvInspection | None = None
         self._result: RangeWalkPreviewResult | None = None
@@ -59,6 +73,8 @@ class RangeWalkPreviewWidget(QWidget):
         self._persisted_record: StoredWalk1Baseline | None = None
         self._persisted_walk: StoredAdditionalWalk | None = None
         self._history_records: dict[str, StoredWalk1Baseline] = {}
+        self._history_walks: dict[str, StoredAdditionalWalk] = {}
+        self._comparison_result: RangeWalkComparisonResult | None = None
         self._applied_parent_baseline_id: str | None = None
         self._baseline_saved_dirty = False
         self._baseline_form_state = None
@@ -80,9 +96,10 @@ class RangeWalkPreviewWidget(QWidget):
         self.pages.addWidget(page1)
 
         notice = QLabel(
-            "<b>CSV/marker preview only — comparison not yet connected</b><br>"
+            "<b>CSV and marker preview</b><br>"
             "Candidates are calibrated elevator holds, not confirmed landmarks. "
-            "The shared aircraft BIN selection does not apply."
+            "Saved RF comparison is available on Page 3. The shared aircraft BIN "
+            "selection does not apply."
         )
         notice.setWordWrap(True)
         page1_layout.addWidget(notice)
@@ -473,26 +490,103 @@ class RangeWalkPreviewWidget(QWidget):
         self.history_back_button.clicked.connect(self._history_back)
         navigation.addWidget(self.history_back_button)
         navigation.addStretch(1)
-        self.refresh_history_button = QPushButton("Refresh history")
+        self.refresh_history_button = QPushButton("Refresh")
         self.refresh_history_button.setObjectName("rangeWalkRefreshHistoryButton")
         self.refresh_history_button.clicked.connect(self._request_history)
         navigation.addWidget(self.refresh_history_button)
         layout.addLayout(navigation)
         layout.addWidget(QLabel("<h2>History &amp; Comparison</h2>"))
         notice = QLabel(
-            "Saved Walk 1 baselines and associated later walks are read-only. "
-            "RF comparisons are not yet available."
+            "Compare checksum-validated saved walks. Missing telemetry remains "
+            "unavailable evidence and is never converted to zero signal."
         )
         notice.setWordWrap(True)
         layout.addWidget(notice)
+
+        selection = QFormLayout()
+        self.comparison_baseline_combo = QComboBox()
+        self.comparison_baseline_combo.setObjectName("rangeWalkComparisonBaseline")
+        selection.addRow("Walk 1 baseline:", self.comparison_baseline_combo)
+        self.comparison_walk_list = QListWidget()
+        self.comparison_walk_list.setObjectName("rangeWalkComparisonWalks")
+        self.comparison_walk_list.setSelectionMode(
+            QListWidget.SelectionMode.MultiSelection
+        )
+        self.comparison_walk_list.setMaximumHeight(110)
+        selection.addRow("Additional walks:", self.comparison_walk_list)
+        layout.addLayout(selection)
+        actions = QHBoxLayout()
+        self.compare_button = QPushButton("Compare")
+        self.compare_button.setObjectName("rangeWalkCompareButton")
+        self.compare_button.clicked.connect(self._request_comparison)
+        actions.addWidget(self.compare_button)
+        self.graph_combo = QComboBox()
+        self.graph_combo.setObjectName("rangeWalkGraphSelector")
+        self.graph_combo.currentIndexChanged.connect(self._show_selected_graph)
+        actions.addWidget(self.graph_combo, 1)
+        self.export_graph_button = QPushButton("Export PNG")
+        self.export_graph_button.setObjectName("rangeWalkExportGraphButton")
+        self.export_graph_button.clicked.connect(self._export_selected_graph)
+        actions.addWidget(self.export_graph_button)
+        layout.addLayout(actions)
+        self.comparison_state = QLabel(
+            "Select a saved baseline and one or more associated walks."
+        )
+        self.comparison_state.setObjectName("rangeWalkComparisonState")
+        self.comparison_state.setWordWrap(True)
+        layout.addWidget(self.comparison_state)
+        self.comparison_metadata = QPlainTextEdit()
+        self.comparison_metadata.setObjectName("rangeWalkComparisonMetadata")
+        self.comparison_metadata.setReadOnly(True)
+        self.comparison_metadata.setMaximumHeight(155)
+        layout.addWidget(self.comparison_metadata)
+        self.comparison_table = QTableWidget(0, 10)
+        self.comparison_table.setObjectName("rangeWalkComparisonTable")
+        self.comparison_table.setHorizontalHeaderLabels(
+            (
+                "Section", "Walk", "1RSS median", "1RSS P10", "RQly P10",
+                "RSNR median", "Eligible 1RSS", "Logged rows", "Coverage",
+                "Longest unavailable",
+            )
+        )
+        self.comparison_table.setEditTriggers(
+            QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self.comparison_table.setMinimumHeight(180)
+        layout.addWidget(self.comparison_table, 1)
+        graph_scroll = QScrollArea()
+        graph_scroll.setWidgetResizable(True)
+        self.graph_label = QLabel("Run a comparison to generate graph previews.")
+        self.graph_label.setObjectName("rangeWalkGraphPreview")
+        self.graph_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.graph_label.setMinimumHeight(200)
+        graph_scroll.setWidget(self.graph_label)
+        layout.addWidget(graph_scroll, 2)
+        limits = QLabel(COMPARISON_INTERPRETATION)
+        limits.setObjectName("rangeWalkComparisonInterpretation")
+        limits.setWordWrap(True)
+        layout.addWidget(limits)
+        self.comparison_baseline_combo.currentIndexChanged.connect(
+            self._comparison_baseline_changed
+        )
+        self.comparison_walk_list.itemSelectionChanged.connect(
+            self._comparison_selection_changed
+        )
+
+        self.history_group = QGroupBox("Saved history detail")
+        self.history_group.setCheckable(True)
+        self.history_group.setChecked(False)
+        history_layout = QVBoxLayout(self.history_group)
         self.history_report = QPlainTextEdit()
         self.history_report.setObjectName("rangeWalkHistoryReport")
         self.history_report.setReadOnly(True)
         self.history_report.setPlainText(
-            "Range-Walk History & Comparison\n\nOpen this page to load history.\n"
-            "RF comparisons are not yet available."
+            "Range-Walk History & Comparison\n\nOpen this page to load history."
         )
-        layout.addWidget(self.history_report, 1)
+        history_layout.addWidget(self.history_report)
+        self.history_report.setVisible(False)
+        self.history_group.toggled.connect(self.history_report.setVisible)
+        layout.addWidget(self.history_group)
 
     def _show_baseline_page(self) -> None:
         if self._result is None:
@@ -738,9 +832,13 @@ class RangeWalkPreviewWidget(QWidget):
         self,
         text: str,
         records: tuple[StoredWalk1Baseline, ...] = (),
+        walks: tuple[StoredAdditionalWalk, ...] = (),
     ) -> None:
         selected_id = self.parent_baseline_combo.currentData()
+        comparison_baseline_id = self.comparison_baseline_combo.currentData()
+        selected_walk_ids = set(self._selected_comparison_walk_ids())
         self._history_records = {record.baseline_id: record for record in records}
+        self._history_walks = {walk.walk_id: walk for walk in walks}
         self.parent_baseline_combo.blockSignals(True)
         self.parent_baseline_combo.clear()
         self.parent_baseline_combo.addItem("Select saved baseline…", None)
@@ -753,13 +851,169 @@ class RangeWalkPreviewWidget(QWidget):
         self.parent_baseline_combo.blockSignals(False)
         self.history_report.setPlainText(text)
         self._parent_baseline_changed()
+        self.comparison_baseline_combo.blockSignals(True)
+        self.comparison_baseline_combo.clear()
+        self.comparison_baseline_combo.addItem("Select saved baseline…", None)
+        for record in records:
+            self.comparison_baseline_combo.addItem(
+                f"{record.label} — {record.baseline_id}", record.baseline_id
+            )
+        comparison_index = self.comparison_baseline_combo.findData(
+            comparison_baseline_id
+        )
+        self.comparison_baseline_combo.setCurrentIndex(max(0, comparison_index))
+        self.comparison_baseline_combo.blockSignals(False)
+        self._populate_comparison_walks(selected_walk_ids)
+        if self._comparison_result is not None:
+            valid_result_ids = {
+                item.record.walk_id
+                for item in self._comparison_result.walks[1:]
+                if isinstance(item.record, StoredAdditionalWalk)
+            }
+            if (
+                self._comparison_result.baseline.baseline_id
+                != self.comparison_baseline_combo.currentData()
+                or not valid_result_ids.issubset(self._history_walks)
+            ):
+                self._clear_comparison("Saved history changed; run comparison again.")
 
     def show_history_error(self, message: str) -> None:
         self.history_report.setPlainText(
             "Range-Walk History Error\n"
             "========================\n"
-            f"{message}\n\nComparisons are not yet available."
+            f"{message}"
         )
+        self._clear_comparison("History validation failed; comparison is unavailable.")
+
+    def _comparison_baseline_changed(self) -> None:
+        self._populate_comparison_walks()
+        self._clear_comparison(
+            "Baseline changed; select associated walks and run comparison."
+        )
+
+    def _populate_comparison_walks(self, preserve: set[str] | None = None) -> None:
+        baseline_id = self.comparison_baseline_combo.currentData()
+        preserve = preserve or set()
+        self.comparison_walk_list.blockSignals(True)
+        self.comparison_walk_list.clear()
+        for walk in self._history_walks.values():
+            if walk.parent_baseline_id != baseline_id:
+                continue
+            item = QListWidgetItem(f"{walk.label} — {walk.walk_id}")
+            item.setData(Qt.ItemDataRole.UserRole, walk.walk_id)
+            self.comparison_walk_list.addItem(item)
+            if walk.walk_id in preserve:
+                item.setSelected(True)
+        self.comparison_walk_list.blockSignals(False)
+        self._update_controls()
+
+    def _selected_comparison_walk_ids(self) -> tuple[str, ...]:
+        return tuple(
+            item.data(Qt.ItemDataRole.UserRole)
+            for item in self.comparison_walk_list.selectedItems()
+        )
+
+    def _comparison_selection_changed(self) -> None:
+        if self._comparison_result is not None:
+            self._clear_comparison(
+                "Walk selection changed; run comparison again."
+            )
+        self._update_controls()
+
+    def _request_comparison(self) -> None:
+        baseline_id = self.comparison_baseline_combo.currentData()
+        walk_ids = self._selected_comparison_walk_ids()
+        if baseline_id is None or not walk_ids:
+            self.comparison_state.setText(
+                "Select one baseline and at least one associated additional walk."
+            )
+            return
+        if self._compare is not None:
+            self._compare(baseline_id, walk_ids)
+
+    def show_comparison_busy(self) -> None:
+        self._clear_comparison("Comparison running…")
+
+    def matches_comparison(self, result: RangeWalkComparisonResult) -> bool:
+        return (
+            self.comparison_baseline_combo.currentData()
+            == result.baseline.baseline_id
+            and self._selected_comparison_walk_ids()
+            == tuple(item.record.walk_id for item in result.walks[1:])
+        )
+
+    def show_comparison(self, result: RangeWalkComparisonResult) -> None:
+        self._comparison_result = result
+        warnings = [item.warning for item in result.walks[1:] if item.warning]
+        self.comparison_state.setText(
+            f"Comparison complete — {len(result.walks) - 1} additional walk(s), "
+            f"{sum(section is not None for item in result.walks for section in item.evidence.sections)} "
+            "valid section result(s)."
+            + (" " + " ".join(dict.fromkeys(warnings)) if warnings else "")
+        )
+        self.comparison_metadata.setPlainText(_comparison_metadata(result))
+        self._populate_comparison_table(result)
+        self.graph_combo.blockSignals(True)
+        self.graph_combo.clear()
+        for number, path in enumerate(result.graph_paths[:-1], start=1):
+            label = result.walks[number - 1].evidence.label
+            self.graph_combo.addItem(f"Walk {number} RF trace — {label}", path)
+        self.graph_combo.insertItem(0, "Section 1RSS P10 comparison", result.graph_paths[-1])
+        self.graph_combo.setCurrentIndex(0)
+        self.graph_combo.blockSignals(False)
+        self._show_selected_graph()
+        self._update_controls()
+
+    def show_comparison_error(self, message: str) -> None:
+        self._clear_comparison(message)
+
+    def _clear_comparison(self, message: str) -> None:
+        self._comparison_result = None
+        self.comparison_state.setText(message)
+        self.comparison_metadata.clear()
+        self.comparison_table.setRowCount(0)
+        self.graph_combo.clear()
+        self.graph_label.setPixmap(QPixmap())
+        self.graph_label.setText("No current comparison graph.")
+        self._update_controls()
+
+    def _populate_comparison_table(self, result: RangeWalkComparisonResult) -> None:
+        rows = 4 * len(result.walks)
+        self.comparison_table.setRowCount(rows)
+        row = 0
+        names = result.baseline.landmark_names
+        for section_index in range(4):
+            section_name = f"{names[section_index]} → {names[section_index + 1]}"
+            for walk_number, item in enumerate(result.walks, start=1):
+                section = item.evidence.sections[section_index]
+                values = _comparison_row(section_name, walk_number, item, section)
+                for column, value in enumerate(values):
+                    self.comparison_table.setItem(row, column, QTableWidgetItem(value))
+                row += 1
+        self.comparison_table.resizeColumnsToContents()
+
+    def _show_selected_graph(self) -> None:
+        path = self.graph_combo.currentData()
+        if path is None:
+            return
+        pixmap = QPixmap(str(path))
+        if pixmap.isNull():
+            self.graph_label.setText(f"Unable to display graph: {path}")
+            return
+        self.graph_label.setText("")
+        self.graph_label.setPixmap(
+            pixmap.scaled(
+                1050,
+                620,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def _export_selected_graph(self) -> None:
+        path = self.graph_combo.currentData()
+        if path is not None and self._export_graph is not None:
+            self._export_graph(Path(path))
 
     def _draft_changed(self) -> None:
         self._draft_revision += 1
@@ -847,6 +1101,17 @@ class RangeWalkPreviewWidget(QWidget):
         self.page1_history_button.setEnabled(available)
         self.history_back_button.setEnabled(available)
         self.refresh_history_button.setEnabled(available)
+        self.comparison_baseline_combo.setEnabled(available)
+        self.comparison_walk_list.setEnabled(available)
+        self.compare_button.setEnabled(
+            available
+            and self.comparison_baseline_combo.currentData() is not None
+            and bool(self._selected_comparison_walk_ids())
+        )
+        self.graph_combo.setEnabled(available and self._comparison_result is not None)
+        self.export_graph_button.setEnabled(
+            available and self.graph_combo.currentData() is not None
+        )
         self.save_baseline_button.setText(
             "Saving…"
             if self._busy and self._busy_task == "save"
@@ -862,6 +1127,9 @@ class RangeWalkPreviewWidget(QWidget):
             "Loading…"
             if self._busy and self._busy_task == "history"
             else "Refresh history"
+        )
+        self.compare_button.setText(
+            "Comparing…" if self._busy and self._busy_task == "compare" else "Compare"
         )
         self.auto_button.setEnabled(available)
         self.inverse_button.setEnabled(available)
@@ -906,3 +1174,76 @@ def _format_suggestion(value: float | None) -> str:
 
 def _direction_label(direction: str) -> str:
     return "higher (+Ele)" if direction == "higher" else "lower (-Ele)"
+
+
+def _display_value(value: float | None, unit: str = "") -> str:
+    return "Unavailable" if value is None else f"{value:.1f}{unit}"
+
+
+def _comparison_row(section_name, walk_number, item, section) -> tuple[str, ...]:
+    walk_label = f"Walk {walk_number} — {item.evidence.label}"
+    if section is None:
+        return (
+            section_name,
+            walk_label,
+            "Missing landmark boundary",
+            "Unavailable",
+            "Unavailable",
+            "Unavailable",
+            "Unavailable",
+            "Unavailable",
+            "Unavailable",
+            "Unavailable",
+        )
+    return (
+        section_name,
+        walk_label,
+        _display_value(section.median_values["1RSS(dB)"], " dBm"),
+        _display_value(section.p10_values["1RSS(dB)"], " dBm"),
+        _display_value(section.p10_values["RQly(%)"], "%"),
+        _display_value(section.median_values["RSNR(dB)"], " dB"),
+        str(section.usable_counts["1RSS(dB)"]),
+        str(section.row_count),
+        f"{100 * section.rssi_coverage:.0f}%",
+        f"{section.longest_unavailable_s:.1f} s",
+    )
+
+
+def _comparison_metadata(result: RangeWalkComparisonResult) -> str:
+    lines = [
+        f"Walk 1 baseline: {result.baseline.label}",
+        f"Stable ID: {result.baseline.baseline_id}",
+        "Physical route: " + " → ".join(result.baseline.landmark_names),
+        f"Turnaround: {result.baseline.turnaround}",
+        "Evidence integrity: managed CSV checksums validated",
+    ]
+    for number, item in enumerate(result.walks, start=1):
+        record = item.record
+        missing = [
+            result.baseline.landmark_names[index]
+            for index, marker in enumerate(item.evidence.landmarks)
+            if marker is None
+        ]
+        settings = record.settings
+        lines.extend(
+            [
+                "",
+                f"Walk {number}: {record.label}",
+                f"  Radio configuration: {record.antenna}",
+                "  Radio-local recording: "
+                f"{record.recording_start.isoformat(sep=' ', timespec='seconds')} to "
+                f"{record.recording_end.isoformat(sep=' ', timespec='seconds')}",
+                "  Configured RF settings: "
+                f"TX {settings.tx_power or 'Unknown'}; packet rate "
+                f"{settings.packet_rate or 'Unknown'}; mode/band "
+                f"{settings.rf_mode or 'Unknown'}; dynamic power "
+                f"{settings.dynamic_power or 'Unknown'}",
+                f"  Confirmed landmarks: {5 - len(missing)}/5; missing: "
+                + (", ".join(missing) if missing else "None"),
+                "  Valid moving sections: "
+                f"{sum(section is not None for section in item.evidence.sections)}/4",
+            ]
+        )
+        if item.warning:
+            lines.append(f"  Warning: {item.warning}")
+    return "\n".join(lines)

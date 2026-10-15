@@ -583,7 +583,7 @@ def _format_preview(
     lines = [
         "Range-Walk CSV / marker preview",
         "================================",
-        "CSV/marker preview only — comparison not yet connected.",
+        "Candidate preview only — no RF comparison is performed on Page 1.",
         f"Source CSV: {source.name}",
         f"Path: {source}",
         "Radio-local recording: "

@@ -128,13 +128,13 @@ def format_range_walk_history(
     records: tuple[StoredWalk1Baseline, ...],
     walks: tuple[StoredAdditionalWalk, ...] = (),
 ) -> str:
-    """Format saved Walk 1 records without suggesting completed comparisons."""
+    """Format durable record provenance for the secondary history view."""
     lines = [
         "Range-Walk History & Comparison",
         "================================",
         "Saved baselines and associated later walks are read-only in this view.",
-        "Comparisons are not yet available.",
-        "RF performance comparisons, rankings and graphs remain deferred.",
+        "Use the Page 3 dashboard to select saved walks for RF comparison.",
+        "No comparison declares a radio configuration winner.",
     ]
     if not records:
         lines.extend(["", "No saved Walk 1 baselines."])
