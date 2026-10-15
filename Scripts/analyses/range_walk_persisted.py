@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from analyses.range_walk import format_range_walk_report, write_range_walk_graphs
@@ -111,7 +111,12 @@ class RangeWalkComparisonService:
         landmarks = baseline.landmark_names
         report = format_range_walk_report(evidences, landmarks, baseline.turnaround)
         report += "\n\nInterpretation\n" + COMPARISON_INTERPRETATION
-        paths = tuple(write_range_walk_graphs(evidences, landmarks, request.output_dir))
+        # Graph titles/legends use the operator's radio-configuration name.
+        # Stored labels and analytical evidence remain unchanged.
+        graph_evidences = [replace(walk, label=walk.antenna) for walk in evidences]
+        paths = tuple(
+            write_range_walk_graphs(graph_evidences, landmarks, request.output_dir)
+        )
         return RangeWalkComparisonResult(
             baseline,
             tuple(compared),

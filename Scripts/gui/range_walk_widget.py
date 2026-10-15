@@ -5,13 +5,17 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QButtonGroup,
     QComboBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QLayout,
     QListWidget,
     QListWidgetItem,
     QPlainTextEdit,
@@ -481,9 +485,19 @@ class RangeWalkPreviewWidget(QWidget):
         )
 
     def _build_history_page(self) -> None:
+        # The dashboard is taller than the default application window. Scroll the
+        # whole page rather than allowing Qt to compress the table and RF graph.
+        self.comparison_scroll = QScrollArea()
+        self.comparison_scroll.setObjectName("rangeWalkComparisonScroll")
+        self.comparison_scroll.setWidgetResizable(True)
+        self.comparison_scroll.setFrameShape(QFrame.Shape.NoFrame)
         page = QWidget()
         layout = QVBoxLayout(page)
-        self.pages.addWidget(page)
+        layout.setContentsMargins(2, 2, 10, 10)
+        layout.setSpacing(8)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
+        self.comparison_scroll.setWidget(page)
+        self.pages.addWidget(self.comparison_scroll)
         navigation = QHBoxLayout()
         self.history_back_button = QPushButton("Back: Walk Setup")
         self.history_back_button.setObjectName("rangeWalkHistoryBackButton")
@@ -503,17 +517,30 @@ class RangeWalkPreviewWidget(QWidget):
         notice.setWordWrap(True)
         layout.addWidget(notice)
 
-        selection = QFormLayout()
+        selection = QHBoxLayout()
+        baseline_group = QGroupBox("Baseline radio configuration")
+        baseline_layout = QVBoxLayout(baseline_group)
         self.comparison_baseline_combo = QComboBox()
         self.comparison_baseline_combo.setObjectName("rangeWalkComparisonBaseline")
-        selection.addRow("Walk 1 baseline:", self.comparison_baseline_combo)
+        self.comparison_baseline_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.comparison_baseline_combo.setMinimumContentsLength(27)
+        baseline_layout.addWidget(self.comparison_baseline_combo)
+        baseline_layout.addStretch(1)
+        selection.addWidget(baseline_group, 1)
+
+        walks_group = QGroupBox("Associated comparison walks (select one or more)")
+        walks_layout = QVBoxLayout(walks_group)
         self.comparison_walk_list = QListWidget()
         self.comparison_walk_list.setObjectName("rangeWalkComparisonWalks")
         self.comparison_walk_list.setSelectionMode(
             QListWidget.SelectionMode.MultiSelection
         )
-        self.comparison_walk_list.setMaximumHeight(110)
-        selection.addRow("Additional walks:", self.comparison_walk_list)
+        self.comparison_walk_list.setMinimumHeight(112)
+        self.comparison_walk_list.setMaximumHeight(136)
+        walks_layout.addWidget(self.comparison_walk_list)
+        selection.addWidget(walks_group, 2)
         layout.addLayout(selection)
         actions = QHBoxLayout()
         self.compare_button = QPushButton("Compare")
@@ -538,7 +565,7 @@ class RangeWalkPreviewWidget(QWidget):
         self.comparison_metadata = QPlainTextEdit()
         self.comparison_metadata.setObjectName("rangeWalkComparisonMetadata")
         self.comparison_metadata.setReadOnly(True)
-        self.comparison_metadata.setMaximumHeight(155)
+        self.comparison_metadata.setFixedHeight(145)
         layout.addWidget(self.comparison_metadata)
         self.comparison_table = QTableWidget(0, 10)
         self.comparison_table.setObjectName("rangeWalkComparisonTable")
@@ -552,16 +579,36 @@ class RangeWalkPreviewWidget(QWidget):
         self.comparison_table.setEditTriggers(
             QTableWidget.EditTrigger.NoEditTriggers
         )
-        self.comparison_table.setMinimumHeight(180)
-        layout.addWidget(self.comparison_table, 1)
-        graph_scroll = QScrollArea()
-        graph_scroll.setWidgetResizable(True)
+        self.comparison_table.setFixedHeight(282)
+        self.comparison_table.setWordWrap(False)
+        self.comparison_table.setAlternatingRowColors(True)
+        self.comparison_table.setHorizontalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
+        self.comparison_table.setVerticalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
+        self.comparison_table.verticalHeader().setVisible(False)
+        self.comparison_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Interactive
+        )
+        for column, width in enumerate((165, 230, 107, 100, 90, 112, 104, 98, 85, 145)):
+            self.comparison_table.setColumnWidth(column, width)
+        layout.addWidget(self.comparison_table)
+
+        graph_group = QGroupBox("RF evidence graph")
+        graph_layout = QVBoxLayout(graph_group)
+        self.graph_scroll = QScrollArea()
+        self.graph_scroll.setObjectName("rangeWalkGraphScroll")
+        self.graph_scroll.setWidgetResizable(True)
+        self.graph_scroll.setFixedHeight(515)
         self.graph_label = QLabel("Run a comparison to generate graph previews.")
         self.graph_label.setObjectName("rangeWalkGraphPreview")
         self.graph_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.graph_label.setMinimumHeight(200)
-        graph_scroll.setWidget(self.graph_label)
-        layout.addWidget(graph_scroll, 2)
+        self.graph_label.setMinimumHeight(480)
+        self.graph_scroll.setWidget(self.graph_label)
+        graph_layout.addWidget(self.graph_scroll)
+        layout.addWidget(graph_group)
         limits = QLabel(COMPARISON_INTERPRETATION)
         limits.setObjectName("rangeWalkComparisonInterpretation")
         limits.setWordWrap(True)
@@ -856,7 +903,12 @@ class RangeWalkPreviewWidget(QWidget):
         self.comparison_baseline_combo.addItem("Select saved baseline…", None)
         for record in records:
             self.comparison_baseline_combo.addItem(
-                f"{record.label} — {record.baseline_id}", record.baseline_id
+                _comparison_choice_text(record), record.baseline_id
+            )
+            self.comparison_baseline_combo.setItemData(
+                self.comparison_baseline_combo.count() - 1,
+                _comparison_record_tooltip(record),
+                Qt.ItemDataRole.ToolTipRole,
             )
         comparison_index = self.comparison_baseline_combo.findData(
             comparison_baseline_id
@@ -899,7 +951,8 @@ class RangeWalkPreviewWidget(QWidget):
         for walk in self._history_walks.values():
             if walk.parent_baseline_id != baseline_id:
                 continue
-            item = QListWidgetItem(f"{walk.label} — {walk.walk_id}")
+            item = QListWidgetItem(_comparison_choice_text(walk))
+            item.setToolTip(_comparison_record_tooltip(walk))
             item.setData(Qt.ItemDataRole.UserRole, walk.walk_id)
             self.comparison_walk_list.addItem(item)
             if walk.walk_id in preserve:
@@ -956,8 +1009,8 @@ class RangeWalkPreviewWidget(QWidget):
         self.graph_combo.blockSignals(True)
         self.graph_combo.clear()
         for number, path in enumerate(result.graph_paths[:-1], start=1):
-            label = result.walks[number - 1].evidence.label
-            self.graph_combo.addItem(f"Walk {number} RF trace — {label}", path)
+            label = _comparison_record_name(result.walks[number - 1].record)
+            self.graph_combo.addItem(f"{label} RF trace", path)
         self.graph_combo.insertItem(0, "Section 1RSS P10 comparison", result.graph_paths[-1])
         self.graph_combo.setCurrentIndex(0)
         self.graph_combo.blockSignals(False)
@@ -990,7 +1043,8 @@ class RangeWalkPreviewWidget(QWidget):
                 for column, value in enumerate(values):
                     self.comparison_table.setItem(row, column, QTableWidgetItem(value))
                 row += 1
-        self.comparison_table.resizeColumnsToContents()
+        # Keep the Walk and metric columns bounded; horizontal table scrolling
+        # is preferable to a table that forces the whole page too wide.
 
     def _show_selected_graph(self) -> None:
         path = self.graph_combo.currentData()
@@ -1003,8 +1057,8 @@ class RangeWalkPreviewWidget(QWidget):
         self.graph_label.setText("")
         self.graph_label.setPixmap(
             pixmap.scaled(
-                1050,
-                620,
+                1000,
+                475,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             )
@@ -1180,8 +1234,42 @@ def _display_value(value: float | None, unit: str = "") -> str:
     return "Unavailable" if value is None else f"{value:.1f}{unit}"
 
 
+def _comparison_record_name(
+    record: StoredWalk1Baseline | StoredAdditionalWalk,
+) -> str:
+    role = "Baseline" if isinstance(record, StoredWalk1Baseline) else "Comparison"
+    return f"{role} — {record.antenna}"
+
+
+def _comparison_choice_text(
+    record: StoredWalk1Baseline | StoredAdditionalWalk,
+) -> str:
+    # Recording time distinguishes independent walks with the same radio setup.
+    return (
+        f"{_comparison_record_name(record)} "
+        f"({record.recording_start:%Y-%m-%d %H:%M})"
+    )
+
+
+def _comparison_record_tooltip(
+    record: StoredWalk1Baseline | StoredAdditionalWalk,
+) -> str:
+    stable_id = (
+        record.baseline_id
+        if isinstance(record, StoredWalk1Baseline)
+        else record.walk_id
+    )
+    return (
+        f"{_comparison_record_name(record)}\n"
+        f"Saved label: {record.label}\n"
+        f"Source CSV: {record.original_csv_filename}\n"
+        f"Recording: {record.recording_start:%Y-%m-%d %H:%M:%S}\n"
+        f"Stable ID: {stable_id}"
+    )
+
+
 def _comparison_row(section_name, walk_number, item, section) -> tuple[str, ...]:
-    walk_label = f"Walk {walk_number} — {item.evidence.label}"
+    walk_label = _comparison_record_name(item.record)
     if section is None:
         return (
             section_name,
@@ -1211,7 +1299,8 @@ def _comparison_row(section_name, walk_number, item, section) -> tuple[str, ...]
 
 def _comparison_metadata(result: RangeWalkComparisonResult) -> str:
     lines = [
-        f"Walk 1 baseline: {result.baseline.label}",
+        f"Baseline radio configuration: {result.baseline.antenna}",
+        f"Saved label: {result.baseline.label}",
         f"Stable ID: {result.baseline.baseline_id}",
         "Physical route: " + " → ".join(result.baseline.landmark_names),
         f"Turnaround: {result.baseline.turnaround}",
@@ -1228,8 +1317,8 @@ def _comparison_metadata(result: RangeWalkComparisonResult) -> str:
         lines.extend(
             [
                 "",
-                f"Walk {number}: {record.label}",
-                f"  Radio configuration: {record.antenna}",
+                _comparison_record_name(record),
+                f"  Saved label: {record.label}",
                 "  Radio-local recording: "
                 f"{record.recording_start.isoformat(sep=' ', timespec='seconds')} to "
                 f"{record.recording_end.isoformat(sep=' ', timespec='seconds')}",
