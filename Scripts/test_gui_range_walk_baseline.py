@@ -291,11 +291,11 @@ def test_range_walk_help_describes_baseline_scope_and_invalidation():
     ).read_text()
 
     for text in (readme, procedure):
-        assert "Walk 1 — Baseline & Landmarks" in text or "Walk 1 baseline" in text
+        assert "Walk 1 baseline" in text
         assert "extra candidates" in text
         assert "changing the CSV" in text
-    assert "Later-walk entry and RF comparison" in readme
-    assert "does not yet process later walks" in procedure
+    assert "additional walks associated with those baselines" in readme
+    assert "additional-walk entry" in procedure
     for text in (readme, glossary, procedure):
         assert "no separate" in text
         assert "landmark 5" in text.lower()
@@ -319,3 +319,10 @@ def test_range_walk_help_describes_baseline_scope_and_invalidation():
     assert "Update saved Walk 1" in readme
     assert "Update saved Walk 1" in glossary
     assert "Update saved Walk 1" in procedure
+    for required in (
+        "Test radio configuration",
+        "missing/unconfirmed",
+        "four candidates",
+        "does not establish that the physical landmark was not visited",
+    ):
+        assert required in readme or required in procedure or required in glossary
