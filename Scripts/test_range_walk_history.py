@@ -1,7 +1,7 @@
 """Portable persistence tests for Range-Walk Walk 1 baselines."""
 
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -16,7 +16,24 @@ from core.range_walk_history import (
     RangeWalkHistoryStore,
     fingerprint_csv,
 )
-from gui.range_walk_adapter import RangeWalkPreviewResult, create_walk1_baseline
+@dataclass(frozen=True)
+class BaselineFixture:
+    """Qt-independent stand-in for the validated GUI baseline at the store boundary."""
+
+    source_path: Path
+    label: str
+    antenna: str
+    landmark_names: tuple[str, ...]
+    turnaround: str
+    settings: WalkSettings
+    candidates: tuple[LandmarkMarker, ...]
+    candidate_numbers: tuple[int, ...]
+    landmarks: tuple[LandmarkMarker, ...]
+    direction_used: str
+    direction_assessment: str
+    recording_start: datetime
+    recording_end: datetime
+    source_sha256: str
 
 
 BASE = datetime(2026, 10, 12, 13, 37, 20)
@@ -33,27 +50,22 @@ def _baseline(tmp_path, name="walk.csv", content="csv evidence\n", offset=0):
         )
         for index in range(5)
     )
-    preview = RangeWalkPreviewResult(
-        source.resolve(),
-        1,
-        BASE,
-        BASE + timedelta(seconds=offset + 34),
-        340,
-        markers,
-        "higher",
-        "higher",
-        True,
-        "Auto selected higher from complete sustained holds.",
-        "preview",
-        fingerprint_csv(source),
-    )
-    return create_walk1_baseline(
-        preview,
-        (1, 2, 3, 4, 5),
-        ("Gate", "Tree", "Fence", "Shed", "Far turnaround"),
-        "Receiver and original antenna below fuselage",
-        "Walk 1 baseline",
-        WalkSettings("100 mW", "250 Hz", "2.4 GHz", "Off"),
+    names = ("Gate", "Tree", "Fence", "Shed", "Far turnaround")
+    return BaselineFixture(
+        source_path=source.resolve(),
+        label="Walk 1 baseline",
+        antenna="Receiver and original antenna below fuselage",
+        landmark_names=names,
+        turnaround=names[4],
+        settings=WalkSettings("100 mW", "250 Hz", "2.4 GHz", "Off"),
+        candidates=markers,
+        candidate_numbers=(1, 2, 3, 4, 5),
+        landmarks=markers,
+        direction_used="higher",
+        direction_assessment="Auto selected higher from complete sustained holds.",
+        recording_start=BASE,
+        recording_end=BASE + timedelta(seconds=offset + 34),
+        source_sha256=fingerprint_csv(source),
     )
 
 
