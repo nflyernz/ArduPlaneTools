@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.range_walk import WalkSettings
+from core.range_walk_history import StoredWalk1Baseline
 
 from .range_walk_adapter import (
     RangeWalkCsvInspection,
@@ -38,6 +39,7 @@ from .range_walk_history_adapter import (
     RangeWalkHistoryService,
     SaveWalk1Request,
     SavedWalk1Result,
+    UpdateWalk1Request,
 )
 
 
@@ -59,6 +61,9 @@ class RangeWalkPreviewWidget(QWidget):
         self._inspection: RangeWalkCsvInspection | None = None
         self._result: RangeWalkPreviewResult | None = None
         self._saved_baseline: Walk1Baseline | None = None
+        self._persisted_record: StoredWalk1Baseline | None = None
+        self._persisted_dirty = False
+        self._draft_revision = 0
         self._default_walk1_label = ""
         self._outcome = ""
         self._has_result = False
@@ -81,7 +86,6 @@ class RangeWalkPreviewWidget(QWidget):
         notice.setWordWrap(True)
         page1_layout.addWidget(notice)
         self.preview_notice = notice
-
         source_layout = QHBoxLayout()
         source_layout.addWidget(QLabel("EdgeTX CSV:"))
         self.source_path_edit = QLineEdit()
@@ -94,7 +98,6 @@ class RangeWalkPreviewWidget(QWidget):
         self.choose_button.clicked.connect(choose_source)
         source_layout.addWidget(self.choose_button)
         page1_layout.addLayout(source_layout)
-
         detection_group = QGroupBox("Elevator marker direction")
         detection_layout = QVBoxLayout(detection_group)
         guidance = QLabel(
@@ -104,7 +107,6 @@ class RangeWalkPreviewWidget(QWidget):
         guidance.setWordWrap(True)
         detection_layout.addWidget(guidance)
         self.calibration_guidance = guidance
-
         mode_layout = QHBoxLayout()
         mode_layout.addWidget(QLabel("Detection:"))
         self.auto_button = QPushButton("Auto")
@@ -127,7 +129,6 @@ class RangeWalkPreviewWidget(QWidget):
         self.suggestion_label.setWordWrap(True)
         detection_layout.addWidget(self.suggestion_label)
         page1_layout.addWidget(detection_group)
-
         action_layout = QHBoxLayout()
         action_layout.addStretch(1)
         self.detect_button = QPushButton("Detect markers")
@@ -143,13 +144,11 @@ class RangeWalkPreviewWidget(QWidget):
         self.page1_history_button.clicked.connect(self._show_history_page)
         action_layout.addWidget(self.page1_history_button)
         page1_layout.addLayout(action_layout)
-
         self.state_label = QLabel()
         self.state_label.setObjectName("rangeWalkPreviewState")
         self.state_label.setWordWrap(True)
         self.state_label.setMinimumHeight(38)
         page1_layout.addWidget(self.state_label)
-
         self.report = QPlainTextEdit()
         self.report.setObjectName("range_walk_preview_report")
         self.report.setReadOnly(True)
@@ -172,6 +171,14 @@ class RangeWalkPreviewWidget(QWidget):
     @property
     def saved_baseline(self) -> Walk1Baseline | None:
         return self._saved_baseline
+
+    @property
+    def persisted_record(self) -> StoredWalk1Baseline | None:
+        return self._persisted_record
+
+    @property
+    def draft_revision(self) -> int:
+        return self._draft_revision
 
     def set_source(self, path: Path) -> None:
         self._invalidate_evidence(
@@ -284,7 +291,6 @@ class RangeWalkPreviewWidget(QWidget):
         baseline_layout = QVBoxLayout(page)
         scroll.setWidget(page)
         self.pages.addWidget(scroll)
-
         navigation = QHBoxLayout()
         self.back_button = QPushButton("Back: CSV & Markers")
         self.back_button.setObjectName("rangeWalkBackButton")
@@ -296,11 +302,10 @@ class RangeWalkPreviewWidget(QWidget):
         self.baseline_history_button.clicked.connect(self._show_history_page)
         navigation.addWidget(self.baseline_history_button)
         baseline_layout.addLayout(navigation)
-
         heading = QLabel("<h2>Walk 1 — Baseline &amp; Landmarks</h2>")
         baseline_layout.addWidget(heading)
         explanation = QLabel(
-            "Walk 1 uses the original receiver antenna installation and establishes "
+            "Walk 1 records the baseline radio configuration and establishes "
             "the five physical landmarks. Landmark 5 is the safe turnaround. "
             "This draft is stored in memory only."
         )
@@ -312,15 +317,16 @@ class RangeWalkPreviewWidget(QWidget):
         self.baseline_evidence_label.setObjectName("rangeWalkBaselineEvidence")
         self.baseline_evidence_label.setWordWrap(True)
         baseline_layout.addWidget(self.baseline_evidence_label)
-
         metadata = QFormLayout()
         self.walk1_label_edit = QLineEdit()
         self.walk1_label_edit.setObjectName("rangeWalkBaselineLabel")
         self.antenna_edit = QLineEdit()
         self.antenna_edit.setObjectName("rangeWalkBaselineAntenna")
-        self.antenna_edit.setPlaceholderText("Required original receiver installation")
+        self.antenna_edit.setPlaceholderText(
+            "Receiver, antennas, placement and orientation"
+        )
         metadata.addRow("Walk 1 label (optional):", self.walk1_label_edit)
-        metadata.addRow("Original receiver antenna:*", self.antenna_edit)
+        metadata.addRow("Baseline radio configuration:*", self.antenna_edit)
         baseline_layout.addLayout(metadata)
 
         mapping_group = QGroupBox("Five physical landmarks")
@@ -556,23 +562,31 @@ class RangeWalkPreviewWidget(QWidget):
         if self._persist_baseline is None:
             self.show_persisted_baseline(baseline, None)
         else:
-            self._persist_baseline(baseline)
+            self._persist_baseline(baseline, self._persisted_record)
 
     def show_save_busy(self) -> None:
         self.baseline_state_label.setText(
             "Saving Walk 1 baseline and preserving the source CSV…"
         )
 
-    def show_persisted_baseline(self, baseline: Walk1Baseline, record) -> None:
+    def show_persisted_baseline(
+        self,
+        baseline: Walk1Baseline,
+        record,
+        *,
+        updated: bool = False,
+    ) -> None:
         self._saved_baseline = baseline
+        self._persisted_record = record
+        self._persisted_dirty = False
         if record is None:
             self.baseline_state_label.setText(
                 "Walk 1 baseline validated in memory only."
             )
         else:
             self.baseline_state_label.setText(
-                f"Walk 1 baseline saved — ID {record.baseline_id}. "
-                "Source CSV preserved."
+                f"Walk 1 baseline {'updated' if updated else 'saved'} — "
+                f"ID {record.baseline_id}. Source CSV preserved."
             )
         summary = format_walk1_baseline_summary(baseline)
         if record is not None:
@@ -584,6 +598,22 @@ class RangeWalkPreviewWidget(QWidget):
 
     def show_persistence_error(self, message: str) -> None:
         self.baseline_state_label.setText(f"Walk 1 save failed — {message}")
+
+    def retain_persisted_identity_for_newer_draft(
+        self,
+        baseline: Walk1Baseline,
+        record: StoredWalk1Baseline,
+    ) -> None:
+        """Retain a completed write without replacing newer visible form state."""
+        self._saved_baseline = baseline
+        self._persisted_record = record
+        self._persisted_dirty = True
+        self.baseline_summary.clear()
+        self.baseline_state_label.setText(
+            "Saved Walk 1, but the visible draft changed while saving; review and "
+            "update saved Walk 1 again."
+        )
+        self._update_controls()
 
     def show_history_busy(self) -> None:
         self.history_report.setPlainText(
@@ -601,6 +631,15 @@ class RangeWalkPreviewWidget(QWidget):
         )
 
     def _draft_changed(self) -> None:
+        self._draft_revision += 1
+        if self._persisted_record is not None:
+            self._persisted_dirty = True
+            self.baseline_state_label.setText(
+                "Incomplete draft — saved metadata or mapping changed; update saved "
+                "Walk 1."
+            )
+            self._update_controls()
+            return
         if self._saved_baseline is None:
             return
         self._saved_baseline = None
@@ -610,8 +649,11 @@ class RangeWalkPreviewWidget(QWidget):
         self.baseline_summary.clear()
 
     def _invalidate_evidence(self, message: str) -> None:
+        self._draft_revision += 1
         self._result = None
         self._saved_baseline = None
+        self._persisted_record = None
+        self._persisted_dirty = False
         if hasattr(self, "next_button"):
             self.next_button.setEnabled(False)
             self.baseline_state_label.setText(f"Incomplete draft — {message}")
@@ -655,7 +697,11 @@ class RangeWalkPreviewWidget(QWidget):
         ready = self._inspection is not None
         self.detect_button.setEnabled(available and ready)
         self.next_button.setEnabled(available and self._result is not None)
-        self.save_baseline_button.setEnabled(available and self._result is not None)
+        self.save_baseline_button.setEnabled(
+            available
+            and self._result is not None
+            and (self._persisted_record is None or self._persisted_dirty)
+        )
         self.back_button.setEnabled(available)
         self.baseline_history_button.setEnabled(available)
         self.page1_history_button.setEnabled(available)
@@ -664,7 +710,11 @@ class RangeWalkPreviewWidget(QWidget):
         self.save_baseline_button.setText(
             "Saving…"
             if self._busy and self._busy_task == "save"
-            else "Save Walk 1"
+            else (
+                "Update saved Walk 1"
+                if self._persisted_record is not None and self._persisted_dirty
+                else "Save Walk 1"
+            )
         )
         self.refresh_history_button.setText(
             "Loading…"
@@ -673,6 +723,18 @@ class RangeWalkPreviewWidget(QWidget):
         )
         self.auto_button.setEnabled(available)
         self.inverse_button.setEnabled(available)
+        for field in (
+            self.walk1_label_edit,
+            self.antenna_edit,
+            *self.landmark_name_edits,
+            self.tx_power_edit,
+            self.packet_rate_edit,
+            self.rf_mode_edit,
+            self.dynamic_power_edit,
+            *self.candidate_combos,
+        ):
+            field.setEnabled(available)
+        self.rf_settings_group.setEnabled(available)
         if self._busy:
             if self._busy_task == "inspect":
                 state = "Reading selected CSV and observed Ele range…"
@@ -724,12 +786,13 @@ class RangeWalkPreviewController:
         self._request_id = 0
         self._task: str | None = None
         self._pending_inspection: Path | None = None
+        self._pending_save_revision: int | None = None
 
     def create_widget(self, parent=None) -> RangeWalkPreviewWidget:
         widget = RangeWalkPreviewWidget(
             self.choose_source,
             self.request_preview,
-            self.request_save,
+            self.request_persist,
             self.request_history,
             parent,
         )
@@ -781,13 +844,27 @@ class RangeWalkPreviewController:
         widget.show_busy()
         self.show_status(f"Detecting marker candidates — {widget.source_path}")
 
-    def request_save(self, baseline: Walk1Baseline) -> None:
+    def request_persist(
+        self,
+        baseline: Walk1Baseline,
+        expected_record: StoredWalk1Baseline | None,
+    ) -> None:
         if self.is_busy():
             return
         self._request_id += 1
-        request = SaveWalk1Request(baseline, self._request_id)
+        if expected_record is None:
+            request = SaveWalk1Request(baseline, self._request_id)
+            operation = self.history_service.save
+        else:
+            request = UpdateWalk1Request(
+                baseline,
+                expected_record,
+                self._request_id,
+            )
+            operation = self.history_service.update
         self._task = "save"
-        self.start_worker(self.analysis_name, request, self.history_service.save)
+        self._pending_save_revision = self._require_widget().draft_revision
+        self.start_worker(self.analysis_name, request, operation)
         self._require_widget().show_save_busy()
         self.show_status("Saving Walk 1 baseline and preserving its source CSV")
 
@@ -883,7 +960,20 @@ class RangeWalkPreviewController:
                 "Walk 1 was persisted, but its stale GUI result was withheld"
             )
             return True
-        widget.show_persisted_baseline(result.baseline, result.record)
+        if self._pending_save_revision != widget.draft_revision:
+            widget.retain_persisted_identity_for_newer_draft(
+                result.baseline,
+                result.record,
+            )
+            self.show_status(
+                "Walk 1 was persisted; newer visible metadata remains unsaved"
+            )
+            return True
+        widget.show_persisted_baseline(
+            result.baseline,
+            result.record,
+            updated=result.updated,
+        )
         self.show_status(f"Walk 1 baseline saved — {result.record.baseline_id}")
         return True
 

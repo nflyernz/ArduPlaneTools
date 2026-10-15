@@ -28,6 +28,16 @@ class SavedWalk1Result:
     baseline: Walk1Baseline
     record: StoredWalk1Baseline
     request_id: int
+    updated: bool
+
+
+@dataclass(frozen=True)
+class UpdateWalk1Request:
+    """Metadata update guarded by the record originally shown to the GUI."""
+
+    baseline: Walk1Baseline
+    expected_record: StoredWalk1Baseline
+    request_id: int
 
 
 @dataclass(frozen=True)
@@ -63,7 +73,16 @@ class RangeWalkHistoryService:
     def save(self, request: SaveWalk1Request) -> SavedWalk1Result:
         """Persist one validated baseline and its original CSV evidence."""
         record = self._store().add_baseline(request.baseline)
-        return SavedWalk1Result(request.baseline, record, request.request_id)
+        return SavedWalk1Result(request.baseline, record, request.request_id, False)
+
+    def update(self, request: UpdateWalk1Request) -> SavedWalk1Result:
+        """Update editable metadata without replacing preserved evidence."""
+        record = self._store().update_baseline_metadata(
+            request.expected_record.baseline_id,
+            request.expected_record,
+            request.baseline,
+        )
+        return SavedWalk1Result(request.baseline, record, request.request_id, True)
 
     def history(self, request: RangeWalkHistoryRequest) -> RangeWalkHistoryResult:
         """Reload and validate every durable baseline and managed CSV."""
@@ -95,7 +114,7 @@ def format_range_walk_history(records: tuple[StoredWalk1Baseline, ...]) -> str:
                 "",
                 f"Walk 1 baseline {index}: {record.label}",
                 f"  Baseline ID: {record.baseline_id}",
-                f"  Original antenna: {record.antenna}",
+                f"  Baseline radio configuration: {record.antenna}",
                 f"  Original CSV: {record.original_csv_filename}",
                 "  Radio-local recording: "
                 f"{record.recording_start.isoformat(sep=' ', timespec='seconds')}",

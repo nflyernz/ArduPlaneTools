@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -109,6 +109,10 @@ class RangeWalkHistoryStore:
         target = self.evidence_dir / f"{source_sha256}.csv"
         created_evidence = False
         try:
+            if source_sha256 != baseline.source_sha256:
+                raise RangeWalkHistoryError(
+                    "Source CSV changed since marker detection; detect markers again."
+                )
             duplicate = next(
                 (
                     record
@@ -143,6 +147,54 @@ class RangeWalkHistoryStore:
                 target.unlink()
             raise
         return record
+
+    def update_baseline_metadata(
+        self,
+        baseline_id: str,
+        expected_record: StoredWalk1Baseline,
+        baseline,
+    ) -> StoredWalk1Baseline:
+        """Atomically update only operator-entered metadata for one baseline."""
+        current = self._records.get(baseline_id)
+        if current is None:
+            raise RangeWalkHistoryError(f"Unknown Walk 1 baseline: {baseline_id}")
+        if current != expected_record:
+            raise RangeWalkHistoryError(
+                "Saved Walk 1 changed since it was loaded; refresh before updating."
+            )
+        self._validate_managed_evidence(current)
+        self._require_unchanged_evidence(current, baseline)
+        updated = replace(
+            current,
+            label=baseline.label,
+            antenna=baseline.antenna,
+            settings=baseline.settings,
+        )
+        updated = self._record_from_dict(self._record_to_dict(updated))
+        candidate = dict(self._records)
+        candidate[baseline_id] = updated
+        self._save(candidate)
+        return updated
+
+    @staticmethod
+    def _require_unchanged_evidence(current: StoredWalk1Baseline, baseline) -> None:
+        immutable = (
+            (baseline.source_sha256, current.csv_sha256),
+            (baseline.landmark_names, current.landmark_names),
+            (baseline.turnaround, current.turnaround),
+            (baseline.candidates, current.candidates),
+            (baseline.candidate_numbers, current.candidate_numbers),
+            (baseline.landmarks, current.landmarks),
+            (baseline.direction_used, current.direction_used),
+            (baseline.direction_assessment, current.direction_assessment),
+            (baseline.recording_start, current.recording_start),
+            (baseline.recording_end, current.recording_end),
+        )
+        if any(proposed != stored for proposed, stored in immutable):
+            raise RangeWalkHistoryError(
+                "Saved marker evidence and landmark mapping cannot be changed by "
+                "a metadata update."
+            )
 
     def _copy_and_hash(self, source: Path) -> tuple[Path, str]:
         descriptor, temporary_name = tempfile.mkstemp(
