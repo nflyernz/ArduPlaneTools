@@ -1,6 +1,6 @@
 # Range-Walk Comparison
 
-Range-Walk Comparison compares repeatable, transmitter-recorded EdgeTX CSV walks using five confirmed physical landmarks and four outward moving sections. The GUI currently provides two setup pages: **CSV & Markers** and **Walk 1 — Baseline & Landmarks**. Later walks and RF comparison remain available only through the interactive CLI workflow.
+Range-Walk Comparison compares repeatable, transmitter-recorded EdgeTX CSV walks using five confirmed physical landmarks and four outward moving sections. The GUI provides **CSV & Markers**, **Walk 1 — Baseline & Landmarks**, and a read-only **History & Comparison** page. Later-walk entry and RF comparison remain available only through the interactive CLI workflow.
 
 In the GUI, choose one EdgeTX CSV and use **Auto** to examine both higher and lower `Ele` deflections. Auto estimates a dominant sustained neutral value and sustained endpoints, runs the existing marker detector in both available directions, and prefers a direction only when it has a clearly stronger sequence of complete holds and neutral returns. It does not assume that five markers must exist.
 
@@ -14,11 +14,13 @@ On Page 2, describe the original receiver antenna installation and name five phy
 
 Optional RF Settings record the operator's configured TX power, packet rate, RF mode/band and dynamic-power state. Unknown settings are retained, with a warning that unknown or mismatched settings prevent later like-for-like RF comparison claims. Telemetry-reported TPWR or RFMD is not substituted for configured settings.
 
-**Save Walk 1 in session** validates and retains the source CSV, exact detected marker objects, chronological mapping, physical names, landmark 5 turnaround, antenna description and optional operator-entered RF settings in memory only. It writes no project or history file. Page navigation preserves the draft; changing the CSV, Auto/Inverse direction or marker detection invalidates a saved baseline tied to older evidence.
+**Save Walk 1** validates and stores the source CSV, exact detected marker objects, chronological mapping, physical names, landmark 5 turnaround, antenna description and optional operator-entered RF settings in versioned Range-Walk history. The original CSV is copied into managed evidence storage under its SHA-256 identity, so the baseline remains usable if the original is moved or deleted. Identical CSV evidence cannot create a second baseline record.
+
+Page 3 reloads saved Walk 1 baselines and validates their managed CSV copies. It shows provenance, landmarks, RF settings and missing-setting warnings. It is read-only and clearly reports that comparisons are not yet available. Moving between pages preserves the current draft; changing the CSV, Auto/Inverse direction or marker detection still invalidates the accepted in-memory baseline tied to older evidence.
 
 Preview candidates are not confirmed physical landmarks until the operator maps and saves them on Page 2. Loading one CSV does not calculate RF section evidence, infer distance or failsafe behavior, or compare antennas. Missing or zero-filled RF telemetry does not affect elevator marker detection.
 
-Walk 1 is always the original-antenna baseline. Later walks retain the same landmark order. Deliberate calibrated full elevator-down holds provide marker candidates, which the user confirms rather than the tool manufacturing missing landmarks. Stationary marker holds remain separate from moving sections.
+Walk 1 is always the original-antenna baseline. Every later walk must use the same five physical landmarks, the same landmark order, the same turnaround, the same walking route and the same RF settings. The receiver antenna arrangement is the variable being compared. Deliberate calibrated full elevator-down holds provide marker candidates, which the user confirms rather than the tool manufacturing missing landmarks. Stationary marker holds remain separate from moving sections.
 
 The report presents setup validity, marker mapping, eligible `1RSS`, `RQly`, and `RSNR` statistics, observed-time coverage, unavailable telemetry, and setting comparability. PNG output includes per-walk RF traces and baseline-referenced section P10 comparisons.
 

@@ -1,6 +1,6 @@
 # Range-Walk Comparison field-test procedure
 
-This procedure records repeatable transmitter-side evidence for comparing receiver antenna arrangements. The current GUI supports CSV and marker preview on Page 1 and an in-memory Walk 1 baseline with five mapped landmarks on Page 2. It does not yet process later walks or compare RF evidence.
+This procedure records repeatable transmitter-side evidence for comparing receiver antenna arrangements. The GUI supports CSV and marker preview on Page 1, durable Walk 1 baseline creation on Page 2, and read-only saved history on Page 3. It does not yet process later walks or compare RF evidence.
 
 ## Safe ground preparation
 
@@ -24,7 +24,7 @@ This procedure records repeatable transmitter-side evidence for comparing receiv
 3. Preserve the original CSV, antenna arrangement, configured RF settings and field notes, including the landmark names and safe turnaround.
 4. Detected holds are marker candidates. Confirm them against the field notes; do not manufacture a missing marker or map an uncertain candidate automatically.
 
-For later walks, repeat the same five landmarks in the same order, use the same turnaround and retain the same RF settings where possible. Sections are bounded by physical landmarks and must not be assumed to have equal distance.
+For every later walk, retain the same five physical landmarks, the same landmark order, the same turnaround, the same walking route and the same RF settings. The receiver antenna arrangement is the variable being compared. Sections are bounded by physical landmarks and must not be assumed to have equal distance.
 
 Missing or zero-filled telemetry is unavailable evidence, not measured poor signal. Do not infer range, failsafe behavior or an antenna winner from missing telemetry.
 
@@ -39,6 +39,6 @@ Missing or zero-filled telemetry is unavailable evidence, not measured poor sign
 7. Choose **Next: Walk 1 Setup**. Record the original antenna installation and five physical landmark names. Use the required landmark 5 name for the safe turnaround; there is no separate turnaround-description entry.
 8. With exactly five candidates, the GUI maps candidates 1–5 chronologically. If extra candidates exist, exclude them by selecting exactly five distinct candidates in increasing order without reordering them. If fewer than five exist, return to the field evidence rather than manufacturing a marker.
 9. Expand **RF Settings** to record configured TX power, packet rate, RF mode/band and dynamic TX power where known. Unknown values are allowed but prevent later like-for-like comparison claims. Do not infer configured values from telemetry TPWR or RFMD.
-10. Review the candidate onset, release and hold beside every named landmark, then choose **Save Walk 1 in session**. The saved baseline retains the exact Page 1 marker evidence and uses landmark 5 as the turnaround.
+10. Review the candidate onset, release and hold beside every named landmark, then choose **Save Walk 1**. The saved baseline retains the exact Page 1 marker evidence, uses landmark 5 as the turnaround and preserves a checksum-named copy of the original CSV.
 
-The GUI baseline is held in memory only. Moving between Page 1 and Page 2 preserves the current draft, while changing the CSV, Auto/Inverse direction or marker detection invalidates a saved baseline based on the earlier evidence. Closing the application discards it. Later walks, History, RF section comparison, graphs and antenna comparison remain outside this GUI slice.
+Page 3, **History & Comparison**, reloads validated saved baselines after APT restarts. It is read-only and does not yet provide later-walk entry or RF comparison. Moving between pages preserves the current draft, while changing the CSV, Auto/Inverse direction or marker detection invalidates the accepted in-memory baseline based on the earlier evidence. RF section comparison, graphs and antenna comparison remain outside this GUI slice.
