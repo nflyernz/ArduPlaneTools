@@ -227,7 +227,6 @@ def test_child_cannot_be_compared_against_different_parent(tmp_path):
         _compare(service, tmp_path, other, child)
 
 
-@pytest.mark.parametrize("damage", ("missing", "modified"))
 def test_graph_titles_use_radio_configuration_without_changing_evidence(
     monkeypatch, tmp_path
 ):
@@ -252,6 +251,7 @@ def test_graph_titles_use_radio_configuration_without_changing_evidence(
     assert len(result.graph_paths) == 3
 
 
+@pytest.mark.parametrize("damage", ("missing", "modified"))
 def test_missing_or_modified_managed_evidence_blocks_comparison(tmp_path, damage):
     store, service = _services(tmp_path)
     parent = _save_baseline(tmp_path, store)
