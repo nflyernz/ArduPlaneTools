@@ -134,7 +134,7 @@ def test_page3_navigation_preserves_page2_draft(qt_app, tmp_path, make_window):
     assert widget.candidate_combos[4].currentData() == 5
 
 
-def test_duplicate_save_reports_error_without_losing_valid_baseline(
+def test_unchanged_saved_baseline_cannot_start_duplicate_save(
     qt_app, tmp_path, make_window
 ):
     window = make_window()
@@ -144,13 +144,114 @@ def test_duplicate_save_reports_error_without_losing_valid_baseline(
     existing = widget.saved_baseline
     existing_summary = widget.baseline_summary.toPlainText()
 
+    assert not widget.save_baseline_button.isEnabled()
+    widget.save_baseline_button.click()
+
+    assert widget.saved_baseline is existing
+    assert "baseline saved" in widget.baseline_state_label.text()
+    assert widget.baseline_summary.toPlainText() == existing_summary
+
+
+def test_metadata_update_reuses_saved_identity_and_refreshes_history(
+    qt_app, tmp_path, make_window, history_service
+):
+    window = make_window()
+    widget = _prepare_baseline(qt_app, window, _session(tmp_path).path)
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    original = widget.persisted_record
+    assert original is not None
+
+    widget.walk1_label_edit.setText("Corrected comparison baseline")
+    widget.antenna_edit.setText(
+        "Receiver, diversity antennas, lower tray, fore-aft/crosswise"
+    )
+    widget.tx_power_edit.setText("250 mW")
+    assert widget.persisted_record is original
+    assert widget.save_baseline_button.text() == "Update saved Walk 1"
+    assert widget.save_baseline_button.isEnabled()
+    widget.save_baseline_button.click()
+    assert not widget.walk1_label_edit.isEnabled()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    updated = widget.persisted_record
+    assert updated is not None
+    assert updated.baseline_id == original.baseline_id
+    assert updated.created_at_utc == original.created_at_utc
+    assert updated.csv_sha256 == original.csv_sha256
+    assert updated.stored_csv_path == original.stored_csv_path
+    assert updated.candidates == original.candidates
+    assert updated.landmarks == original.landmarks
+    assert updated.landmark_names == original.landmark_names
+    assert updated.turnaround == original.turnaround
+    assert updated.label == "Corrected comparison baseline"
+    assert updated.settings.tx_power == "250 mW"
+    assert "baseline updated" in widget.baseline_state_label.text()
+    assert "Baseline radio configuration:" in widget.baseline_summary.toPlainText()
+    assert len(
+        RangeWalkHistoryStore(
+            history_service.history_path,
+            history_service.evidence_dir,
+        ).records
+    ) == 1
+
+    widget.baseline_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    report = widget.history_report.toPlainText()
+    assert "Corrected comparison baseline" in report
+    assert "Baseline radio configuration:" in report
+    assert "fore-aft/crosswise" in report
+
+
+def test_source_mutation_after_detection_is_rejected_and_requires_redetection(
+    qt_app, tmp_path, make_window, history_service
+):
+    source = _session(tmp_path).path
+    window = make_window()
+    widget = _prepare_baseline(qt_app, window, source)
+    source.write_text(source.read_text() + "mutated after detection\n")
+
     widget.save_baseline_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
-    assert widget.saved_baseline is existing
-    assert "save failed" in widget.baseline_state_label.text()
-    assert "already saved" in widget.baseline_state_label.text()
-    assert widget.baseline_summary.toPlainText() == existing_summary
+    assert widget.persisted_record is None
+    assert "detect markers again" in widget.baseline_state_label.text()
+    assert not history_service.history_path.exists()
+
+
+def test_newer_metadata_is_not_overwritten_by_completed_update(
+    qt_app, tmp_path, make_window, history_service
+):
+    started = threading.Event()
+    release = threading.Event()
+
+    class DelayedUpdateService(RangeWalkHistoryService):
+        def update(self, request):
+            started.set()
+            assert release.wait(2)
+            return super().update(request)
+
+    service = DelayedUpdateService(
+        history_path=history_service.history_path,
+        evidence_dir=history_service.evidence_dir,
+    )
+    window = make_window(service)
+    widget = _prepare_baseline(qt_app, window, _session(tmp_path).path)
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    widget.walk1_label_edit.setText("Submitted correction")
+    widget.save_baseline_button.click()
+    assert started.wait(1)
+    assert not widget.walk1_label_edit.isEnabled()
+    widget.walk1_label_edit.setText("Newer visible correction")
+    release.set()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    assert widget.walk1_label_edit.text() == "Newer visible correction"
+    assert widget.persisted_record.label == "Submitted correction"
+    assert widget.save_baseline_button.text() == "Update saved Walk 1"
+    assert "visible draft changed" in widget.baseline_state_label.text()
 
 
 def test_history_reports_corrupt_or_missing_managed_evidence(

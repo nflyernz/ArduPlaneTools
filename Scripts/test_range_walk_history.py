@@ -1,6 +1,7 @@
 """Portable persistence tests for Range-Walk Walk 1 baselines."""
 
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -44,12 +45,13 @@ def _baseline(tmp_path, name="walk.csv", content="csv evidence\n", offset=0):
         True,
         "Auto selected higher from complete sustained holds.",
         "preview",
+        fingerprint_csv(source),
     )
     return create_walk1_baseline(
         preview,
         (1, 2, 3, 4, 5),
         ("Gate", "Tree", "Fence", "Shed", "Far turnaround"),
-        "Original receiver antenna",
+        "Receiver and original antenna below fuselage",
         "Walk 1 baseline",
         WalkSettings("100 mW", "250 Hz", "2.4 GHz", "Off"),
     )
@@ -124,6 +126,108 @@ def test_multiple_distinct_baselines_do_not_overwrite_records(tmp_path):
         second.baseline_id,
     }
     assert len(list(store.evidence_dir.glob("*.csv"))) == 2
+
+
+def test_metadata_update_preserves_identity_and_immutable_evidence(tmp_path):
+    store = _store(tmp_path)
+    baseline = _baseline(tmp_path)
+    original = store.add_baseline(baseline)
+    proposed = replace(
+        baseline,
+        label="Corrected field label",
+        antenna="Receiver, two antennas, lower tray, orthogonal",
+        settings=WalkSettings("250 mW", "150 Hz", "2.4 GHz", "Off"),
+    )
+
+    updated = store.update_baseline_metadata(
+        original.baseline_id,
+        original,
+        proposed,
+    )
+
+    assert updated.label == "Corrected field label"
+    assert updated.antenna == "Receiver, two antennas, lower tray, orthogonal"
+    assert updated.settings == proposed.settings
+    for field in (
+        "baseline_id",
+        "created_at_utc",
+        "csv_sha256",
+        "stored_csv_path",
+        "candidates",
+        "candidate_numbers",
+        "landmarks",
+        "landmark_names",
+        "turnaround",
+        "direction_used",
+        "direction_assessment",
+    ):
+        assert getattr(updated, field) == getattr(original, field)
+    assert len(store.records) == 1
+    raw = json.loads(store.path.read_text())["baselines"][original.baseline_id]
+    assert raw["antenna"] == proposed.antenna
+    assert "revision" not in raw
+
+
+def test_metadata_update_rejects_unknown_immutable_and_stale_requests(tmp_path):
+    store = _store(tmp_path)
+    baseline = _baseline(tmp_path)
+    original = store.add_baseline(baseline)
+
+    with pytest.raises(RangeWalkHistoryError, match="Unknown"):
+        store.update_baseline_metadata("f" * 32, original, baseline)
+    with pytest.raises(RangeWalkHistoryError, match="cannot be changed"):
+        store.update_baseline_metadata(
+            original.baseline_id,
+            original,
+            replace(baseline, landmark_names=("A", "B", "C", "D", "E")),
+        )
+
+    updated = store.update_baseline_metadata(
+        original.baseline_id,
+        original,
+        replace(baseline, label="First correction"),
+    )
+    assert updated.label == "First correction"
+    with pytest.raises(RangeWalkHistoryError, match="changed since it was loaded"):
+        store.update_baseline_metadata(
+            original.baseline_id,
+            original,
+            replace(baseline, label="Stale correction"),
+        )
+
+
+def test_failed_metadata_update_preserves_existing_record(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    baseline = _baseline(tmp_path)
+    original = store.add_baseline(baseline)
+    history_bytes = store.path.read_bytes()
+
+    def fail(_records):
+        raise OSError("simulated metadata write failure")
+
+    monkeypatch.setattr(store, "_save", fail)
+    with pytest.raises(OSError, match="metadata write failure"):
+        store.update_baseline_metadata(
+            original.baseline_id,
+            original,
+            replace(baseline, label="Not persisted"),
+        )
+
+    assert store.path.read_bytes() == history_bytes
+    assert _store(tmp_path).records == (original,)
+
+
+def test_save_rejects_source_changed_since_marker_detection(tmp_path):
+    baseline = _baseline(tmp_path)
+    baseline.source_path.write_text("changed after detection\n")
+    store = _store(tmp_path)
+
+    with pytest.raises(RangeWalkHistoryError, match="detect markers again"):
+        store.add_baseline(baseline)
+
+    assert store.records == ()
+    assert not store.path.exists()
+    assert list(store.evidence_dir.iterdir()) == []
 
 
 def test_failed_history_write_leaves_no_partial_record_or_csv(tmp_path, monkeypatch):
