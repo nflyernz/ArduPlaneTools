@@ -88,6 +88,9 @@ class Walk1Baseline:
     candidate_numbers: tuple[int, ...]
     landmarks: tuple[LandmarkMarker, ...]
     direction_used: str
+    direction_assessment: str
+    recording_start: datetime
+    recording_end: datetime
 
 
 def create_walk1_baseline(
@@ -122,14 +125,17 @@ def create_walk1_baseline(
         candidate_numbers=numbers,
         landmarks=landmarks,
         direction_used=preview.direction_used,
+        direction_assessment=preview.assessment,
+        recording_start=preview.recording_start,
+        recording_end=preview.recording_end,
     )
 
 
 def format_walk1_baseline_summary(baseline: Walk1Baseline) -> str:
     """Format a compact saved-in-session baseline summary."""
     lines = [
-        "Walk 1 baseline saved in this session",
-        "=====================================",
+        "Walk 1 baseline",
+        "===============",
         f"Label: {baseline.label}",
         f"Source CSV: {baseline.source_path}",
         f"Original receiver antenna: {baseline.antenna}",
@@ -178,7 +184,7 @@ def format_walk1_baseline_summary(baseline: Walk1Baseline) -> str:
                 "comparison claim.",
             ]
         )
-    lines.append("This baseline is held in memory only; no file was written.")
+    lines.append("Validated baseline retains the exact confirmed marker evidence.")
     return "\n".join(lines)
 
 
