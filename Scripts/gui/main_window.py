@@ -45,7 +45,7 @@ from .pack_management_adapter import (
 from .pack_performance_widget import PackPerformanceController
 from .radio_link_adapter import analyse_radio_link_log
 from .radio_link_widget import RadioLinkController
-from .range_walk_widget import RangeWalkPreviewController
+from .range_walk_controller import RangeWalkPreviewController
 from .stall_adapter import analyse_stall_log
 from .takeoff_adapter import analyse_takeoff_log
 
