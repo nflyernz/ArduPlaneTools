@@ -1,7 +1,7 @@
 # Range-Walk glossary
 
-- **Walk 1 baseline** — The fixed original-antenna walk used for every comparison.
-- **Baseline radio configuration** — The operator's description of the Walk 1 receiver, antennas, placement and orientation. It is editable metadata; the stored version-1 field remains `antenna` for compatibility.
+- **Walk 1 baseline** — The first walk, establishing the fixed route, landmarks, turnaround and RF settings alongside its baseline radio configuration for subsequent comparisons.
+- **Baseline radio configuration** — The operator's description of the Walk 1 transmitter, receiver, antennas, placement and orientation. It is editable metadata; the stored version-1 field remains `antenna` for compatibility.
 - **Landmark** — One user-named physical position assigned to a detected candidate in chronological order.
 - **Turnaround** — The required name for landmark 5, where the outward measured route ends safely; it has no separate description field.
 - **Extra candidate** — A detected hold excluded from the five chronological landmark assignments, never moved out of recorded order.

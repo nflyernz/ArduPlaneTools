@@ -307,7 +307,8 @@ def test_range_walk_help_describes_baseline_scope_and_invalidation():
         "same turnaround",
         "same walking route",
         "same RF settings",
-        "receiver antenna arrangement is the variable",
+        "The radio configuration is the variable being tested.",
+        "Record exactly what changes between walks",
     ):
         assert required in readme
         assert required in procedure
