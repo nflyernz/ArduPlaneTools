@@ -13,7 +13,7 @@ This procedure records repeatable transmitter-side evidence for comparing receiv
 
 1. Begin with the transmitter powered down. Power it on using the intended model and start a fresh EdgeTX CSV-logging session for the test.
 2. Keep the recording within that transmitter power-on session. End the session when the transmitter is safely powered down; a recording after restart is a separate session and must not be combined as continuous evidence.
-3. Use the original receiver antenna installation for Walk 1. Walk 1 is the baseline for every later antenna comparison.
+3. Establish and record the Walk 1 **Baseline radio configuration**: the receiver, antennas, placement and orientation. Walk 1 is the baseline for every later antenna comparison.
 4. Walk 1 simultaneously establishes the route and its marker recordings. A separate reconnaissance walk is not required.
 5. Name five safe physical landmarks in fixed outward order. Landmark 5 is the safe turnaround; only the outward route to that point is measured.
 
@@ -36,9 +36,11 @@ Missing or zero-filled telemetry is unavailable evidence, not measured poor sign
 4. Use **Inverse** to inspect the opposite direction. If Auto cannot establish a preferred direction, it reports the ambiguity, chooses deterministically and still gives Inverse a deterministic opposite.
 5. The normal GUI workflow requires no manual neutral or near-down entry. Marker detection retains the existing 87.5% full-down threshold and minimum hold duration and uses a 33% neutral-return tolerance for the estimated neutral-to-endpoint span.
 6. Choose **Detect markers** and review the direction used, evidence assessment, candidate count, onset, release and duration. Candidate detection does not confirm the five physical landmarks.
-7. Choose **Next: Walk 1 Setup**. Record the original antenna installation and five physical landmark names. Use the required landmark 5 name for the safe turnaround; there is no separate turnaround-description entry.
+7. Choose **Next: Walk 1 Setup**. Record the **Baseline radio configuration**, describing the receiver, antennas, placement and orientation, and enter five physical landmark names. Use the required landmark 5 name for the safe turnaround; there is no separate turnaround-description entry.
 8. With exactly five candidates, the GUI maps candidates 1–5 chronologically. If extra candidates exist, exclude them by selecting exactly five distinct candidates in increasing order without reordering them. If fewer than five exist, return to the field evidence rather than manufacturing a marker.
 9. Expand **RF Settings** to record configured TX power, packet rate, RF mode/band and dynamic TX power where known. Unknown values are allowed but prevent later like-for-like comparison claims. Do not infer configured values from telemetry TPWR or RFMD.
-10. Review the candidate onset, release and hold beside every named landmark, then choose **Save Walk 1**. The saved baseline retains the exact Page 1 marker evidence, uses landmark 5 as the turnaround and preserves a checksum-named copy of the original CSV.
+10. Review the candidate onset, release and hold beside every named landmark, then choose **Save Walk 1**. The saved baseline retains the exact Page 1 marker evidence, uses landmark 5 as the turnaround and preserves a checksum-named copy of the original CSV. If the CSV contents changed after marker detection, saving is rejected and marker detection must be run again.
+
+In the same Page 2 session, correct the saved label, Baseline radio configuration or optional RF settings with **Update saved Walk 1**. This retains the saved evidence, baseline identity, five landmark mappings and detection provenance. Changing the CSV or detection evidence ends that update association. Page 3 remains read-only and is not a general editor for older baselines.
 
 Page 3, **History & Comparison**, reloads validated saved baselines after APT restarts. It is read-only and does not yet provide later-walk entry or RF comparison. Moving between pages preserves the current draft, while changing the CSV, Auto/Inverse direction or marker detection invalidates the accepted in-memory baseline based on the earlier evidence. RF section comparison, graphs and antenna comparison remain outside this GUI slice.
