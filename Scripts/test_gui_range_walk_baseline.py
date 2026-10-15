@@ -71,10 +71,10 @@ def test_exactly_five_candidates_map_chronologically_without_redetection():
     )
     assert baseline.settings == WalkSettings()
     summary = format_walk1_baseline_summary(baseline)
-    assert "Walk 1 baseline saved in this session" in summary
+    assert "Walk 1 baseline" in summary
     assert "TX power: Unknown" in summary
     assert "prevent a later like-for-like comparison claim" in summary
-    assert "no file was written" in summary
+    assert "exact confirmed marker evidence" in summary
 
 
 def test_extra_candidates_can_be_excluded_without_reordering():
@@ -285,13 +285,24 @@ def test_range_walk_help_describes_baseline_scope_and_invalidation():
 
     for text in (readme, procedure):
         assert "Walk 1 — Baseline & Landmarks" in text or "Walk 1 baseline" in text
-        assert "memory only" in text
         assert "extra candidates" in text
         assert "changing the CSV" in text
-    assert "Later walks and RF comparison" in readme
+    assert "Later-walk entry and RF comparison" in readme
     assert "does not yet process later walks" in procedure
     for text in (readme, glossary, procedure):
         assert "no separate" in text
         assert "landmark 5" in text.lower()
     assert "without reordering" in readme
     assert "Optional operator-entered" in glossary
+    for required in (
+        "same five physical landmarks",
+        "same landmark order",
+        "same turnaround",
+        "same walking route",
+        "same RF settings",
+        "receiver antenna arrangement is the variable",
+    ):
+        assert required in readme
+        assert required in procedure
+    assert "checksum-named copy" in procedure
+    assert "comparisons are not yet available" in readme
