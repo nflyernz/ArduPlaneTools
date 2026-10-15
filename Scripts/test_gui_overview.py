@@ -83,27 +83,23 @@ def test_every_overview_entry_describes_and_opens_its_module(qt_app, window):
         )
         assert button.minimumHeight() >= 84
         assert expected_descriptions[name] in button.description()
-        if name == "Range-Walk Comparison":
-            expected_connection = (
-                "CSV/marker preview available; comparison not yet connected"
+        expected_connection = (
+            "Connected to the GUI"
+            if name
+            in (
+                "Landing",
+                "Events",
+                "Battery",
+                "Battery Pack Management",
+                "Pack Performance",
+                "Radio Link",
+                "Range-Walk Comparison",
+                "AUTOTUNE",
+                "TAKEOFF",
+                "Stall",
             )
-        else:
-            expected_connection = (
-                "Connected to the GUI"
-                if name
-                in (
-                    "Landing",
-                    "Events",
-                    "Battery",
-                    "Battery Pack Management",
-                    "Pack Performance",
-                    "Radio Link",
-                    "AUTOTUNE",
-                    "TAKEOFF",
-                    "Stall",
-                )
-                else "Not yet connected to the GUI"
-            )
+            else "Not yet connected to the GUI"
+        )
         assert expected_connection in button.description()
 
         window.analysis_tabs.setCurrentIndex(0)

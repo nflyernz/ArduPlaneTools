@@ -131,7 +131,7 @@ def test_adapter_auto_detects_positive_and_negative_holds(
     assert f"Direction used: {expected_direction} ({sign}Ele)" in result.text
     assert "Marker candidates: 5" in result.text
     assert "not confirmed physical landmarks" in result.text
-    assert "CSV/marker preview only — comparison not yet connected" in result.text
+    assert "no RF comparison is performed on Page 1" in result.text
     assert "hold 2.000 s" in result.text
 
 

@@ -313,7 +313,8 @@ def test_range_walk_help_describes_baseline_scope_and_invalidation():
         assert required in readme
         assert required in procedure
     assert "checksum-named copy" in procedure
-    assert "comparisons are not yet available" in readme
+    assert "History & Comparison" in readme
+    assert "Like-for-like RF settings not established" in readme
     for text in (readme, glossary, procedure):
         assert "Baseline radio configuration" in text
     assert "Update saved Walk 1" in readme

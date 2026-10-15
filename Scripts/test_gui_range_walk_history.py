@@ -143,7 +143,7 @@ def test_page2_persists_and_reopened_page3_loads_history(
     assert "Preserved source CSV: Yes" in report
     assert "Radio-local recording:" in report
     assert "incomplete RF settings" in report
-    assert "Comparisons are not yet available" in report
+    assert "Use the Page 3 dashboard" in report
 
 
 def test_page3_navigation_preserves_page2_draft(qt_app, tmp_path, make_window):
@@ -300,7 +300,7 @@ def test_history_reports_corrupt_or_missing_managed_evidence(
     report = widget.history_report.toPlainText()
     assert "Range-Walk History Error" in report
     assert "Managed CSV is missing" in report
-    assert "Comparisons are not yet available" in report
+    assert "History validation failed" in widget.comparison_state.text()
 
 
 def test_stale_save_result_is_withheld_after_source_change(
@@ -544,7 +544,7 @@ def test_restarted_history_groups_additional_walk_under_parent(
     assert "Confirmed landmarks: 5/5" in report
     assert "Available complete sections: 4/4" in report
     assert "Evidence integrity: managed CSV checksum validated" in report
-    assert "Comparisons are not yet available" in report
+    assert "Use the Page 3 dashboard" in report
 
 
 def test_stale_additional_walk_result_does_not_replace_newer_visible_draft(
