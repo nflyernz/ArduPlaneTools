@@ -81,6 +81,7 @@ class MainWindow(QMainWindow):
         radio_link_csv_service=None,
         range_walk_adapter=None,
         range_walk_inspection_adapter=None,
+        range_walk_history_service=None,
     ):
         super().__init__()
         self._selected_log: Path | None = None
@@ -117,7 +118,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage,
         )
         self._range_walk = RangeWalkPreviewController(
-            range_walk_adapter, range_walk_inspection_adapter, self._start_worker,
+            range_walk_adapter, range_walk_inspection_adapter,
+            range_walk_history_service, self._start_worker,
             lambda: self._analysis_thread is not None,
             self.statusBar().showMessage,
         )
