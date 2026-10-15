@@ -119,6 +119,50 @@ def test_page3_selection_parent_change_and_refresh_lifecycle(
     assert not widget.compare_button.isEnabled()
 
 
+def test_default_window_size_keeps_comparison_controls_readable(
+    qt_app, make_window, comparison_data
+):
+    _store, _history, _comparison, parent, complete, _incomplete = comparison_data
+    window = make_window()
+    window.resize(1200, 780)
+    widget = _open_history(qt_app, window)
+    _select_baseline_and_walks(widget, parent.baseline_id, complete.walk_id)
+    qt_app.processEvents()
+
+    # Scroll the dashboard instead of squeezing its child widgets into 780px.
+    assert widget.comparison_scroll.verticalScrollBar().maximum() > 0
+    assert widget.comparison_walk_list.height() >= 112
+    assert widget.comparison_table.height() == 282
+    assert widget.graph_scroll.height() == 515
+    assert widget.graph_label.minimumHeight() == 480
+
+    assert widget.comparison_baseline_combo.currentText().startswith("Baseline — ")
+    assert parent.antenna in widget.comparison_baseline_combo.currentText()
+    tooltip = widget.comparison_baseline_combo.itemData(
+        widget.comparison_baseline_combo.currentIndex(), 3
+    )
+    assert parent.label in tooltip
+    assert parent.baseline_id in tooltip
+    child = widget.comparison_walk_list.item(0)
+    assert child.text().startswith("Comparison — ")
+    assert complete.antenna in child.text()
+    assert complete.label in child.toolTip()
+    assert complete.walk_id in child.toolTip()
+
+    widget.compare_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert widget.comparison_table.item(0, 1).text() == (
+        f"Baseline — {parent.antenna}"
+    )
+    assert widget.comparison_table.item(1, 1).text() == (
+        f"Comparison — {complete.antenna}"
+    )
+    assert widget.graph_combo.itemText(1).startswith("Baseline — ")
+    assert widget.graph_combo.itemText(2).startswith("Comparison — ")
+    assert f"Saved label: {parent.label}" in widget.comparison_metadata.toPlainText()
+    assert f"Saved label: {complete.label}" in widget.comparison_metadata.toPlainText()
+
+
 def test_comparison_table_metadata_warnings_and_graphs(
     qt_app, make_window, comparison_data
 ):

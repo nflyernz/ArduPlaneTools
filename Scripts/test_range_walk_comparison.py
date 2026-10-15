@@ -228,6 +228,30 @@ def test_child_cannot_be_compared_against_different_parent(tmp_path):
 
 
 @pytest.mark.parametrize("damage", ("missing", "modified"))
+def test_graph_titles_use_radio_configuration_without_changing_evidence(
+    monkeypatch, tmp_path
+):
+    import analyses.range_walk_persisted as persisted
+
+    store, service = _services(tmp_path)
+    parent = _save_baseline(tmp_path, store)
+    child = _save_walk(tmp_path, store, parent)
+    original = persisted.write_range_walk_graphs
+    graph_labels = []
+
+    def capture_graph_labels(walks, landmarks, output):
+        graph_labels.extend(walk.label for walk in walks)
+        return original(walks, landmarks, output)
+
+    monkeypatch.setattr(persisted, "write_range_walk_graphs", capture_graph_labels)
+    result = _compare(service, tmp_path, parent, child)
+
+    assert graph_labels == [parent.antenna, child.antenna]
+    assert result.walks[0].evidence.label == parent.label
+    assert result.walks[1].evidence.label == child.label
+    assert len(result.graph_paths) == 3
+
+
 def test_missing_or_modified_managed_evidence_blocks_comparison(tmp_path, damage):
     store, service = _services(tmp_path)
     parent = _save_baseline(tmp_path, store)
