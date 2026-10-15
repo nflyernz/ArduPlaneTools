@@ -143,7 +143,11 @@ def test_default_window_size_keeps_comparison_controls_readable(
     )
     assert parent.label in tooltip
     assert parent.baseline_id in tooltip
-    child = widget.comparison_walk_list.item(0)
+    child = next(
+        widget.comparison_walk_list.item(index)
+        for index in range(widget.comparison_walk_list.count())
+        if widget.comparison_walk_list.item(index).data(256) == complete.walk_id
+    )
     assert child.text().startswith("Comparison — ")
     assert complete.antenna in child.text()
     assert complete.label in child.toolTip()
