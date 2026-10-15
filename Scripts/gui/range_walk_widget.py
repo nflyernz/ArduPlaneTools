@@ -59,6 +59,8 @@ class RangeWalkPreviewWidget(QWidget):
         self._persisted_record: StoredWalk1Baseline | None = None
         self._persisted_walk: StoredAdditionalWalk | None = None
         self._history_records: dict[str, StoredWalk1Baseline] = {}
+        self._applied_parent_baseline_id: str | None = None
+        self._baseline_saved_dirty = False
         self._baseline_form_state = None
         self._current_walk_type = "baseline"
         self._persisted_dirty = False
@@ -697,7 +699,7 @@ class RangeWalkPreviewWidget(QWidget):
         self._update_controls()
 
     def show_persistence_error(self, message: str) -> None:
-        self.baseline_state_label.setText(f"Walk 1 save failed — {message}")
+        self.baseline_state_label.setText(f"Range-Walk save failed — {message}")
 
     def retain_persisted_identity_for_newer_draft(
         self,
@@ -761,6 +763,9 @@ class RangeWalkPreviewWidget(QWidget):
 
     def _draft_changed(self) -> None:
         self._draft_revision += 1
+        if self.walk_type_combo.currentData() == "additional":
+            self._update_controls()
+            return
         if self._persisted_record is not None:
             self._persisted_dirty = True
             self.baseline_state_label.setText(
@@ -846,10 +851,10 @@ class RangeWalkPreviewWidget(QWidget):
             "Saving…"
             if self._busy and self._busy_task == "save"
             else (
-                "Update saved Walk 1"
-                if self._persisted_record is not None and self._persisted_dirty
-                else "Save additional walk"
+                "Save additional walk"
                 if self.walk_type_combo.currentData() == "additional"
+                else "Update saved Walk 1"
+                if self._persisted_record is not None and self._persisted_dirty
                 else "Save Walk 1"
             )
         )
@@ -901,6 +906,3 @@ def _format_suggestion(value: float | None) -> str:
 
 def _direction_label(direction: str) -> str:
     return "higher (+Ele)" if direction == "higher" else "lower (-Ele)"
-    AdditionalWalk,
-    create_additional_walk,
-    format_additional_walk_summary,

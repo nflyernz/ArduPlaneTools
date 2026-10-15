@@ -212,6 +212,7 @@ class RangeWalkHistoryStore:
             raise RangeWalkHistoryError(
                 "Additional-walk RF settings must be inherited from its baseline."
             )
+        self._validate_managed_evidence(parent, parent.baseline_id)
         source = Path(walk.source_path).expanduser().resolve()
         if not source.is_file():
             raise RangeWalkHistoryError(f"Source CSV is unavailable: {source}")

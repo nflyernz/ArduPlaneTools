@@ -5,6 +5,7 @@ def configure_walk_type(widget) -> None:
     """Switch Page 2 between Walk 1 and additional-walk entry."""
     additional = widget.walk_type_combo.currentData() == "additional"
     if additional and widget._current_walk_type == "baseline":
+        widget._baseline_saved_dirty = widget._persisted_dirty
         widget._baseline_form_state = (
             widget.walk1_label_edit.text(),
             widget.antenna_edit.text(),
@@ -52,6 +53,12 @@ def configure_walk_type(widget) -> None:
         _show_walk1_form(widget)
     widget.baseline_summary.clear()
     widget._draft_changed()
+    if not additional and widget._persisted_record is not None:
+        widget._persisted_dirty = widget._baseline_saved_dirty
+        if not widget._persisted_dirty and widget._saved_baseline is not None:
+            widget.show_persisted_baseline(
+                widget._saved_baseline, widget._persisted_record
+            )
     widget._update_controls()
 
 
@@ -117,6 +124,15 @@ def apply_parent_baseline(widget) -> None:
     if widget.walk_type_combo.currentData() != "additional":
         return
     parent = widget._history_records.get(widget.parent_baseline_combo.currentData())
+    parent_id = parent.baseline_id if parent is not None else None
+    if parent_id != widget._applied_parent_baseline_id:
+        widget._applied_parent_baseline_id = parent_id
+        for position, combo in enumerate(widget.candidate_combos):
+            combo.blockSignals(True)
+            combo.setCurrentIndex(0)
+            combo.blockSignals(False)
+            widget._update_candidate_evidence(position)
+        widget._draft_changed()
     if parent is None:
         widget.parent_reference.setPlainText(
             "Select a validated saved Walk 1 baseline."
@@ -124,7 +140,14 @@ def apply_parent_baseline(widget) -> None:
         for field in widget.landmark_name_edits:
             field.clear()
             field.setReadOnly(True)
-        widget._draft_changed()
+        for field in (
+            widget.tx_power_edit,
+            widget.packet_rate_edit,
+            widget.rf_mode_edit,
+            widget.dynamic_power_edit,
+        ):
+            field.clear()
+            field.setReadOnly(True)
         return
     widget.parent_reference.setPlainText(_baseline_reference_text(parent))
     for position, (title, field, name) in enumerate(
@@ -155,7 +178,6 @@ def apply_parent_baseline(widget) -> None:
     ):
         field.setText(value)
         field.setReadOnly(True)
-    widget._draft_changed()
 
 
 def _baseline_reference_text(parent) -> str:
