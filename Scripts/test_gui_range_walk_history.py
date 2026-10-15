@@ -80,6 +80,33 @@ def _prepare_baseline(qt_app, window, source: Path):
     return widget
 
 
+def _save_baseline(qt_app, window, source: Path):
+    widget = _prepare_baseline(qt_app, window, source)
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert widget.persisted_record is not None
+    return widget.persisted_record
+
+
+def _prepare_additional(qt_app, window, source: Path, parent_id: str):
+    widget = window._range_walk.widget
+    assert window._range_walk.select_source(source)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    widget.detect_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    widget.next_button.click()
+    widget.walk_type_combo.setCurrentIndex(
+        widget.walk_type_combo.findData("additional")
+    )
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    widget.parent_baseline_combo.setCurrentIndex(
+        widget.parent_baseline_combo.findData(parent_id)
+    )
+    widget.walk1_label_edit.setText("Walk 2 — relocated receiver")
+    widget.antenna_edit.setText("Receiver relocated lower in fuselage")
+    return widget
+
+
 def test_page2_persists_and_reopened_page3_loads_history(
     qt_app, tmp_path, make_window, history_service
 ):
@@ -318,3 +345,247 @@ def test_stale_save_result_is_withheld_after_source_change(
             history_service.evidence_dir,
         ).records
     ) == 1
+
+
+def test_additional_walk_requires_explicit_mapping_and_persists_missing_landmark(
+    qt_app, tmp_path, make_window, history_service
+):
+    window = make_window()
+    parent = _save_baseline(
+        qt_app, window, _session(tmp_path, name="baseline.csv").path
+    )
+    source = _session(
+        tmp_path,
+        name="walk2.csv",
+        holds=(2, 8, 14, 20),
+    ).path
+    widget = _prepare_additional(qt_app, window, source, parent.baseline_id)
+
+    assert [combo.currentData() for combo in widget.candidate_combos] == [
+        None,
+        None,
+        None,
+        None,
+        None,
+    ]
+    assert all(field.isReadOnly() for field in widget.landmark_name_edits)
+    assert "Baseline ID:" in widget.parent_reference.toPlainText()
+    assert "Field landmark 5" in widget.parent_reference.toPlainText()
+    for combo, number in zip(widget.candidate_combos, (1, 2, None, 3, 4)):
+        combo.setCurrentIndex(combo.findData(number))
+
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    store = RangeWalkHistoryStore(
+        history_service.history_path, history_service.evidence_dir
+    )
+    assert len(store.records) == 1
+    assert len(store.walks) == 1
+    saved = store.walks[0]
+    assert saved.parent_baseline_id == parent.baseline_id
+    assert saved.candidate_numbers == (1, 2, None, 3, 4)
+    assert saved.settings == parent.settings
+    assert saved.confirmed_landmark_count == 4
+    assert saved.complete_section_count == 2
+    summary = widget.baseline_summary.toPlainText()
+    assert "Field landmark 3: Missing marker evidence" in summary
+    assert "Available complete sections: 2/4" in summary
+    assert not widget.save_baseline_button.isEnabled()
+
+
+def test_parent_selection_clears_mapping_but_same_parent_refresh_preserves_it(
+    qt_app, tmp_path, make_window
+):
+    window = make_window()
+    widget = _prepare_baseline(
+        qt_app, window, _session(tmp_path, name="parent1.csv").path
+    )
+    widget.tx_power_edit.setText("100 mW")
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    first = widget.persisted_record
+    assert first is not None
+
+    widget = _prepare_baseline(
+        qt_app, window, _session(tmp_path, name="parent2.csv", down=-1024).path
+    )
+    widget.tx_power_edit.setText("250 mW")
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    second = widget.persisted_record
+    assert second is not None
+
+    widget = _prepare_additional(
+        qt_app,
+        window,
+        _session(tmp_path, name="walk2.csv", holds=(2, 8, 14, 20)).path,
+        first.baseline_id,
+    )
+    for combo, number in zip(widget.candidate_combos, (1, 2, None, 3, 4)):
+        combo.setCurrentIndex(combo.findData(number))
+    selected = [1, 2, None, 3, 4]
+    assert [combo.currentData() for combo in widget.candidate_combos] == selected
+    assert widget.tx_power_edit.text() == "100 mW"
+
+    widget.baseline_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert [combo.currentData() for combo in widget.candidate_combos] == selected
+    widget.history_back_button.click()
+
+    widget.parent_baseline_combo.setCurrentIndex(
+        widget.parent_baseline_combo.findData(second.baseline_id)
+    )
+    assert [combo.currentData() for combo in widget.candidate_combos] == [None] * 5
+    assert second.baseline_id in widget.parent_reference.toPlainText()
+    assert widget.tx_power_edit.text() == "250 mW"
+
+    widget.parent_baseline_combo.setCurrentIndex(0)
+    assert [combo.currentData() for combo in widget.candidate_combos] == [None] * 5
+    assert all(not field.text() for field in widget.landmark_name_edits)
+    assert all(
+        not field.text()
+        for field in (
+            widget.tx_power_edit,
+            widget.packet_rate_edit,
+            widget.rf_mode_edit,
+            widget.dynamic_power_edit,
+        )
+    )
+    assert "Select a validated" in widget.parent_reference.toPlainText()
+
+
+def test_workflow_switch_preserves_saved_baseline_update_state(
+    qt_app, tmp_path, make_window
+):
+    window = make_window()
+    widget = _prepare_baseline(qt_app, window, _session(tmp_path).path)
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    saved = widget.persisted_record
+    assert saved is not None
+    assert not widget.save_baseline_button.isEnabled()
+
+    widget.walk_type_combo.setCurrentIndex(
+        widget.walk_type_combo.findData("additional")
+    )
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert widget.save_baseline_button.text() == "Save additional walk"
+    widget.walk_type_combo.setCurrentIndex(
+        widget.walk_type_combo.findData("baseline")
+    )
+    assert widget.persisted_record == saved
+    assert not widget.save_baseline_button.isEnabled()
+    assert "baseline saved" in widget.baseline_state_label.text()
+
+    widget.walk1_label_edit.setText("Corrected baseline label")
+    assert widget.save_baseline_button.text() == "Update saved Walk 1"
+    widget.walk_type_combo.setCurrentIndex(
+        widget.walk_type_combo.findData("additional")
+    )
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert widget.save_baseline_button.text() == "Save additional walk"
+    widget.walk_type_combo.setCurrentIndex(
+        widget.walk_type_combo.findData("baseline")
+    )
+    assert widget.walk1_label_edit.text() == "Corrected baseline label"
+    assert widget.save_baseline_button.text() == "Update saved Walk 1"
+    assert widget.save_baseline_button.isEnabled()
+
+
+def test_additional_save_failure_uses_range_walk_error_label(
+    qt_app, tmp_path, make_window, history_service
+):
+    window = make_window()
+    parent = _save_baseline(
+        qt_app, window, _session(tmp_path, name="parent.csv").path
+    )
+    source = _session(tmp_path, name="walk2.csv", down=-1024).path
+    widget = _prepare_additional(qt_app, window, source, parent.baseline_id)
+    for combo, number in zip(widget.candidate_combos, (1, 2, 3, 4, 5)):
+        combo.setCurrentIndex(combo.findData(number))
+    source.write_text(source.read_text() + "modified after detection\n")
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert "Range-Walk save failed" in widget.baseline_state_label.text()
+    assert "detect markers again" in widget.baseline_state_label.text()
+    assert not RangeWalkHistoryStore(
+        history_service.history_path, history_service.evidence_dir
+    ).walks
+
+
+def test_restarted_history_groups_additional_walk_under_parent(
+    qt_app, tmp_path, make_window
+):
+    window = make_window()
+    parent = _save_baseline(
+        qt_app, window, _session(tmp_path, name="baseline.csv").path
+    )
+    widget = _prepare_additional(
+        qt_app,
+        window,
+        _session(tmp_path, name="walk2.csv", down=-1024).path,
+        parent.baseline_id,
+    )
+    for combo, number in zip(widget.candidate_combos, (1, 2, 3, 4, 5)):
+        combo.setCurrentIndex(combo.findData(number))
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    reopened = make_window()
+    reopened_widget = reopened._range_walk.widget
+    reopened_widget.page1_history_button.click()
+    _wait_until(qt_app, lambda: reopened._analysis_thread is None)
+    report = reopened_widget.history_report.toPlainText()
+
+    assert parent.baseline_id in report
+    assert "Walk 2 — relocated receiver" in report
+    assert "Test radio configuration: Receiver relocated lower in fuselage" in report
+    assert "Confirmed landmarks: 5/5" in report
+    assert "Available complete sections: 4/4" in report
+    assert "Evidence integrity: managed CSV checksum validated" in report
+    assert "Comparisons are not yet available" in report
+
+
+def test_stale_additional_walk_result_does_not_replace_newer_visible_draft(
+    qt_app, tmp_path, make_window, history_service
+):
+    started = threading.Event()
+    release = threading.Event()
+
+    class DelayedWalkService(RangeWalkHistoryService):
+        def save_additional_walk(self, request):
+            started.set()
+            assert release.wait(2)
+            return super().save_additional_walk(request)
+
+    service = DelayedWalkService(
+        history_path=history_service.history_path,
+        evidence_dir=history_service.evidence_dir,
+    )
+    window = make_window(service)
+    parent = _save_baseline(
+        qt_app, window, _session(tmp_path, name="baseline.csv").path
+    )
+    widget = _prepare_additional(
+        qt_app,
+        window,
+        _session(tmp_path, name="walk2.csv", down=-1024).path,
+        parent.baseline_id,
+    )
+    for combo, number in zip(widget.candidate_combos, (1, 2, 3, 4, 5)):
+        combo.setCurrentIndex(combo.findData(number))
+
+    widget.save_baseline_button.click()
+    assert started.wait(1)
+    widget.walk1_label_edit.setText("Newer unsaved walk label")
+    release.set()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    assert widget.walk1_label_edit.text() == "Newer unsaved walk label"
+    assert "visible draft changed" in widget.baseline_state_label.text()
+    store = RangeWalkHistoryStore(
+        history_service.history_path, history_service.evidence_dir
+    )
+    assert len(store.walks) == 1
+    assert store.walks[0].label == "Walk 2 — relocated receiver"

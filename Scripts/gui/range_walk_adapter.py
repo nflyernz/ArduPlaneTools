@@ -14,7 +14,7 @@ from core.range_walk import (
     detect_markers,
     select_landmarks,
 )
-from core.range_walk_history import fingerprint_csv
+from core.range_walk_history import StoredWalk1Baseline, fingerprint_csv
 
 
 @dataclass(frozen=True)
@@ -94,6 +94,107 @@ class Walk1Baseline:
     recording_start: datetime
     recording_end: datetime
     source_sha256: str
+
+
+@dataclass(frozen=True)
+class AdditionalWalk:
+    """Validated later walk tied to one durable Walk 1 baseline."""
+
+    source_path: Path
+    parent_baseline_id: str
+    label: str
+    antenna: str
+    settings: WalkSettings
+    candidates: tuple[LandmarkMarker, ...]
+    candidate_numbers: tuple[int | None, ...]
+    landmarks: tuple[LandmarkMarker | None, ...]
+    direction_used: str
+    direction_assessment: str
+    recording_start: datetime
+    recording_end: datetime
+    source_sha256: str
+
+
+def create_additional_walk(
+    preview: RangeWalkPreviewResult,
+    parent: StoredWalk1Baseline,
+    candidate_numbers: tuple[int | None, ...],
+    antenna: str,
+    label: str,
+) -> AdditionalWalk:
+    """Validate an explicit later-walk mapping without redetecting markers."""
+    if not antenna.strip():
+        raise ValueError("Enter the test radio configuration")
+    landmarks = select_landmarks(
+        preview.markers,
+        candidate_numbers,
+        baseline=False,
+    )
+    return AdditionalWalk(
+        source_path=preview.source_path,
+        parent_baseline_id=parent.baseline_id,
+        label=label.strip() or f"Additional walk — {preview.source_path.stem}",
+        antenna=antenna.strip(),
+        settings=parent.settings,
+        candidates=preview.markers,
+        candidate_numbers=candidate_numbers,
+        landmarks=landmarks,
+        direction_used=preview.direction_used,
+        direction_assessment=preview.assessment,
+        recording_start=preview.recording_start,
+        recording_end=preview.recording_end,
+        source_sha256=preview.source_sha256,
+    )
+
+
+def format_additional_walk_summary(
+    walk: AdditionalWalk,
+    parent: StoredWalk1Baseline,
+) -> str:
+    """Format later-walk mapping and explicitly missing landmark evidence."""
+    lines = [
+        "Additional range walk",
+        "=====================",
+        f"Label: {walk.label}",
+        f"Parent baseline: {parent.label} ({parent.baseline_id})",
+        f"Source CSV: {walk.source_path}",
+        f"Test radio configuration: {walk.antenna}",
+        "Landmark evidence",
+    ]
+    for position, (name, number, marker) in enumerate(
+        zip(parent.landmark_names, walk.candidate_numbers, walk.landmarks),
+        start=1,
+    ):
+        suffix = " — turnaround" if position == 5 else ""
+        if marker is None:
+            lines.append(f"  {position}. {name}{suffix}: Missing marker evidence")
+        else:
+            lines.append(
+                f"  {position}. {name}{suffix}: candidate {number}; "
+                f"{marker.onset.time().isoformat(timespec='milliseconds')} to "
+                f"{marker.release.time().isoformat(timespec='milliseconds')}"
+            )
+    missing = [
+        name
+        for name, marker in zip(parent.landmark_names, walk.landmarks)
+        if marker is None
+    ]
+    complete_sections = sum(
+        first is not None
+        and second is not None
+        and first.release < second.onset
+        for first, second in zip(walk.landmarks, walk.landmarks[1:])
+    )
+    lines.extend(
+        [
+            f"Confirmed landmarks: {5 - len(missing)}/5",
+            "Missing landmarks: " + (", ".join(missing) if missing else "None"),
+            f"Available complete sections: {complete_sections}/4",
+            "Missing marker evidence does not prove that the physical landmark "
+            "was not visited.",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def create_walk1_baseline(

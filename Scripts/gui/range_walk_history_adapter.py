@@ -1,4 +1,4 @@
-"""Qt-independent persistence service for Range-Walk GUI baselines."""
+"""Qt-independent persistence service for Range-Walk GUI history."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,10 +7,11 @@ from core.range_walk_history import (
     DEFAULT_EVIDENCE_DIR,
     DEFAULT_HISTORY_PATH,
     RangeWalkHistoryStore,
+    StoredAdditionalWalk,
     StoredWalk1Baseline,
 )
 
-from .range_walk_adapter import Walk1Baseline
+from .range_walk_adapter import AdditionalWalk, Walk1Baseline
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,23 @@ class UpdateWalk1Request:
 
 
 @dataclass(frozen=True)
+class SaveAdditionalWalkRequest:
+    """One later walk persistence request tied to its detected evidence."""
+
+    walk: AdditionalWalk
+    request_id: int
+
+
+@dataclass(frozen=True)
+class SavedAdditionalWalkResult:
+    """Completed later-walk persistence result returned by the worker."""
+
+    walk: AdditionalWalk
+    record: StoredAdditionalWalk
+    request_id: int
+
+
+@dataclass(frozen=True)
 class RangeWalkHistoryRequest:
     """Request a fresh validated history view."""
 
@@ -52,6 +70,7 @@ class RangeWalkHistoryResult:
     """Validated stored records and their presentation."""
 
     records: tuple[StoredWalk1Baseline, ...]
+    walks: tuple[StoredAdditionalWalk, ...]
     request_id: int
     text: str
 
@@ -84,26 +103,38 @@ class RangeWalkHistoryService:
         )
         return SavedWalk1Result(request.baseline, record, request.request_id, True)
 
+    def save_additional_walk(
+        self, request: SaveAdditionalWalkRequest
+    ) -> SavedAdditionalWalkResult:
+        """Persist one additional walk and its original CSV evidence."""
+        record = self._store().add_additional_walk(request.walk)
+        return SavedAdditionalWalkResult(request.walk, record, request.request_id)
+
     def history(self, request: RangeWalkHistoryRequest) -> RangeWalkHistoryResult:
         """Reload and validate every durable baseline and managed CSV."""
-        records = self._store().validated_records()
+        records, walks = self._store().validated_history()
         return RangeWalkHistoryResult(
             records,
+            walks,
             request.request_id,
-            format_range_walk_history(records),
+            format_range_walk_history(records, walks),
         )
 
     def _store(self):
         return self.store_factory(self.history_path, self.evidence_dir)
 
 
-def format_range_walk_history(records: tuple[StoredWalk1Baseline, ...]) -> str:
+def format_range_walk_history(
+    records: tuple[StoredWalk1Baseline, ...],
+    walks: tuple[StoredAdditionalWalk, ...] = (),
+) -> str:
     """Format saved Walk 1 records without suggesting completed comparisons."""
     lines = [
         "Range-Walk History & Comparison",
         "================================",
-        "Saved Walk 1 baselines are read-only in this view.",
+        "Saved baselines and associated later walks are read-only in this view.",
         "Comparisons are not yet available.",
+        "RF performance comparisons, rankings and graphs remain deferred.",
     ]
     if not records:
         lines.extend(["", "No saved Walk 1 baselines."])
@@ -148,4 +179,52 @@ def format_range_walk_history(records: tuple[StoredWalk1Baseline, ...]) -> str:
                 "  Warning: incomplete RF settings cannot support a later "
                 "like-for-like comparison claim."
             )
+        associated = [
+            walk for walk in walks if walk.parent_baseline_id == record.baseline_id
+        ]
+        if not associated:
+            lines.append("  Additional walks: None")
+            continue
+        lines.append("  Additional walks:")
+        for walk in associated:
+            lines.extend(_format_additional_walk(record, walk))
     return "\n".join(lines)
+
+
+def _format_additional_walk(
+    baseline: StoredWalk1Baseline,
+    walk: StoredAdditionalWalk,
+) -> list[str]:
+    missing = [
+        name
+        for name, marker in zip(baseline.landmark_names, walk.landmarks)
+        if marker is None
+    ]
+    lines = [
+        f"    {walk.label}",
+        f"      Walk ID: {walk.walk_id}",
+        f"      Parent baseline: {walk.parent_baseline_id}",
+        f"      Test radio configuration: {walk.antenna}",
+        f"      Original CSV: {walk.original_csv_filename}",
+        f"      Managed CSV SHA-256: {walk.csv_sha256}",
+        f"      Preserved source CSV: {walk.stored_csv_path.name}",
+        "      Radio-local recording: "
+        f"{walk.recording_start.isoformat(sep=' ', timespec='seconds')} to "
+        f"{walk.recording_end.isoformat(sep=' ', timespec='seconds')}",
+        f"      Saved at UTC: {walk.created_at_utc}",
+        f"      Confirmed landmarks: {walk.confirmed_landmark_count}/5",
+        "      Missing landmarks: " + (", ".join(missing) if missing else "None"),
+        f"      Available complete sections: {walk.complete_section_count}/4",
+        "      Configured RF settings inherited from baseline:",
+        f"        TX power: {walk.settings.tx_power or 'Unknown'}",
+        f"        Packet rate: {walk.settings.packet_rate or 'Unknown'}",
+        f"        RF mode/band: {walk.settings.rf_mode or 'Unknown'}",
+        f"        Dynamic TX power: {walk.settings.dynamic_power or 'Unknown'}",
+        "      Evidence integrity: managed CSV checksum validated",
+    ]
+    for position, (name, marker) in enumerate(
+        zip(baseline.landmark_names, walk.landmarks), start=1
+    ):
+        status = "confirmed" if marker is not None else "missing marker evidence"
+        lines.append(f"        Landmark {position} — {name}: {status}")
+    return lines
