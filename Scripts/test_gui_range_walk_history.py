@@ -394,6 +394,126 @@ def test_additional_walk_requires_explicit_mapping_and_persists_missing_landmark
     assert not widget.save_baseline_button.isEnabled()
 
 
+def test_parent_selection_clears_mapping_but_same_parent_refresh_preserves_it(
+    qt_app, tmp_path, make_window
+):
+    window = make_window()
+    widget = _prepare_baseline(
+        qt_app, window, _session(tmp_path, name="parent1.csv").path
+    )
+    widget.tx_power_edit.setText("100 mW")
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    first = widget.persisted_record
+    assert first is not None
+
+    widget = _prepare_baseline(
+        qt_app, window, _session(tmp_path, name="parent2.csv", down=-1024).path
+    )
+    widget.tx_power_edit.setText("250 mW")
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    second = widget.persisted_record
+    assert second is not None
+
+    widget = _prepare_additional(
+        qt_app,
+        window,
+        _session(tmp_path, name="walk2.csv", holds=(2, 8, 14, 20)).path,
+        first.baseline_id,
+    )
+    for combo, number in zip(widget.candidate_combos, (1, 2, None, 3, 4)):
+        combo.setCurrentIndex(combo.findData(number))
+    selected = [1, 2, None, 3, 4]
+    assert [combo.currentData() for combo in widget.candidate_combos] == selected
+    assert widget.tx_power_edit.text() == "100 mW"
+
+    widget.baseline_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert [combo.currentData() for combo in widget.candidate_combos] == selected
+    widget.history_back_button.click()
+
+    widget.parent_baseline_combo.setCurrentIndex(
+        widget.parent_baseline_combo.findData(second.baseline_id)
+    )
+    assert [combo.currentData() for combo in widget.candidate_combos] == [None] * 5
+    assert second.baseline_id in widget.parent_reference.toPlainText()
+    assert widget.tx_power_edit.text() == "250 mW"
+
+    widget.parent_baseline_combo.setCurrentIndex(0)
+    assert [combo.currentData() for combo in widget.candidate_combos] == [None] * 5
+    assert all(not field.text() for field in widget.landmark_name_edits)
+    assert all(
+        not field.text()
+        for field in (
+            widget.tx_power_edit,
+            widget.packet_rate_edit,
+            widget.rf_mode_edit,
+            widget.dynamic_power_edit,
+        )
+    )
+    assert "Select a validated" in widget.parent_reference.toPlainText()
+
+
+def test_workflow_switch_preserves_saved_baseline_update_state(
+    qt_app, tmp_path, make_window
+):
+    window = make_window()
+    widget = _prepare_baseline(qt_app, window, _session(tmp_path).path)
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    saved = widget.persisted_record
+    assert saved is not None
+    assert not widget.save_baseline_button.isEnabled()
+
+    widget.walk_type_combo.setCurrentIndex(
+        widget.walk_type_combo.findData("additional")
+    )
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert widget.save_baseline_button.text() == "Save additional walk"
+    widget.walk_type_combo.setCurrentIndex(
+        widget.walk_type_combo.findData("baseline")
+    )
+    assert widget.persisted_record == saved
+    assert not widget.save_baseline_button.isEnabled()
+    assert "baseline saved" in widget.baseline_state_label.text()
+
+    widget.walk1_label_edit.setText("Corrected baseline label")
+    assert widget.save_baseline_button.text() == "Update saved Walk 1"
+    widget.walk_type_combo.setCurrentIndex(
+        widget.walk_type_combo.findData("additional")
+    )
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert widget.save_baseline_button.text() == "Save additional walk"
+    widget.walk_type_combo.setCurrentIndex(
+        widget.walk_type_combo.findData("baseline")
+    )
+    assert widget.walk1_label_edit.text() == "Corrected baseline label"
+    assert widget.save_baseline_button.text() == "Update saved Walk 1"
+    assert widget.save_baseline_button.isEnabled()
+
+
+def test_additional_save_failure_uses_range_walk_error_label(
+    qt_app, tmp_path, make_window, history_service
+):
+    window = make_window()
+    parent = _save_baseline(
+        qt_app, window, _session(tmp_path, name="parent.csv").path
+    )
+    source = _session(tmp_path, name="walk2.csv", down=-1024).path
+    widget = _prepare_additional(qt_app, window, source, parent.baseline_id)
+    for combo, number in zip(widget.candidate_combos, (1, 2, 3, 4, 5)):
+        combo.setCurrentIndex(combo.findData(number))
+    source.write_text(source.read_text() + "modified after detection\n")
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert "Range-Walk save failed" in widget.baseline_state_label.text()
+    assert "detect markers again" in widget.baseline_state_label.text()
+    assert not RangeWalkHistoryStore(
+        history_service.history_path, history_service.evidence_dir
+    ).walks
+
+
 def test_restarted_history_groups_additional_walk_under_parent(
     qt_app, tmp_path, make_window
 ):

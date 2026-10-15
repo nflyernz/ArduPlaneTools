@@ -253,6 +253,25 @@ def test_corrupt_parent_reference_is_rejected(tmp_path):
         _store(tmp_path)
 
 
+@pytest.mark.parametrize("damage", ("missing", "modified"))
+def test_corrupt_parent_evidence_blocks_additional_walk_save(tmp_path, damage):
+    store = _store(tmp_path)
+    parent = store.add_baseline(_baseline(tmp_path))
+    walk = _walk(tmp_path, parent)
+    history_bytes = store.path.read_bytes()
+    if damage == "missing":
+        parent.stored_csv_path.unlink()
+    else:
+        parent.stored_csv_path.write_text("corrupt managed CSV")
+
+    with pytest.raises(RangeWalkHistoryError, match="Managed CSV.*missing|checksum mismatch"):
+        store.add_additional_walk(walk)
+
+    assert store.path.read_bytes() == history_bytes
+    assert store.walks == ()
+    assert not (store.evidence_dir / f"{walk.source_sha256}.csv").exists()
+
+
 def test_baseline_metadata_update_keeps_child_inherited_settings_consistent(tmp_path):
     store = _store(tmp_path)
     baseline = _baseline(tmp_path)
