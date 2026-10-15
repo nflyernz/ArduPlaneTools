@@ -1,6 +1,6 @@
 # Range-Walk Comparison field-test procedure
 
-This procedure records repeatable transmitter-side evidence for comparing radio configurations. The GUI supports CSV and marker preview on Page 1, durable Walk 1 baseline and additional-walk entry on Page 2, and read-only saved history on Page 3. It does not yet calculate or present RF comparisons.
+This procedure records repeatable transmitter-side evidence for comparing radio configurations. The GUI supports CSV and marker preview on Page 1, durable Walk 1 baseline and additional-walk entry on Page 2, and on-demand RF comparison and read-only saved history on Page 3.
 
 ## Safe ground preparation
 
@@ -47,4 +47,10 @@ For a later recording, detect candidates on Page 1 and select **Record an additi
 
 Analytical acceptance of an incomplete marker record does not relax the field procedure. Every field walk must still repeat all five physical landmarks, the same route and the same safe turnaround with the same configured RF settings. A missing recorded marker does not establish that the physical landmark was not visited.
 
-Page 3, **History & Comparison**, reloads validated saved baselines and groups associated later walks after APT restarts. It is read-only and reports confirmed/missing marker evidence and the number of sections having both adjacent boundaries. Moving between pages preserves the current draft, while changing the CSV, Auto/Inverse direction or marker detection invalidates accepted in-memory evidence based on the earlier source. RF section calculations, comparison reports, rankings and graphs remain outside this GUI slice.
+Page 3, **History & Comparison**, reloads validated saved baselines and their associated later walks after APT restarts. Select the Walk 1 baseline and one or more of its later walks, then choose **Compare**. APT verifies managed CSV identities, uses the exact stored marker boundaries, and calculates only sections having both adjacent boundaries. Missing landmark boundaries remain distinct from valid sections with unavailable RF telemetry.
+
+Review the configuration warning, section table and graph previews. Unknown settings still permit RF evidence to be shown, but do not support a like-for-like claim. Export only the currently selected PNG when needed; export does not alter the managed CSV or history.
+
+A like-for-like comparison requires matching RF settings, valid landmark evidence, and consistent TX and RX antenna orientation and test conditions. Only the radio configuration being deliberately tested should change. Antenna orientation may be the deliberate test variable, but record it precisely and do not claim that APT verified physical placement or environmental consistency.
+
+Moving between pages preserves the current draft, while changing the CSV, Auto/Inverse direction or marker detection invalidates accepted in-memory evidence based on the earlier source. The comparison does not rank configurations, infer range or failsafe behaviour, or treat missing telemetry as measured low signal.

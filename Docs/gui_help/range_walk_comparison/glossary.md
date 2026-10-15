@@ -10,7 +10,7 @@
 - **RF Settings** — Optional operator-entered TX power, packet rate, RF mode/band and dynamic-power state retained for later comparability checks.
 - **Managed CSV** — The checksum-named preserved copy of the original transmitter recording owned by a saved baseline.
 - **Update saved Walk 1** — Corrects the saved label, Baseline radio configuration or optional RF settings while retaining the original evidence identity and landmark mapping.
-- **History & Comparison** — The read-only GUI page grouping validated saved baselines and associated additional walks; RF comparisons are not yet available there.
+- **History & Comparison** — The GUI dashboard for selecting one saved baseline and one or more of its associated walks, calculating RF evidence, previewing graphs and reviewing secondary read-only history.
 - **Missing marker evidence** — An explicit missing assignment for a physical landmark in a later walk. It does not prove that the operator failed to visit that landmark.
 - **Complete section** — A moving section whose two adjacent landmark markers are both present and chronologically valid. A missing landmark makes each touching section unavailable.
 - **Moving section** — Release of marker N to onset of marker N+1; five landmarks define four sections.
@@ -21,3 +21,6 @@
 - **P10** — Lower-tail 10th percentile of eligible logged values.
 - **Observed-time coverage** — Portion of section time represented by usable observations; it is not RF refresh freshness.
 - **Unavailable telemetry** — Missing/placeholder RF evidence excluded from numeric statistics.
+- **Like-for-like RF settings not established** — The measurements remain visible, but configured and telemetry-reported evidence does not support a qualified equal-settings comparison.
+- **Managed evidence integrity** — The saved CSV path and SHA-256 content identity were validated before comparison. This does not verify field conditions.
+- **Radio configuration** — The operator's recorded transmitter, receiver, antenna placement and orientation. An orientation change can be the deliberate test variable; APT does not infer it from telemetry.
