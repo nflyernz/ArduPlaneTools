@@ -246,9 +246,9 @@ def test_connected_tab_has_no_generic_analyse_or_stall_dispatch(
     widget = _open_and_wait(qt_app, window)
     page = window.analysis_tabs.currentWidget()
 
-    assert "Connected to the GUI" in window.overview_buttons[
+    assert window.overview_buttons[
         "Pack Performance"
-    ].description()
+    ].description() == "Compare battery-pack performance across logs."
     assert [
         button
         for button in page.findChildren(QPushButton)

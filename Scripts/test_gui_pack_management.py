@@ -119,9 +119,9 @@ def test_management_has_no_analyse_button_and_cannot_dispatch_stall(
     qt_app.processEvents()
     page = window.analysis_tabs.currentWidget()
 
-    assert "Connected to the GUI" in window.overview_buttons[
+    assert window.overview_buttons[
         "Battery Pack Management"
-    ].description()
+    ].description() == "Manage pack identities and log associations."
     assert [
         button
         for button in page.findChildren(QPushButton)

@@ -15,6 +15,21 @@ import gui_app
 from gui import ANALYSIS_TABS, MainWindow
 
 
+VISIBLE_TAB_LABELS = (
+    "Overview",
+    "Battery Analysis",
+    "Battery Pack Management",
+    "Pack Performance",
+    "TAKEOFF",
+    "Landing",
+    "AUTOTUNE",
+    "Stall",
+    "Radio Link",
+    "Range-Walk Comparison",
+    "Events",
+)
+
+
 @pytest.fixture
 def window(qt_app):
     subject = MainWindow()
@@ -73,7 +88,7 @@ def test_expected_analysis_tabs_are_present_in_order(window):
         window.analysis_tabs.tabText(index)
         for index in range(window.analysis_tabs.count())
     )
-    assert labels == ("Overview", *ANALYSIS_TABS)
+    assert labels == VISIBLE_TAB_LABELS
 
 
 @pytest.mark.parametrize("filename", ("flight.bin", "flight.BIN"))
@@ -187,7 +202,10 @@ def test_tab_switching_updates_visible_module_context(qt_app, window):
     assert window.analysis_tabs.currentWidget().isVisible()
     report = window.report_for("Range-Walk Comparison").toPlainText()
     assert "Range-Walk CSV / marker preview" in report
-    assert "CSV/marker preview ready; comparison not connected" in (
+    assert (
+        "CSV preview, saved baselines and additional-walk preparation ready; "
+        "RF comparison not connected"
+    ) in (
         window.statusBar().currentMessage()
     )
 

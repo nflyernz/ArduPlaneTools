@@ -221,9 +221,9 @@ def test_bin_is_required_and_radio_button_dispatches_only_radio_link(
     assert radio_calls == [selected]
     assert stall_calls == []
     assert widget.report.toPlainText() == "summary"
-    assert "Connected to the GUI" in window.overview_buttons[
+    assert window.overview_buttons[
         "Radio Link"
-    ].description()
+    ].description() == "Inspect radio-link quality and failsafe evidence."
     page = window.analysis_tabs.currentWidget()
     assert len(
         [

@@ -394,10 +394,14 @@ def test_close_waits_for_active_battery_worker(qt_app, make_window, tmp_path):
     _wait_until(qt_app, lambda: not window.isVisible())
 
 
-def test_overview_marks_battery_connected_and_navigates(qt_app, make_window):
+def test_overview_labels_battery_analysis_and_navigates_by_internal_key(
+    qt_app,
+    make_window,
+):
     window = make_window(lambda _path: "unused")
 
-    assert "Connected to the GUI" in window.overview_buttons[
+    assert window.overview_buttons["Battery"].text() == "Battery Analysis"
+    assert "Connected to the GUI" not in window.overview_buttons[
         "Battery"
     ].description()
     window.overview_buttons["Battery"].click()

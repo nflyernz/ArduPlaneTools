@@ -285,12 +285,12 @@ def test_close_waits_for_active_landing_worker(qt_app, make_window, tmp_path):
     _wait_until(qt_app, lambda: not window.isVisible())
 
 
-def test_overview_marks_landing_connected_and_navigates(qt_app, make_window):
+def test_overview_describes_landing_and_navigates(qt_app, make_window):
     window = make_window(lambda _path: "unused")
 
-    assert "Connected to the GUI" in window.overview_buttons[
+    assert window.overview_buttons[
         "Landing"
-    ].description()
+    ].description() == "Review approach, preflare, flare and landing evidence."
     window.overview_buttons["Landing"].click()
     qt_app.processEvents()
 

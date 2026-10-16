@@ -320,12 +320,12 @@ def test_close_waits_for_active_events_worker(qt_app, make_window, tmp_path):
     _wait_until(qt_app, lambda: not window.isVisible())
 
 
-def test_overview_marks_events_connected_and_navigates(qt_app, make_window):
+def test_overview_describes_events_and_navigates(qt_app, make_window):
     window = make_window(lambda _path: "unused")
 
-    assert "Connected to the GUI" in window.overview_buttons[
+    assert window.overview_buttons[
         "Events"
-    ].description()
+    ].description() == "Inspect the chronological flight event timeline."
     window.overview_buttons["Events"].click()
     qt_app.processEvents()
 
