@@ -35,6 +35,7 @@ from .module_catalog import (
     EXECUTABLE_ANALYSES as _EXECUTABLE_ANALYSES,
     MODULE_DESCRIPTIONS as _MODULE_DESCRIPTIONS,
     OVERVIEW_SECTIONS as _OVERVIEW_SECTIONS,
+    PACK_ID_PLACEHOLDER as _PACK_ID_PLACEHOLDER,
     connection_status,
     display_label,
 )
@@ -59,9 +60,9 @@ ANALYSIS_TABS = (
     "Landing",
     "AUTOTUNE",
     "Stall",
+    "Events",
     "Radio Link",
     "Range-Walk Comparison",
-    "Events",
 )
 
 
@@ -137,7 +138,6 @@ class MainWindow(QMainWindow):
         self.landing_analyse_button: QPushButton | None = None
         self.events_analyse_button: QPushButton | None = None
         self.battery_analyse_button: QPushButton | None = None
-        self.battery_read_only_notice: QLabel | None = None
         self.pack_selected_bin_value: QLabel | None = None
         self.pack_association_value: QLabel | None = None
         self.pack_assign_combo: QComboBox | None = None
@@ -423,16 +423,6 @@ class MainWindow(QMainWindow):
             action_layout.addWidget(analyse_button)
         layout.addLayout(action_layout)
 
-        if name == "Battery":
-            self.battery_read_only_notice = QLabel(
-                "<b>Read-only Battery Analysis</b><br>"
-                "Analyses the selected BIN without changing Pack IDs, log "
-                "associations or battery history. Use the Battery Pack "
-                "Management tab for tracking and explicit history recording."
-            )
-            self.battery_read_only_notice.setWordWrap(True)
-            layout.addWidget(self.battery_read_only_notice)
-
         if name == "Battery Pack Management":
             self._create_pack_management_controls(layout)
 
@@ -473,15 +463,16 @@ class MainWindow(QMainWindow):
         self.pack_association_value = QLabel("Unseen")
         source_form.addRow("Source:", self.pack_selected_bin_value)
         source_form.addRow("Association:", self.pack_association_value)
-        source_form.addRow(
-            "Scope:",
-            QLabel("The association applies to the entire source BIN."),
-        )
+        source_form.addRow(QLabel("Pack associations apply to the entire BIN log."))
         layout.addWidget(source_group)
 
         assignment_group = QGroupBox("Assign existing Pack ID")
         assignment_layout = QHBoxLayout(assignment_group)
         self.pack_assign_combo = QComboBox()
+        self.pack_assign_combo.addItem(_PACK_ID_PLACEHOLDER, None)
+        self.pack_assign_combo.currentIndexChanged.connect(
+            self._update_analysis_controls
+        )
         self.pack_assign_button = QPushButton("Assign selected BIN")
         self.pack_assign_button.clicked.connect(self.assign_existing_pack)
         assignment_layout.addWidget(self.pack_assign_combo, 1)
@@ -502,6 +493,10 @@ class MainWindow(QMainWindow):
         rename_group = QGroupBox("Rename existing Pack ID")
         rename_form = QFormLayout(rename_group)
         self.pack_rename_combo = QComboBox()
+        self.pack_rename_combo.addItem(_PACK_ID_PLACEHOLDER, None)
+        self.pack_rename_combo.currentIndexChanged.connect(
+            self._update_analysis_controls
+        )
         self.pack_rename_edit = QLineEdit()
         self.pack_rename_edit.setPlaceholderText("Replacement Pack ID")
         self.pack_rename_edit.textChanged.connect(self._update_analysis_controls)
@@ -511,7 +506,9 @@ class MainWindow(QMainWindow):
         rename_form.addRow("Replacement:", self.pack_rename_edit)
         rename_form.addRow(
             "Effect:",
-            QLabel("Updates every associated BIN identity using this Pack ID."),
+            QLabel(
+                "Updates the Pack ID in every saved BIN association that uses it."
+            ),
         )
         rename_form.addRow(self.pack_rename_button)
         layout.addWidget(rename_group)
@@ -519,7 +516,10 @@ class MainWindow(QMainWindow):
         history_group = QGroupBox("Record AUTO takeoff history")
         history_layout = QHBoxLayout(history_group)
         history_layout.addWidget(
-            QLabel("Explicitly record supported AUTO takeoff evidence from this BIN."),
+            QLabel(
+                "<b>Effect:</b> Adds supported AUTO takeoff data from this BIN "
+                "to the assigned pack's history."
+            ),
             1,
         )
         self.pack_record_history_button = QPushButton("Record history")
@@ -529,61 +529,25 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _context_message(name: str) -> str:
-        if name == "Range-Walk Comparison":
-            source_note = (
-                "This workflow uses EdgeTX CSV recordings; the shared BIN "
-                "selection does not apply."
-            )
-        elif name == "Landing":
-            return (
-                "Landing\n\n"
-                "Select a BIN log above, then choose Analyse.\n\n"
-                "Reports use the existing Landing evidence pipeline."
-            )
-        elif name == "Events":
-            return (
-                "Events\n\n"
-                "Select a BIN log above, then choose Analyse.\n\n"
-                "Reports use the existing Event Timeline evidence pipeline."
-            )
-        elif name == "Battery":
-            return (
-                "Battery Analysis\n\n"
-                "Select a BIN log above, then choose Analyse.\n\n"
-                "Reports use the existing Battery evidence pipeline without "
-                "changing pack tracking or history."
-            )
-        elif name == "Battery Pack Management":
+        if name == "Battery Pack Management":
             return (
                 "Battery Pack Management\n\n"
+                f"{_MODULE_DESCRIPTIONS[name]}\n\n"
                 "Select a BIN log to load its persistent association. Changes "
                 "and history recording occur only after explicit confirmation."
             )
-        elif name == "AUTOTUNE":
-            return (
-                "AUTOTUNE\n\n"
-                "Select a BIN log above, then choose Analyse.\n\n"
-                "Reports use the existing AUTOTUNE evidence pipeline."
-            )
-        elif name == "TAKEOFF":
-            return (
-                "TAKEOFF\n\n"
-                "Select a BIN log above, then choose Analyse.\n\n"
-                "Reports use the existing TAKEOFF evidence pipeline."
-            )
-        elif name == "Stall":
-            return (
-                "Stall\n\n"
-                "Select a BIN log above, then choose Analyse.\n\n"
-                "Reports use the existing Stall evidence pipeline."
-            )
-        else:
-            source_note = "Select a BIN log above to establish the shared source."
-        return (
-            f"{name}\n\n"
-            f"{source_note}\n\n"
-            "Analysis execution is not connected in GUI Phase 1."
+        message = (
+            f"{display_label(name)}\n\n"
+            f"{_MODULE_DESCRIPTIONS[name]}\n\n"
+            "Select a BIN log above, then choose Analyse."
         )
+        if name == "Battery":
+            message += (
+                "\n\nThis analysis is read-only. Battery pack identities, log "
+                "associations and history are managed separately under Battery "
+                "Pack Management."
+            )
+        return message
 
     def _request_pack_lookup(self) -> None:
         """Resolve the current BIN association without writing persistence."""
@@ -609,7 +573,9 @@ class MainWindow(QMainWindow):
         state = self._current_pack_state()
         if state is None or self.pack_assign_combo is None:
             return
-        pack_id = self.pack_assign_combo.currentText()
+        pack_id = self.pack_assign_combo.currentData()
+        if not isinstance(pack_id, str):
+            return
         if (
             state.association.state is LogPackState.TRACKED
             and state.association.pack_id == pack_id
@@ -668,7 +634,9 @@ class MainWindow(QMainWindow):
             or self.pack_rename_edit is None
         ):
             return
-        old_id = self.pack_rename_combo.currentText()
+        old_id = self.pack_rename_combo.currentData()
+        if not isinstance(old_id, str):
+            return
         new_id = self.pack_rename_edit.text().strip()
         if not new_id:
             self._show_pack_message("Enter a replacement Pack ID.", error=True)
@@ -764,10 +732,12 @@ class MainWindow(QMainWindow):
 
         for combo in (self.pack_assign_combo, self.pack_rename_combo):
             if combo is not None:
-                current = selected_pack_id or combo.currentText()
+                current = selected_pack_id or combo.currentData()
                 combo.clear()
-                combo.addItems(pack_ids)
-                index = combo.findText(current)
+                combo.addItem(_PACK_ID_PLACEHOLDER, None)
+                for pack_id in pack_ids:
+                    combo.addItem(pack_id, pack_id)
+                index = combo.findData(current)
                 if index >= 0:
                     combo.setCurrentIndex(index)
         if message is not None:
@@ -840,7 +810,12 @@ class MainWindow(QMainWindow):
             else ()
         )
         if self.pack_assign_button is not None:
-            self.pack_assign_button.setEnabled(pack_ready and bool(pack_ids))
+            selected = (
+                self.pack_assign_combo.currentData()
+                if self.pack_assign_combo is not None
+                else None
+            )
+            self.pack_assign_button.setEnabled(pack_ready and selected in pack_ids)
         if self.pack_create_button is not None:
             self.pack_create_button.setEnabled(
                 pack_ready
@@ -848,9 +823,14 @@ class MainWindow(QMainWindow):
                 and bool(self.pack_create_edit.text().strip())
             )
         if self.pack_rename_button is not None:
+            selected = (
+                self.pack_rename_combo.currentData()
+                if self.pack_rename_combo is not None
+                else None
+            )
             self.pack_rename_button.setEnabled(
                 pack_ready
-                and bool(pack_ids)
+                and selected in pack_ids
                 and self.pack_rename_edit is not None
                 and bool(self.pack_rename_edit.text().strip())
             )

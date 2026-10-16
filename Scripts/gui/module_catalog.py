@@ -14,9 +14,7 @@ MODULE_DESCRIPTIONS = {
         "Review FBWA slow-flight and probable attitude-departure evidence."
     ),
     "Radio Link": "Inspect radio-link quality and failsafe evidence.",
-    "Range-Walk Comparison": (
-        "Review saved range-walk recordings and comparison preparation."
-    ),
+    "Range-Walk Comparison": "Compare repeatable radio range-walk recordings.",
     "Events": "Inspect the chronological flight event timeline.",
 }
 
@@ -29,12 +27,17 @@ OVERVIEW_SECTIONS = (
         "Battery & packs",
         ("Battery", "Battery Pack Management", "Pack Performance"),
     ),
-    ("Flight analysis", ("TAKEOFF", "Landing", "AUTOTUNE", "Stall")),
+    (
+        "Flight analysis",
+        ("TAKEOFF", "Landing", "AUTOTUNE", "Stall", "Events"),
+    ),
     (
         "Radio & diagnostics",
-        ("Radio Link", "Range-Walk Comparison", "Events"),
+        ("Radio Link", "Range-Walk Comparison"),
     ),
 )
+
+PACK_ID_PLACEHOLDER = "— Select Pack ID —"
 
 CONNECTED_ANALYSES = frozenset(
     (
