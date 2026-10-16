@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QStackedWidget,
     QVBoxLayout,
@@ -79,14 +80,6 @@ class RangeWalkPreviewWidget(QWidget):
         page1_layout.setContentsMargins(0, 0, 0, 0)
         self.pages.addWidget(page1)
 
-        notice = QLabel(
-            "<b>CSV/marker preview only — comparison not yet connected</b><br>"
-            "Candidates are calibrated elevator holds, not confirmed landmarks. "
-            "The shared aircraft BIN selection does not apply."
-        )
-        notice.setWordWrap(True)
-        page1_layout.addWidget(notice)
-        self.preview_notice = notice
         source_layout = QHBoxLayout()
         source_layout.addWidget(QLabel("EdgeTX CSV:"))
         self.source_path_edit = QLineEdit()
@@ -99,23 +92,28 @@ class RangeWalkPreviewWidget(QWidget):
         self.choose_button.clicked.connect(choose_source)
         source_layout.addWidget(self.choose_button)
         page1_layout.addLayout(source_layout)
-        detection_group = QGroupBox("Elevator marker direction")
+        detection_group = QGroupBox()
         detection_layout = QVBoxLayout(detection_group)
+        direction_heading = QLabel("Elevator marker direction")
+        direction_heading.setObjectName("rangeWalkDirectionHeading")
+        direction_heading_font = direction_heading.font()
+        direction_heading_font.setBold(True)
+        direction_heading.setFont(direction_heading_font)
+        detection_layout.addWidget(direction_heading)
+        self.direction_heading = direction_heading
         guidance = QLabel(
-            "Auto compares complete sustained holds and neutral returns in both "
-            "Ele directions. Use Inverse to inspect the opposite direction."
+            "Choose the marker direction here; Detect markers runs detection. "
+            "Automatic compares sustained holds and neutral returns in both "
+            "Ele directions."
         )
         guidance.setWordWrap(True)
         detection_layout.addWidget(guidance)
         self.calibration_guidance = guidance
         mode_layout = QHBoxLayout()
-        mode_layout.addWidget(QLabel("Detection:"))
-        self.auto_button = QPushButton("Auto")
+        self.auto_button = QRadioButton("Automatic (recommended)")
         self.auto_button.setObjectName("rangeWalkAutoDirection")
-        self.auto_button.setCheckable(True)
-        self.inverse_button = QPushButton("Inverse")
+        self.inverse_button = QRadioButton("Opposite direction")
         self.inverse_button.setObjectName("rangeWalkInverseDirection")
-        self.inverse_button.setCheckable(True)
         self.mode_group = QButtonGroup(self)
         self.mode_group.setExclusive(True)
         self.mode_group.addButton(self.auto_button)
@@ -154,10 +152,7 @@ class RangeWalkPreviewWidget(QWidget):
         self.report.setObjectName("range_walk_preview_report")
         self.report.setReadOnly(True)
         self.report.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.report.setPlainText(
-            "Range-Walk CSV / marker preview\n\n"
-            "Choose one EdgeTX CSV, then use Auto or Inverse marker detection."
-        )
+        self.report.setPlainText("No CSV inspection or marker detection run yet.")
         page1_layout.addWidget(self.report, 1)
         self._build_baseline_page()
         self._build_history_page()
@@ -818,11 +813,16 @@ class RangeWalkPreviewWidget(QWidget):
         else:
             suggestions = self._inspection.calibration
             neutral = _format_suggestion(suggestions.neutral)
+            mode = (
+                "Opposite direction"
+                if self.inverse_button.isChecked()
+                else "Automatic"
+            )
             text = (
                 f"Sustained neutral: {neutral}; higher endpoint: "
                 f"{_format_suggestion(suggestions.high)}; lower endpoint: "
                 f"{_format_suggestion(suggestions.low)}. {suggestions.explanation} "
-                f"Mode: {'Inverse' if self.inverse_button.isChecked() else 'Auto'}."
+                f"Mode: {mode}."
             )
         self.suggestion_label.setText(text)
 
@@ -895,7 +895,11 @@ class RangeWalkPreviewWidget(QWidget):
         elif self._inspection is None:
             state = "CSV selected — observed Ele range is not yet available."
         else:
-            mode = "Inverse" if self.inverse_button.isChecked() else "Auto"
+            mode = (
+                "Opposite direction"
+                if self.inverse_button.isChecked()
+                else "Automatic"
+            )
             state = f"Ready to detect marker candidates in {mode} mode."
         self.state_label.setText(state)
 

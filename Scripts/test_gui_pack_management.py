@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
 
 from core.battery_pack_store import (
     BatteryPackStore,
@@ -93,14 +93,41 @@ def test_management_starts_read_only_without_packs_or_selected_bin(
     service = _service(tmp_path)
     window = make_window(service)
     window.show_analysis_tab("Battery Pack Management")
+    page_text = "\n".join(
+        label.text()
+        for label in window.analysis_tabs.currentWidget().findChildren(QLabel)
+    )
 
     assert window.pack_selected_bin_value.text() == "No BIN selected"
     assert window.pack_association_value.text() == "Unseen"
-    assert window.pack_assign_combo.count() == 0
+    assert window.pack_assign_combo.count() == 1
+    assert window.pack_assign_combo.currentText() == "— Select Pack ID —"
+    assert window.pack_assign_combo.currentData() is None
+    assert window.pack_rename_combo.currentText() == "— Select Pack ID —"
+    assert window.pack_rename_combo.currentData() is None
     assert not window.pack_assign_button.isEnabled()
     assert not window.pack_create_button.isEnabled()
     assert not window.pack_rename_button.isEnabled()
     assert not window.pack_record_history_button.isEnabled()
+    assert "Manage pack identities and log associations." in page_text
+    assert (
+        "Select a BIN log above to view or manage its pack association."
+        in page_text
+    )
+    assert "Pack associations apply to the entire BIN log." in page_text
+    assert (
+        "Updates the Pack ID in every saved BIN association that uses it."
+        in page_text
+    )
+    assert (
+        "Adds supported AUTO takeoff data from this BIN to the assigned pack's "
+        "history."
+        in page_text
+    )
+    assert "Explicitly record supported AUTO takeoff evidence" not in page_text
+    assert window.report_for("Battery Pack Management").toPlainText() == (
+        "No management operation run yet."
+    )
     assert not (tmp_path / "packs.json").exists()
     assert not (tmp_path / "history.json").exists()
 
@@ -119,9 +146,9 @@ def test_management_has_no_analyse_button_and_cannot_dispatch_stall(
     qt_app.processEvents()
     page = window.analysis_tabs.currentWidget()
 
-    assert "Connected to the GUI" in window.overview_buttons[
+    assert window.overview_buttons[
         "Battery Pack Management"
-    ].description()
+    ].description() == "Manage pack identities and log associations."
     assert [
         button
         for button in page.findChildren(QPushButton)
@@ -218,10 +245,15 @@ def test_confirmation_cancellation_leaves_persistent_bytes_unchanged(
 
     monkeypatch.setattr(window, "_confirm_pack_action", cancel)
 
+    assert not window.pack_assign_button.isEnabled()
+    window.pack_assign_combo.setCurrentText("Pack A")
+    assert window.pack_assign_button.isEnabled()
     window.pack_assign_button.click()
     window.pack_create_edit.setText("Pack B")
     window.pack_create_button.click()
+    window.pack_rename_combo.setCurrentText("Pack A")
     window.pack_rename_edit.setText("Pack C")
+    assert window.pack_rename_button.isEnabled()
     window.pack_rename_button.click()
 
     assert window._analysis_thread is None
@@ -229,6 +261,9 @@ def test_confirmation_cancellation_leaves_persistent_bytes_unchanged(
 
     window.set_selected_log(seed)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert window.pack_association_value.text() == "Tracked — Pack A"
+    assert window.pack_assign_combo.currentData() is None
+    assert window.pack_rename_combo.currentData() is None
     assert window.pack_record_history_button.isEnabled()
     window.pack_record_history_button.click()
 
@@ -242,6 +277,45 @@ def test_confirmation_cancellation_leaves_persistent_bytes_unchanged(
     assert "every associated BIN identity" in confirmation_text
     assert "Source BIN: seed.bin" in confirmation_text
     assert "Tracked Pack ID: Pack A" in confirmation_text
+
+
+def test_pack_selectors_reject_placeholder_and_retain_intentional_selection(
+    tmp_path,
+    qt_app,
+    make_window,
+    monkeypatch,
+):
+    service = _service(tmp_path)
+    seed = _bin(tmp_path, "seed.bin", b"seed")
+    selected = _bin(tmp_path, "selected.bin", b"selected")
+    service.create_and_assign(service.lookup(seed), "Pack A")
+    window = make_window(service)
+    window.show_analysis_tab("Battery Pack Management")
+    window.set_selected_log(selected)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    confirmations = []
+    monkeypatch.setattr(
+        window,
+        "_confirm_pack_action",
+        lambda *args: confirmations.append(args) or True,
+    )
+
+    window.pack_rename_edit.setText("Pack B")
+    assert window.pack_assign_combo.currentData() is None
+    assert window.pack_rename_combo.currentData() is None
+    assert not window.pack_assign_button.isEnabled()
+    assert not window.pack_rename_button.isEnabled()
+    window.assign_existing_pack()
+    window.rename_pack()
+    assert confirmations == []
+
+    window.pack_assign_combo.setCurrentText("Pack A")
+    window.pack_rename_combo.setCurrentText("Pack A")
+    window._refresh_pack_management_view()
+    assert window.pack_assign_combo.currentData() == "Pack A"
+    assert window.pack_rename_combo.currentData() == "Pack A"
+    assert window.pack_assign_button.isEnabled()
+    assert window.pack_rename_button.isEnabled()
 
 
 def test_write_failure_preserves_prior_store_bytes(tmp_path, monkeypatch):
@@ -355,6 +429,8 @@ def test_confirmed_assignment_refreshes_controls_without_history_write(
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
     assert window.pack_association_value.text() == "Unseen"
+    assert window.pack_assign_combo.currentData() is None
+    window.pack_assign_combo.setCurrentText("Pack A")
     window.pack_assign_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
@@ -403,6 +479,7 @@ def test_real_yes_confirmation_persists_rename_and_refreshes_both_dropdowns(
     assert reloaded.association_for(fingerprint_log(matching)).pack_id == "50S-PC1"
     for combo in (window.pack_assign_combo, window.pack_rename_combo):
         assert [combo.itemText(index) for index in range(combo.count())] == [
+            "— Select Pack ID —",
             "LIPO-3900-01",
             "50S-PC1",
             "LIPO-2600-01",

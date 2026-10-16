@@ -11,6 +11,8 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
+from PySide6.QtWidgets import QLabel
+
 import analyses.battery as battery_analysis_module
 from core.flight_window import FlightWindow
 from core.log_reader import UnsupportedFirmwareError
@@ -246,24 +248,26 @@ def test_adapter_never_uses_pack_persistence_and_leaves_data_unchanged(
     assert "fingerprint_log" not in adapter_module.__dict__
 
 
-def test_battery_button_and_permanent_read_only_notice(
-    make_window, qt_app, tmp_path
-):
+def test_battery_button_and_header_read_only_note(make_window, qt_app, tmp_path):
     window = make_window(lambda _path: "Battery report")
     window.show_analysis_tab("Battery")
     qt_app.processEvents()
 
     assert not window.battery_analyse_button.isEnabled()
-    assert window.battery_read_only_notice.isVisible()
-    notice = window.battery_read_only_notice.text()
-    assert "Read-only Battery Analysis" in notice
-    assert "without changing Pack IDs, log associations or battery history" in notice
+    page_text = "\n".join(
+        label.text()
+        for label in window.analysis_tabs.currentWidget().findChildren(QLabel)
+    )
+    assert "Examine battery consumption" in page_text
+    assert "This analysis is read-only." in page_text
+    assert "Battery Pack Management" in page_text
+    assert window.report_for("Battery").toPlainText() == "No analysis run yet."
 
     _select_existing_bin(window, tmp_path, "valid.BIN")
     assert window.battery_analyse_button.isEnabled()
 
 
-def test_battery_runs_off_thread_blocks_other_analyses_and_keeps_notice(
+def test_battery_runs_off_thread_and_blocks_other_analyses(
     qt_app, make_window, tmp_path
 ):
     started = threading.Event()
@@ -309,8 +313,6 @@ def test_battery_runs_off_thread_blocks_other_analyses_and_keeps_notice(
     ):
         assert not button.isEnabled()
     assert window.battery_analyse_button.text() == "Analysing…"
-    assert window.battery_read_only_notice.isVisible()
-
     window.start_battery_analysis()
     window.start_events_analysis()
     window.start_landing_analysis()
@@ -325,7 +327,6 @@ def test_battery_runs_off_thread_blocks_other_analyses_and_keeps_notice(
 
     assert worker_threads[0] != main_thread
     assert "No valid battery analysis" in window.report_for("Battery").toPlainText()
-    assert window.battery_read_only_notice.isVisible()
     assert window.battery_analyse_button.isEnabled()
 
 
@@ -394,17 +395,25 @@ def test_close_waits_for_active_battery_worker(qt_app, make_window, tmp_path):
     _wait_until(qt_app, lambda: not window.isVisible())
 
 
-def test_overview_marks_battery_connected_and_navigates(qt_app, make_window):
+def test_overview_labels_battery_analysis_and_navigates_by_internal_key(
+    qt_app,
+    make_window,
+):
     window = make_window(lambda _path: "unused")
 
-    assert "Connected to the GUI" in window.overview_buttons[
+    assert window.overview_buttons["Battery"].text() == "Battery Analysis"
+    assert "Connected to the GUI" not in window.overview_buttons[
         "Battery"
     ].description()
     window.overview_buttons["Battery"].click()
     qt_app.processEvents()
 
     assert window.current_analysis == "Battery"
-    assert "without changing pack tracking or history" in window.report_for(
-        "Battery"
-    ).toPlainText()
+    page_text = "\n".join(
+        label.text()
+        for label in window.analysis_tabs.currentWidget().findChildren(QLabel)
+    )
+    assert "This analysis is read-only." in page_text
+    assert "Battery Pack Management" in page_text
+    assert window.report_for("Battery").toPlainText() == "No analysis run yet."
     assert "ready" in window.statusBar().currentMessage()

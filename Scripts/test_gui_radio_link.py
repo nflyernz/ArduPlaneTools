@@ -210,6 +210,10 @@ def test_bin_is_required_and_radio_button_dispatches_only_radio_link(
     widget = window._radio_link.widget
 
     assert not widget.analyse_button.isEnabled()
+    assert widget.report.toPlainText() == "No analysis run yet."
+    assert widget.candidate_hint.text() == (
+        "Analyse a BIN before selecting optional EdgeTX CSV evidence."
+    )
     window._radio_link.request_analysis()
     assert "Select a BIN log" in widget.report.toPlainText()
 
@@ -221,9 +225,9 @@ def test_bin_is_required_and_radio_button_dispatches_only_radio_link(
     assert radio_calls == [selected]
     assert stall_calls == []
     assert widget.report.toPlainText() == "summary"
-    assert "Connected to the GUI" in window.overview_buttons[
+    assert window.overview_buttons[
         "Radio Link"
-    ].description()
+    ].description() == "Inspect radio-link quality and failsafe evidence."
     page = window.analysis_tabs.currentWidget()
     assert len(
         [
@@ -232,7 +236,8 @@ def test_bin_is_required_and_radio_button_dispatches_only_radio_link(
             if button.text() == "Analyse"
         ]
     ) == 1
-    assert "EdgeTX CSV" in widget.bin_only_notice.text()
+    assert "Aircraft and transmitter logs" in widget.bin_only_notice.text()
+    assert "does not change the aircraft results" in widget.bin_only_notice.text()
 
 
 def test_nonexistent_selected_source_is_rejected_before_dispatch(

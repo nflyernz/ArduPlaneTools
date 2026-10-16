@@ -34,8 +34,10 @@ from .landing_adapter import analyse_landing_log
 from .module_catalog import (
     EXECUTABLE_ANALYSES as _EXECUTABLE_ANALYSES,
     MODULE_DESCRIPTIONS as _MODULE_DESCRIPTIONS,
-    connection_description,
+    OVERVIEW_SECTIONS as _OVERVIEW_SECTIONS,
+    PACK_ID_PLACEHOLDER as _PACK_ID_PLACEHOLDER,
     connection_status,
+    display_label,
 )
 from .pack_management_adapter import (
     BatteryPackManagementService,
@@ -51,16 +53,16 @@ from .takeoff_adapter import analyse_takeoff_log
 
 
 ANALYSIS_TABS = (
-    "Landing",
-    "Events",
     "Battery",
     "Battery Pack Management",
     "Pack Performance",
     "TAKEOFF",
+    "Landing",
     "AUTOTUNE",
+    "Stall",
+    "Events",
     "Radio Link",
     "Range-Walk Comparison",
-    "Stall",
 )
 
 
@@ -136,7 +138,6 @@ class MainWindow(QMainWindow):
         self.landing_analyse_button: QPushButton | None = None
         self.events_analyse_button: QPushButton | None = None
         self.battery_analyse_button: QPushButton | None = None
-        self.battery_read_only_notice: QLabel | None = None
         self.pack_selected_bin_value: QLabel | None = None
         self.pack_association_value: QLabel | None = None
         self.pack_assign_combo: QComboBox | None = None
@@ -180,7 +181,10 @@ class MainWindow(QMainWindow):
         self.analysis_tabs.tabBar().setExpanding(False)
         self.analysis_tabs.addTab(self._create_overview_page(), "Overview")
         for name in ANALYSIS_TABS:
-            self.analysis_tabs.addTab(self._create_analysis_page(name), name)
+            self.analysis_tabs.addTab(
+                self._create_analysis_page(name),
+                display_label(name),
+            )
         self.analysis_tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.analysis_tabs, 1)
 
@@ -210,8 +214,9 @@ class MainWindow(QMainWindow):
 
     @property
     def current_analysis(self) -> str:
-        """Return the visible analysis context."""
-        return self.analysis_tabs.tabText(self.analysis_tabs.currentIndex())
+        """Return the stable identifier for the visible analysis context."""
+        index = self.analysis_tabs.currentIndex()
+        return "Overview" if index <= 0 else ANALYSIS_TABS[index - 1]
 
     def report_for(self, analysis: str) -> QPlainTextEdit:
         """Return the read-only report surface for an analysis tab."""
@@ -341,28 +346,44 @@ class MainWindow(QMainWindow):
         subtitle = QLabel("Evidence-based ArduPlane flight-log analysis")
         layout.addWidget(subtitle)
 
-        modules = QGridLayout()
-        modules.setHorizontalSpacing(10)
-        modules.setVerticalSpacing(6)
-        for index, name in enumerate(ANALYSIS_TABS):
-            connection = connection_description(name)
-            button = QCommandLinkButton(
-                name,
-                f"{_MODULE_DESCRIPTIONS[name]}\n{connection}",
-            )
-            button.setObjectName(
-                f"overview_{name.lower().replace(' ', '_').replace('-', '_')}"
-            )
-            button_font = button.font()
-            button_font.setPointSizeF(button_font.pointSizeF() + 2.0)
-            button.setFont(button_font)
-            button.setMinimumHeight(84)
-            button.clicked.connect(
-                lambda _checked=False, analysis=name: self.show_analysis_tab(analysis)
-            )
-            modules.addWidget(button, index // 2, index % 2)
-            self.overview_buttons[name] = button
-        layout.addLayout(modules)
+        for section_title, module_names in _OVERVIEW_SECTIONS:
+            section = QGroupBox()
+            section_layout = QVBoxLayout(section)
+            section_layout.setContentsMargins(8, 6, 8, 8)
+            section_layout.setSpacing(2)
+            section_heading = QLabel(section_title)
+            section_heading.setObjectName("overviewSectionHeading")
+            section_heading_font = section_heading.font()
+            section_heading_font.setBold(True)
+            section_heading.setFont(section_heading_font)
+            section_layout.addWidget(section_heading)
+            modules = QGridLayout()
+            modules.setContentsMargins(0, 0, 0, 0)
+            modules.setHorizontalSpacing(10)
+            modules.setVerticalSpacing(4)
+            modules.setColumnStretch(0, 1)
+            modules.setColumnStretch(1, 1)
+            for index, name in enumerate(module_names):
+                button = QCommandLinkButton(
+                    display_label(name),
+                    _MODULE_DESCRIPTIONS[name],
+                )
+                button.setObjectName(
+                    f"overview_{name.lower().replace(' ', '_').replace('-', '_')}"
+                )
+                button_font = button.font()
+                button_font.setPointSizeF(button_font.pointSizeF() + 2.0)
+                button.setFont(button_font)
+                button.setMinimumHeight(70)
+                button.clicked.connect(
+                    lambda _checked=False, analysis=name: self.show_analysis_tab(
+                        analysis
+                    )
+                )
+                modules.addWidget(button, index // 2, index % 2)
+                self.overview_buttons[name] = button
+            section_layout.addLayout(modules)
+            layout.addWidget(section)
         layout.addStretch(1)
         return page
 
@@ -370,9 +391,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(8, 10, 8, 8)
-        heading = QLabel(name)
-        heading.setStyleSheet("font-weight: 600;")
-        layout.addWidget(heading)
+        self._add_module_header(name, layout)
 
         action_layout = QHBoxLayout()
         action_layout.addStretch(1)
@@ -402,16 +421,6 @@ class MainWindow(QMainWindow):
             action_layout.addWidget(analyse_button)
         layout.addLayout(action_layout)
 
-        if name == "Battery":
-            self.battery_read_only_notice = QLabel(
-                "<b>Read-only Battery Analysis</b><br>"
-                "Analyses the selected BIN without changing Pack IDs, log "
-                "associations or battery history. Use the Battery Pack "
-                "Management tab for tracking and explicit history recording."
-            )
-            self.battery_read_only_notice.setWordWrap(True)
-            layout.addWidget(self.battery_read_only_notice)
-
         if name == "Battery Pack Management":
             self._create_pack_management_controls(layout)
 
@@ -437,11 +446,59 @@ class MainWindow(QMainWindow):
         report.setObjectName(f"{name.lower().replace(' ', '_')}_report")
         report.setReadOnly(True)
         report.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        report.setPlainText(self._context_message(name))
+        report.setPlainText(
+            "No management operation run yet."
+            if name == "Battery Pack Management"
+            else "No analysis run yet."
+        )
         report.setToolTip("Analysis report area")
         layout.addWidget(report, 1)
         self._reports[name] = report
         return page
+
+    def _add_module_header(self, name: str, layout: QVBoxLayout) -> None:
+        """Add the shared name, purpose and first action for one module."""
+        slug = name.lower().replace(" ", "_").replace("-", "_")
+        heading = QLabel(display_label(name))
+        heading.setObjectName(f"{slug}HeaderTitle")
+        heading.setStyleSheet("font-weight: 600;")
+        layout.addWidget(heading)
+
+        description = QLabel(_MODULE_DESCRIPTIONS[name])
+        description.setObjectName(f"{slug}HeaderDescription")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        instruction = QLabel(self._module_instruction(name))
+        instruction.setObjectName(f"{slug}HeaderInstruction")
+        instruction.setWordWrap(True)
+        layout.addWidget(instruction)
+
+        if name == "Battery":
+            read_only = QLabel(
+                "This analysis is read-only. Battery pack identities, log "
+                "associations and history are managed separately under Battery "
+                "Pack Management."
+            )
+            read_only.setObjectName("batteryOperationalNote")
+            read_only.setWordWrap(True)
+            layout.addWidget(read_only)
+
+    @staticmethod
+    def _module_instruction(name: str) -> str:
+        if name == "Battery Pack Management":
+            return "Select a BIN log above to view or manage its pack association."
+        if name == "Pack Performance":
+            return (
+                "Select a Pack ID, then choose View report. "
+                "No BIN selection is required."
+            )
+        if name == "Range-Walk Comparison":
+            return (
+                "Select an EdgeTX CSV to detect markers and prepare a range walk. "
+                "The shared Source BIN selection does not apply."
+            )
+        return "Select a BIN log above, then choose Analyse."
 
     def _create_pack_management_controls(self, layout: QVBoxLayout) -> None:
         """Build explicit pack identity and history controls."""
@@ -452,15 +509,16 @@ class MainWindow(QMainWindow):
         self.pack_association_value = QLabel("Unseen")
         source_form.addRow("Source:", self.pack_selected_bin_value)
         source_form.addRow("Association:", self.pack_association_value)
-        source_form.addRow(
-            "Scope:",
-            QLabel("The association applies to the entire source BIN."),
-        )
+        source_form.addRow(QLabel("Pack associations apply to the entire BIN log."))
         layout.addWidget(source_group)
 
         assignment_group = QGroupBox("Assign existing Pack ID")
         assignment_layout = QHBoxLayout(assignment_group)
         self.pack_assign_combo = QComboBox()
+        self.pack_assign_combo.addItem(_PACK_ID_PLACEHOLDER, None)
+        self.pack_assign_combo.currentIndexChanged.connect(
+            self._update_analysis_controls
+        )
         self.pack_assign_button = QPushButton("Assign selected BIN")
         self.pack_assign_button.clicked.connect(self.assign_existing_pack)
         assignment_layout.addWidget(self.pack_assign_combo, 1)
@@ -481,6 +539,10 @@ class MainWindow(QMainWindow):
         rename_group = QGroupBox("Rename existing Pack ID")
         rename_form = QFormLayout(rename_group)
         self.pack_rename_combo = QComboBox()
+        self.pack_rename_combo.addItem(_PACK_ID_PLACEHOLDER, None)
+        self.pack_rename_combo.currentIndexChanged.connect(
+            self._update_analysis_controls
+        )
         self.pack_rename_edit = QLineEdit()
         self.pack_rename_edit.setPlaceholderText("Replacement Pack ID")
         self.pack_rename_edit.textChanged.connect(self._update_analysis_controls)
@@ -490,7 +552,9 @@ class MainWindow(QMainWindow):
         rename_form.addRow("Replacement:", self.pack_rename_edit)
         rename_form.addRow(
             "Effect:",
-            QLabel("Updates every associated BIN identity using this Pack ID."),
+            QLabel(
+                "Updates the Pack ID in every saved BIN association that uses it."
+            ),
         )
         rename_form.addRow(self.pack_rename_button)
         layout.addWidget(rename_group)
@@ -498,71 +562,16 @@ class MainWindow(QMainWindow):
         history_group = QGroupBox("Record AUTO takeoff history")
         history_layout = QHBoxLayout(history_group)
         history_layout.addWidget(
-            QLabel("Explicitly record supported AUTO takeoff evidence from this BIN."),
+            QLabel(
+                "<b>Effect:</b> Adds supported AUTO takeoff data from this BIN "
+                "to the assigned pack's history."
+            ),
             1,
         )
         self.pack_record_history_button = QPushButton("Record history")
         self.pack_record_history_button.clicked.connect(self.record_pack_history)
         history_layout.addWidget(self.pack_record_history_button)
         layout.addWidget(history_group)
-
-    @staticmethod
-    def _context_message(name: str) -> str:
-        if name == "Range-Walk Comparison":
-            source_note = (
-                "This workflow uses EdgeTX CSV recordings; the shared BIN "
-                "selection does not apply."
-            )
-        elif name == "Landing":
-            return (
-                "Landing\n\n"
-                "Select a BIN log above, then choose Analyse.\n\n"
-                "Reports use the existing Landing evidence pipeline."
-            )
-        elif name == "Events":
-            return (
-                "Events\n\n"
-                "Select a BIN log above, then choose Analyse.\n\n"
-                "Reports use the existing Event Timeline evidence pipeline."
-            )
-        elif name == "Battery":
-            return (
-                "Battery\n\n"
-                "Select a BIN log above, then choose Analyse.\n\n"
-                "Reports use the existing Battery evidence pipeline without "
-                "changing pack tracking or history."
-            )
-        elif name == "Battery Pack Management":
-            return (
-                "Battery Pack Management\n\n"
-                "Select a BIN log to load its persistent association. Changes "
-                "and history recording occur only after explicit confirmation."
-            )
-        elif name == "AUTOTUNE":
-            return (
-                "AUTOTUNE\n\n"
-                "Select a BIN log above, then choose Analyse.\n\n"
-                "Reports use the existing AUTOTUNE evidence pipeline."
-            )
-        elif name == "TAKEOFF":
-            return (
-                "TAKEOFF\n\n"
-                "Select a BIN log above, then choose Analyse.\n\n"
-                "Reports use the existing TAKEOFF evidence pipeline."
-            )
-        elif name == "Stall":
-            return (
-                "Stall\n\n"
-                "Select a BIN log above, then choose Analyse.\n\n"
-                "Reports use the existing Stall evidence pipeline."
-            )
-        else:
-            source_note = "Select a BIN log above to establish the shared source."
-        return (
-            f"{name}\n\n"
-            f"{source_note}\n\n"
-            "Analysis execution is not connected in GUI Phase 1."
-        )
 
     def _request_pack_lookup(self) -> None:
         """Resolve the current BIN association without writing persistence."""
@@ -588,7 +597,9 @@ class MainWindow(QMainWindow):
         state = self._current_pack_state()
         if state is None or self.pack_assign_combo is None:
             return
-        pack_id = self.pack_assign_combo.currentText()
+        pack_id = self.pack_assign_combo.currentData()
+        if not isinstance(pack_id, str):
+            return
         if (
             state.association.state is LogPackState.TRACKED
             and state.association.pack_id == pack_id
@@ -647,7 +658,9 @@ class MainWindow(QMainWindow):
             or self.pack_rename_edit is None
         ):
             return
-        old_id = self.pack_rename_combo.currentText()
+        old_id = self.pack_rename_combo.currentData()
+        if not isinstance(old_id, str):
+            return
         new_id = self.pack_rename_edit.text().strip()
         if not new_id:
             self._show_pack_message("Enter a replacement Pack ID.", error=True)
@@ -743,10 +756,12 @@ class MainWindow(QMainWindow):
 
         for combo in (self.pack_assign_combo, self.pack_rename_combo):
             if combo is not None:
-                current = selected_pack_id or combo.currentText()
+                current = selected_pack_id or combo.currentData()
                 combo.clear()
-                combo.addItems(pack_ids)
-                index = combo.findText(current)
+                combo.addItem(_PACK_ID_PLACEHOLDER, None)
+                for pack_id in pack_ids:
+                    combo.addItem(pack_id, pack_id)
+                index = combo.findData(current)
                 if index >= 0:
                     combo.setCurrentIndex(index)
         if message is not None:
@@ -819,7 +834,12 @@ class MainWindow(QMainWindow):
             else ()
         )
         if self.pack_assign_button is not None:
-            self.pack_assign_button.setEnabled(pack_ready and bool(pack_ids))
+            selected = (
+                self.pack_assign_combo.currentData()
+                if self.pack_assign_combo is not None
+                else None
+            )
+            self.pack_assign_button.setEnabled(pack_ready and selected in pack_ids)
         if self.pack_create_button is not None:
             self.pack_create_button.setEnabled(
                 pack_ready
@@ -827,9 +847,14 @@ class MainWindow(QMainWindow):
                 and bool(self.pack_create_edit.text().strip())
             )
         if self.pack_rename_button is not None:
+            selected = (
+                self.pack_rename_combo.currentData()
+                if self.pack_rename_combo is not None
+                else None
+            )
             self.pack_rename_button.setEnabled(
                 pack_ready
-                and bool(pack_ids)
+                and selected in pack_ids
                 and self.pack_rename_edit is not None
                 and bool(self.pack_rename_edit.text().strip())
             )
@@ -982,7 +1007,7 @@ class MainWindow(QMainWindow):
             return
         state = connection_status(self.current_analysis)
         self.statusBar().showMessage(
-            f"{prefix}{self.current_analysis} — {source} — {state}"
+            f"{prefix}{display_label(self.current_analysis)} — {source} — {state}"
         )
 
     def closeEvent(self, event) -> None:

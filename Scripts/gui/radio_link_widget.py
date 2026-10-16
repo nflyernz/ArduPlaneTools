@@ -46,9 +46,10 @@ class RadioLinkWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         notice = QLabel(
-            "<b>Aircraft BIN evidence is authoritative</b><br>"
-            "Optional EdgeTX CSV evidence is shown separately and cannot alter "
-            "aircraft failsafe episodes or response."
+            "<b>Aircraft and transmitter logs</b><br>"
+            "APT identifies aircraft failsafe events from the BIN log. An optional "
+            "EdgeTX CSV adds transmitter information but does not change the "
+            "aircraft results."
         )
         notice.setWordWrap(True)
         layout.addWidget(notice)
@@ -100,14 +101,12 @@ class RadioLinkWidget(QWidget):
         csv_action_controls.addWidget(self.remove_overlay_button)
         layout.addLayout(csv_action_controls)
 
-        diagnostic_group = QGroupBox(
-            "Candidate diagnostic — preview only; does not establish pairing"
-        )
+        diagnostic_group = QGroupBox()
         diagnostic_group.setObjectName("radioLinkCsvCandidateDiagnostic")
         diagnostic_layout = QVBoxLayout(diagnostic_group)
         diagnostic_layout.setContentsMargins(10, 8, 10, 8)
         self.candidate_hint = QLabel(
-            "Analyse a BIN before discovering or selecting transmitter evidence."
+            "Analyse a BIN before selecting optional EdgeTX CSV evidence."
         )
         self.candidate_hint.setObjectName("radioLinkCsvCandidateHint")
         self.candidate_hint.setWordWrap(True)
@@ -120,11 +119,7 @@ class RadioLinkWidget(QWidget):
         self.report.setObjectName("radio_link_report")
         self.report.setReadOnly(True)
         self.report.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.report.setPlainText(
-            "Radio Link\n\n"
-            "Select a BIN log above, then choose Analyse.\n\n"
-            "The initial result is the summary view."
-        )
+        self.report.setPlainText("No analysis run yet.")
         layout.addWidget(self.report, 1)
         self._update_controls(False)
 
@@ -217,9 +212,10 @@ class RadioLinkWidget(QWidget):
         self._overlay = None
         self.candidate_combo.clear()
         self.candidate_hint.setText(
-            "Discover nearby candidates or browse for an optional EdgeTX CSV."
+            "Discover nearby EdgeTX CSV files or browse to one. Previewing a "
+            "candidate does not establish pairing."
             if self._result is not None
-            else "Analyse a BIN before discovering or selecting transmitter evidence."
+            else "Analyse a BIN before selecting optional EdgeTX CSV evidence."
         )
 
     def _show_candidate_hint(self, _index: int | None = None) -> None:
@@ -356,8 +352,18 @@ class RadioLinkController:
             self._csv_request_id,
         )
         if isinstance(outcome, str):
-            widget.show_csv_message(outcome)
-            self.show_status(outcome)
+            message = outcome
+            if outcome.startswith("Automatic pairing unavailable:"):
+                message = (
+                    "Automatic pairing unavailable: No CSV could be reliably "
+                    "matched to this BIN. Use Discover nearby to find candidates, "
+                    "then choose a CSV and click Use selected."
+                )
+                candidate = widget.selected_candidate
+                if candidate is not None:
+                    message += f"\nCandidate diagnostic: {candidate.hint}"
+            widget.show_csv_message(message)
+            self.show_status(message.replace("\n", " — "))
             return
         widget.set_overlay(outcome)
         widget.show_csv_message(f"Using automatically paired {outcome.csv_path.name}.")
@@ -431,7 +437,8 @@ class RadioLinkController:
                 return True
             widget.set_overlay(result)
             widget.show_csv_message(
-                f"Using explicitly selected {result.csv_path.name}."
+                f"Using selected CSV: {result.csv_path.name}.\n"
+                "Manual selection does not verify pairing or alignment."
             )
             self.show_status("Optional EdgeTX evidence displayed")
             return True

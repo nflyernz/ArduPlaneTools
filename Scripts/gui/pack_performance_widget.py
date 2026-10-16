@@ -16,6 +16,7 @@ from .pack_performance_adapter import (
     PackPerformanceIndex,
     PackPerformanceReport,
 )
+from .module_catalog import PACK_ID_PLACEHOLDER
 
 
 class PackPerformanceWidget(QWidget):
@@ -30,19 +31,11 @@ class PackPerformanceWidget(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        notice = QLabel(
-            "<b>Read-only Pack Performance</b><br>"
-            "Views existing Pack IDs and stored observations. This module "
-            "does not modify pack identities, associations, or history."
-        )
-        notice.setWordWrap(True)
-        layout.addWidget(notice)
-        self.read_only_notice = notice
-
         controls = QHBoxLayout()
         controls.addWidget(QLabel("Physical Pack ID:"))
         self.pack_selector = QComboBox()
         self.pack_selector.setObjectName("packPerformanceSelector")
+        self.pack_selector.addItem(PACK_ID_PLACEHOLDER, None)
         self.pack_selector.currentIndexChanged.connect(self._selection_changed)
         controls.addWidget(self.pack_selector, 1)
         self.refresh_button = QPushButton("Refresh")
@@ -59,28 +52,27 @@ class PackPerformanceWidget(QWidget):
         self.report.setObjectName("pack_performance_report")
         self.report.setReadOnly(True)
         self.report.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.report.setPlainText(
-            "Pack Performance\n\n"
-            "Choose a physical Pack ID, then select View report.\n\n"
-            "A source BIN is not required."
-        )
+        self.report.setPlainText("No report loaded yet.")
         layout.addWidget(self.report, 1)
         self.set_busy(False)
 
     @property
     def selected_pack_id(self) -> str | None:
         """Return the selected physical Pack ID, if one is available."""
-        return self.pack_selector.currentText() or None
+        selected = self.pack_selector.currentData()
+        return selected if isinstance(selected, str) else None
 
     def set_pack_ids(self, pack_ids: tuple[str, ...]) -> str:
         """Replace known IDs while retaining a still-valid selection."""
         previous = self.selected_pack_id
         self.pack_selector.blockSignals(True)
         self.pack_selector.clear()
-        self.pack_selector.addItems(pack_ids)
+        self.pack_selector.addItem(PACK_ID_PLACEHOLDER, None)
+        for pack_id in pack_ids:
+            self.pack_selector.addItem(pack_id, pack_id)
         retained = previous in pack_ids
         if retained:
-            self.pack_selector.setCurrentText(previous)
+            self.pack_selector.setCurrentIndex(self.pack_selector.findData(previous))
         self.pack_selector.blockSignals(False)
         self._selection_changed()
         if not pack_ids:
@@ -89,7 +81,7 @@ class PackPerformanceWidget(QWidget):
         elif previous is not None and not retained:
             message = (
                 f"Pack ID {previous} is no longer registered. "
-                f"Selected {self.selected_pack_id}."
+                "No Pack ID is selected."
             )
             self.report.setPlainText(message)
         else:
@@ -99,11 +91,9 @@ class PackPerformanceWidget(QWidget):
     def set_busy(self, busy: bool, task: str | None = None) -> None:
         """Prevent overlapping storage operations and label the active one."""
         self._busy = busy
-        self.pack_selector.setEnabled(not busy and self.pack_selector.count() > 0)
+        self.pack_selector.setEnabled(not busy and self.pack_selector.count() > 1)
         self.refresh_button.setEnabled(not busy)
-        self.view_button.setEnabled(
-            not busy and self.pack_selector.count() > 0
-        )
+        self.view_button.setEnabled(not busy and self.selected_pack_id is not None)
         self.refresh_button.setText(
             "Refreshing…" if busy and task == "refresh" else "Refresh"
         )
@@ -113,7 +103,7 @@ class PackPerformanceWidget(QWidget):
 
     def _selection_changed(self) -> None:
         self.view_button.setEnabled(
-            not self._busy and self.pack_selector.count() > 0
+            not self._busy and self.selected_pack_id is not None
         )
 
     def _request_report(self) -> None:
