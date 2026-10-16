@@ -11,6 +11,8 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
+from PySide6.QtWidgets import QLabel
+
 import analyses.battery as battery_analysis_module
 from core.flight_window import FlightWindow
 from core.log_reader import UnsupportedFirmwareError
@@ -246,16 +248,20 @@ def test_adapter_never_uses_pack_persistence_and_leaves_data_unchanged(
     assert "fingerprint_log" not in adapter_module.__dict__
 
 
-def test_battery_button_and_initial_read_only_report(make_window, qt_app, tmp_path):
+def test_battery_button_and_header_read_only_note(make_window, qt_app, tmp_path):
     window = make_window(lambda _path: "Battery report")
     window.show_analysis_tab("Battery")
     qt_app.processEvents()
 
     assert not window.battery_analyse_button.isEnabled()
-    report = window.report_for("Battery").toPlainText()
-    assert report.startswith("Battery Analysis\n\nExamine battery consumption")
-    assert "This analysis is read-only." in report
-    assert "Battery Pack Management" in report
+    page_text = "\n".join(
+        label.text()
+        for label in window.analysis_tabs.currentWidget().findChildren(QLabel)
+    )
+    assert "Examine battery consumption" in page_text
+    assert "This analysis is read-only." in page_text
+    assert "Battery Pack Management" in page_text
+    assert window.report_for("Battery").toPlainText() == "No analysis run yet."
 
     _select_existing_bin(window, tmp_path, "valid.BIN")
     assert window.battery_analyse_button.isEnabled()
@@ -403,7 +409,11 @@ def test_overview_labels_battery_analysis_and_navigates_by_internal_key(
     qt_app.processEvents()
 
     assert window.current_analysis == "Battery"
-    report = window.report_for("Battery").toPlainText()
-    assert "This analysis is read-only." in report
-    assert "Battery Pack Management" in report
+    page_text = "\n".join(
+        label.text()
+        for label in window.analysis_tabs.currentWidget().findChildren(QLabel)
+    )
+    assert "This analysis is read-only." in page_text
+    assert "Battery Pack Management" in page_text
+    assert window.report_for("Battery").toPlainText() == "No analysis run yet."
     assert "ready" in window.statusBar().currentMessage()

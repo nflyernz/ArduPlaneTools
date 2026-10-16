@@ -330,7 +330,5 @@ def test_overview_describes_events_and_navigates(qt_app, make_window):
     qt_app.processEvents()
 
     assert window.current_analysis == "Events"
-    report = window.report_for("Events").toPlainText()
-    assert "Inspect the chronological flight event timeline." in report
-    assert "evidence pipeline" not in report
+    assert window.report_for("Events").toPlainText() == "No analysis run yet."
     assert "ready" in window.statusBar().currentMessage()

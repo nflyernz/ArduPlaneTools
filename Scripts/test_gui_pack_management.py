@@ -109,6 +109,11 @@ def test_management_starts_read_only_without_packs_or_selected_bin(
     assert not window.pack_create_button.isEnabled()
     assert not window.pack_rename_button.isEnabled()
     assert not window.pack_record_history_button.isEnabled()
+    assert "Manage pack identities and log associations." in page_text
+    assert (
+        "Select a BIN log above to view or manage its pack association."
+        in page_text
+    )
     assert "Pack associations apply to the entire BIN log." in page_text
     assert (
         "Updates the Pack ID in every saved BIN association that uses it."
@@ -120,6 +125,9 @@ def test_management_starts_read_only_without_packs_or_selected_bin(
         in page_text
     )
     assert "Explicitly record supported AUTO takeoff evidence" not in page_text
+    assert window.report_for("Battery Pack Management").toPlainText() == (
+        "No management operation run yet."
+    )
     assert not (tmp_path / "packs.json").exists()
     assert not (tmp_path / "history.json").exists()
 

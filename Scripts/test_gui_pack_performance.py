@@ -73,12 +73,7 @@ def test_empty_refresh_needs_no_bin_and_creates_no_persistence(
 ):
     window = make_window(_service(tmp_path))
     widget = window._pack_performance.widget
-    assert widget.report.toPlainText() == (
-        "Pack Performance\n\n"
-        "Compare battery-pack performance across logs.\n\n"
-        "Select a Pack ID, then choose View report.\n\n"
-        "Reports use saved battery history; no BIN selection is required."
-    )
+    assert widget.report.toPlainText() == "No report loaded yet."
     widget = _open_and_wait(qt_app, window)
 
     assert window.selected_log is None

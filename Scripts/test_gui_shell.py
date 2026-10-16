@@ -201,8 +201,7 @@ def test_tab_switching_updates_visible_module_context(qt_app, window):
     assert window.current_analysis == "Range-Walk Comparison"
     assert window.analysis_tabs.currentWidget().isVisible()
     report = window.report_for("Range-Walk Comparison").toPlainText()
-    assert report.startswith("Range-Walk Comparison\n\n")
-    assert "Select an EdgeTX CSV to detect markers and prepare a range walk." in report
+    assert report == "No CSV inspection or marker detection run yet."
     assert (
         "CSV preview, saved baselines and additional-walk preparation ready; "
         "RF comparison not connected"
@@ -229,6 +228,4 @@ def test_shell_interactions_do_not_execute_landing_analysis(
     window.show_analysis_tab("Landing")
     qt_app.processEvents()
 
-    report = window.report_for("Landing").toPlainText()
-    assert "Review approach, preflare, flare and landing evidence." in report
-    assert "evidence pipeline" not in report
+    assert window.report_for("Landing").toPlainText() == "No analysis run yet."

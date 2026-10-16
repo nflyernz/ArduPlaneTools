@@ -295,7 +295,5 @@ def test_overview_describes_landing_and_navigates(qt_app, make_window):
     qt_app.processEvents()
 
     assert window.current_analysis == "Landing"
-    report = window.report_for("Landing").toPlainText()
-    assert "Review approach, preflare, flare and landing evidence." in report
-    assert "evidence pipeline" not in report
+    assert window.report_for("Landing").toPlainText() == "No analysis run yet."
     assert "ready" in window.statusBar().currentMessage()

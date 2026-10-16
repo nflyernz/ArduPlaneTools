@@ -12,7 +12,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QFileDialog, QPushButton, QRadioButton
+from PySide6.QtWidgets import QFileDialog, QLabel, QPushButton, QRadioButton
 
 from gui import MainWindow
 from gui.pack_management_adapter import BatteryPackManagementService
@@ -294,15 +294,19 @@ def test_choose_csv_and_detect_without_shared_bin(
     widget = window._range_walk.widget
 
     assert window.selected_log is None
-    assert "Compare repeatable radio range-walk recordings." in (
-        widget.preview_notice.text()
+    page_text = "\n".join(
+        label.text()
+        for label in window.analysis_tabs.currentWidget().findChildren(QLabel)
     )
+    assert "Compare repeatable radio range-walk recordings." in page_text
     assert "Select an EdgeTX CSV to detect markers and prepare a range walk." in (
-        widget.preview_notice.text()
+        page_text
     )
-    assert "shared Source BIN selection does not apply" in widget.preview_notice.text()
-    assert "comparison not yet connected" not in widget.preview_notice.text()
-    assert widget.report.toPlainText().startswith("Range-Walk Comparison\n\n")
+    assert "shared Source BIN selection does not apply" in page_text
+    assert "comparison not yet connected" not in page_text
+    assert widget.report.toPlainText() == (
+        "No CSV inspection or marker detection run yet."
+    )
     assert not widget.detect_button.isEnabled()
     widget.choose_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)

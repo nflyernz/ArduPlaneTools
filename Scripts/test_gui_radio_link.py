@@ -210,13 +210,7 @@ def test_bin_is_required_and_radio_button_dispatches_only_radio_link(
     widget = window._radio_link.widget
 
     assert not widget.analyse_button.isEnabled()
-    assert widget.report.toPlainText() == (
-        "Radio Link\n\n"
-        "Inspect radio-link quality and failsafe evidence.\n\n"
-        "Select a BIN log above, then choose Analyse.\n\n"
-        "The initial report shows a summary. Choose Show detailed evidence "
-        "for the full findings."
-    )
+    assert widget.report.toPlainText() == "No analysis run yet."
     assert widget.candidate_hint.text() == (
         "Analyse a BIN before selecting optional EdgeTX CSV evidence."
     )

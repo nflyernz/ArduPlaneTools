@@ -13,6 +13,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QGroupBox, QLabel
 
 from gui import ANALYSIS_TABS, MainWindow
+from gui.module_catalog import MODULE_DESCRIPTIONS
 from gui.pack_performance_adapter import BatteryPackPerformanceService
 
 
@@ -157,50 +158,47 @@ def test_every_overview_entry_describes_and_opens_its_module(qt_app, window):
     assert "RF comparison" not in range_walk_description
 
 
-@pytest.mark.parametrize(
-    ("name", "expected"),
-    (
-        (
-            "Battery",
-            "Battery Analysis\n\n"
-            "Examine battery consumption, voltage sag and electrical loads in the "
-            "selected log.\n\n"
-            "Select a BIN log above, then choose Analyse.\n\n"
-            "This analysis is read-only. Battery pack identities, log associations "
-            "and history are managed separately under Battery Pack Management.",
-        ),
-        (
-            "TAKEOFF",
-            "TAKEOFF\n\nReview launch triggers and takeoff performance.\n\n"
-            "Select a BIN log above, then choose Analyse.",
-        ),
-        (
-            "Landing",
-            "Landing\n\nReview approach, preflare, flare and landing evidence.\n\n"
-            "Select a BIN log above, then choose Analyse.",
-        ),
-        (
-            "AUTOTUNE",
-            "AUTOTUNE\n\nExamine tuning sessions and saved gains.\n\n"
-            "Select a BIN log above, then choose Analyse.",
-        ),
-        (
-            "Stall",
-            "Stall\n\nReview FBWA slow-flight and probable attitude-departure "
-            "evidence.\n\nSelect a BIN log above, then choose Analyse.",
-        ),
-        (
-            "Events",
-            "Events\n\nInspect the chronological flight event timeline.\n\n"
-            "Select a BIN log above, then choose Analyse.",
-        ),
-    ),
-)
-def test_initial_bin_module_reports_use_operator_facing_wording(window, name, expected):
-    report = window.report_for(name).toPlainText()
+@pytest.mark.parametrize("name", ANALYSIS_TABS)
+def test_module_headers_separate_context_from_empty_reports(window, name):
+    page = window.analysis_tabs.widget(ANALYSIS_TABS.index(name) + 1)
+    slug = name.lower().replace(" ", "_").replace("-", "_")
+    title = page.findChild(QLabel, f"{slug}HeaderTitle")
+    description = page.findChild(QLabel, f"{slug}HeaderDescription")
+    instruction = page.findChild(QLabel, f"{slug}HeaderInstruction")
+    expected_title = "Battery Analysis" if name == "Battery" else name
+    expected_instruction = "Select a BIN log above, then choose Analyse."
+    expected_empty_state = "No analysis run yet."
+    if name == "Battery Pack Management":
+        expected_instruction = (
+            "Select a BIN log above to view or manage its pack association."
+        )
+        expected_empty_state = "No management operation run yet."
+    elif name == "Pack Performance":
+        expected_instruction = (
+            "Select a Pack ID, then choose View report. No BIN selection is required."
+        )
+        expected_empty_state = "No report loaded yet."
+    elif name == "Range-Walk Comparison":
+        expected_instruction = (
+            "Select an EdgeTX CSV to detect markers and prepare a range walk. "
+            "The shared Source BIN selection does not apply."
+        )
+        expected_empty_state = "No CSV inspection or marker detection run yet."
 
-    assert report == expected
-    assert "evidence pipeline" not in report
+    assert title.text() == expected_title
+    assert description.text() == MODULE_DESCRIPTIONS[name]
+    assert instruction.text() == expected_instruction
+    assert window.report_for(name).toPlainText() == expected_empty_state
+    assert MODULE_DESCRIPTIONS[name] not in window.report_for(name).toPlainText()
+
+
+def test_battery_read_only_explanation_is_above_report(window):
+    page = window.analysis_tabs.widget(ANALYSIS_TABS.index("Battery") + 1)
+    note = page.findChild(QLabel, "batteryOperationalNote")
+
+    assert "This analysis is read-only." in note.text()
+    assert "Battery Pack Management" in note.text()
+    assert note.text() not in window.report_for("Battery").toPlainText()
 
 
 def test_navigation_preserves_selected_bin_and_existing_report(qt_app, window, tmp_path):
