@@ -7,6 +7,7 @@ from core.takeoff_execution import TakeoffEntryContext
 from core.takeoff_execution_detector import TakeoffExecutionDetector
 from core.takeoff_performance import (
     TakeoffPerformanceProcessor,
+    TakeoffTelemetryRowCache,
     format_takeoff_performance_reports,
 )
 
@@ -30,6 +31,7 @@ def analyse_takeoff_flight_log(flight_log, log_path) -> str:
     if not takeoff_executions:
         return "\n".join((*lines, "", "No TAKEOFF-mode executions found."))
 
+    row_cache = TakeoffTelemetryRowCache(flight_log)
     analyses = tuple(
         analysis
         for execution in takeoff_executions
@@ -37,6 +39,7 @@ def analyse_takeoff_flight_log(flight_log, log_path) -> str:
             analysis := TakeoffPerformanceProcessor(
                 flight_log,
                 execution,
+                row_cache,
             ).analyse()
         )
         is not None
