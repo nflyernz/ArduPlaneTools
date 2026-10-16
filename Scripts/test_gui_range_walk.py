@@ -12,7 +12,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QFileDialog, QPushButton
+from PySide6.QtWidgets import QFileDialog, QPushButton, QRadioButton
 
 from gui import MainWindow
 from gui.pack_management_adapter import BatteryPackManagementService
@@ -131,7 +131,11 @@ def test_adapter_auto_detects_positive_and_negative_holds(
     assert f"Direction used: {expected_direction} ({sign}Ele)" in result.text
     assert "Marker candidates: 5" in result.text
     assert "not confirmed physical landmarks" in result.text
-    assert "CSV/marker preview only — comparison not yet connected" in result.text
+    assert (
+        "Marker detection prepares candidates for operator-confirmed range-walk "
+        "setup."
+        in result.text
+    )
     assert "hold 2.000 s" in result.text
 
 
@@ -290,6 +294,15 @@ def test_choose_csv_and_detect_without_shared_bin(
     widget = window._range_walk.widget
 
     assert window.selected_log is None
+    assert "Compare repeatable radio range-walk recordings." in (
+        widget.preview_notice.text()
+    )
+    assert "Select an EdgeTX CSV to detect markers and prepare a range walk." in (
+        widget.preview_notice.text()
+    )
+    assert "shared Source BIN selection does not apply" in widget.preview_notice.text()
+    assert "comparison not yet connected" not in widget.preview_notice.text()
+    assert widget.report.toPlainText().startswith("Range-Walk Comparison\n\n")
     assert not widget.detect_button.isEnabled()
     widget.choose_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
@@ -300,7 +313,7 @@ def test_choose_csv_and_detect_without_shared_bin(
     assert widget.findChild(type(widget.source_path_edit), "rangeWalkNeutralCalibration") is None
     assert widget.findChild(type(widget.source_path_edit), "rangeWalkNearDownCalibration") is None
     assert widget.detect_button.isEnabled()
-    assert "Auto mode" in widget.state_label.text()
+    assert "Automatic mode" in widget.state_label.text()
     widget.detect_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
@@ -477,8 +490,8 @@ def test_auto_inverse_guidance_and_failed_detection_keep_valid_csv(
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
     guidance = widget.calibration_guidance.text()
-    assert "complete sustained holds and neutral returns" in guidance
-    assert "Use Inverse to inspect the opposite direction" in guidance
+    assert "Detect markers runs detection" in guidance
+    assert "sustained holds and neutral returns" in guidance
     assert "Observed Ele range: -1024 to 0" in widget.report.toPlainText()
     assert "Sustained neutral: 0" in widget.suggestion_label.text()
     assert "lower endpoint: -1024" in widget.suggestion_label.text()
@@ -492,21 +505,38 @@ def test_auto_inverse_guidance_and_failed_detection_keep_valid_csv(
     assert widget.detect_button.isEnabled()
 
 
-def test_auto_is_default_and_inverse_is_adjacent(qt_app, tmp_path, make_window):
+def test_direction_radios_are_mutually_exclusive_without_running_detection(
+    qt_app,
+    tmp_path,
+    make_window,
+):
     session = _session(tmp_path, up=(30,))
     window = make_window()
     widget = window._range_walk.widget
     window._range_walk.select_source(session.path)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
+    assert isinstance(widget.auto_button, QRadioButton)
+    assert isinstance(widget.inverse_button, QRadioButton)
+    assert widget.auto_button.text() == "Automatic (recommended)"
+    assert widget.inverse_button.text() == "Opposite direction"
+    assert widget.direction_heading.text() == "Elevator marker direction"
+    assert widget.direction_heading.font().bold()
     assert widget.auto_button.isChecked()
     assert not widget.inverse_button.isChecked()
     assert widget.detect_button.isEnabled()
 
     widget.inverse_button.click()
     assert widget.inverse_button.isChecked()
+    assert not widget.auto_button.isChecked()
     assert widget.detect_button.isEnabled()
-    assert "Inverse mode" in widget.state_label.text()
+    assert "Opposite direction mode" in widget.state_label.text()
+    assert window._analysis_thread is None
+
+    widget.auto_button.click()
+    assert widget.auto_button.isChecked()
+    assert not widget.inverse_button.isChecked()
+    assert window._analysis_thread is None
 
 
 def test_auto_detects_negative_holds_and_inverse_uses_positive_direction(

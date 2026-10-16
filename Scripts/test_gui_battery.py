@@ -246,24 +246,22 @@ def test_adapter_never_uses_pack_persistence_and_leaves_data_unchanged(
     assert "fingerprint_log" not in adapter_module.__dict__
 
 
-def test_battery_button_and_permanent_read_only_notice(
-    make_window, qt_app, tmp_path
-):
+def test_battery_button_and_initial_read_only_report(make_window, qt_app, tmp_path):
     window = make_window(lambda _path: "Battery report")
     window.show_analysis_tab("Battery")
     qt_app.processEvents()
 
     assert not window.battery_analyse_button.isEnabled()
-    assert window.battery_read_only_notice.isVisible()
-    notice = window.battery_read_only_notice.text()
-    assert "Read-only Battery Analysis" in notice
-    assert "without changing Pack IDs, log associations or battery history" in notice
+    report = window.report_for("Battery").toPlainText()
+    assert report.startswith("Battery Analysis\n\nExamine battery consumption")
+    assert "This analysis is read-only." in report
+    assert "Battery Pack Management" in report
 
     _select_existing_bin(window, tmp_path, "valid.BIN")
     assert window.battery_analyse_button.isEnabled()
 
 
-def test_battery_runs_off_thread_blocks_other_analyses_and_keeps_notice(
+def test_battery_runs_off_thread_and_blocks_other_analyses(
     qt_app, make_window, tmp_path
 ):
     started = threading.Event()
@@ -309,8 +307,6 @@ def test_battery_runs_off_thread_blocks_other_analyses_and_keeps_notice(
     ):
         assert not button.isEnabled()
     assert window.battery_analyse_button.text() == "Analysing…"
-    assert window.battery_read_only_notice.isVisible()
-
     window.start_battery_analysis()
     window.start_events_analysis()
     window.start_landing_analysis()
@@ -325,7 +321,6 @@ def test_battery_runs_off_thread_blocks_other_analyses_and_keeps_notice(
 
     assert worker_threads[0] != main_thread
     assert "No valid battery analysis" in window.report_for("Battery").toPlainText()
-    assert window.battery_read_only_notice.isVisible()
     assert window.battery_analyse_button.isEnabled()
 
 
@@ -408,7 +403,7 @@ def test_overview_labels_battery_analysis_and_navigates_by_internal_key(
     qt_app.processEvents()
 
     assert window.current_analysis == "Battery"
-    assert "without changing pack tracking or history" in window.report_for(
-        "Battery"
-    ).toPlainText()
+    report = window.report_for("Battery").toPlainText()
+    assert "This analysis is read-only." in report
+    assert "Battery Pack Management" in report
     assert "ready" in window.statusBar().currentMessage()

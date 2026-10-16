@@ -25,9 +25,9 @@ VISIBLE_TAB_LABELS = (
     "Landing",
     "AUTOTUNE",
     "Stall",
+    "Events",
     "Radio Link",
     "Range-Walk Comparison",
-    "Events",
 )
 
 
@@ -90,10 +90,13 @@ def test_overview_has_three_ordered_module_sections(window):
             "Battery & packs",
             ("Battery", "Battery Pack Management", "Pack Performance"),
         ),
-        ("Flight analysis", ("TAKEOFF", "Landing", "AUTOTUNE", "Stall")),
+        (
+            "Flight analysis",
+            ("TAKEOFF", "Landing", "AUTOTUNE", "Stall", "Events"),
+        ),
         (
             "Radio & diagnostics",
-            ("Radio Link", "Range-Walk Comparison", "Events"),
+            ("Radio Link", "Range-Walk Comparison"),
         ),
     )
 
@@ -121,9 +124,7 @@ def test_every_overview_entry_describes_and_opens_its_module(qt_app, window):
             "Review FBWA slow-flight and probable attitude-departure evidence."
         ),
         "Radio Link": "Inspect radio-link quality and failsafe evidence.",
-        "Range-Walk Comparison": (
-            "Review saved range-walk recordings and comparison preparation."
-        ),
+        "Range-Walk Comparison": "Compare repeatable radio range-walk recordings.",
         "Events": "Inspect the chronological flight event timeline.",
     }
 
@@ -152,8 +153,54 @@ def test_every_overview_entry_describes_and_opens_its_module(qt_app, window):
     range_walk_description = window.overview_buttons[
         "Range-Walk Comparison"
     ].description()
-    assert "comparison preparation" in range_walk_description
+    assert range_walk_description == "Compare repeatable radio range-walk recordings."
     assert "RF comparison" not in range_walk_description
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    (
+        (
+            "Battery",
+            "Battery Analysis\n\n"
+            "Examine battery consumption, voltage sag and electrical loads in the "
+            "selected log.\n\n"
+            "Select a BIN log above, then choose Analyse.\n\n"
+            "This analysis is read-only. Battery pack identities, log associations "
+            "and history are managed separately under Battery Pack Management.",
+        ),
+        (
+            "TAKEOFF",
+            "TAKEOFF\n\nReview launch triggers and takeoff performance.\n\n"
+            "Select a BIN log above, then choose Analyse.",
+        ),
+        (
+            "Landing",
+            "Landing\n\nReview approach, preflare, flare and landing evidence.\n\n"
+            "Select a BIN log above, then choose Analyse.",
+        ),
+        (
+            "AUTOTUNE",
+            "AUTOTUNE\n\nExamine tuning sessions and saved gains.\n\n"
+            "Select a BIN log above, then choose Analyse.",
+        ),
+        (
+            "Stall",
+            "Stall\n\nReview FBWA slow-flight and probable attitude-departure "
+            "evidence.\n\nSelect a BIN log above, then choose Analyse.",
+        ),
+        (
+            "Events",
+            "Events\n\nInspect the chronological flight event timeline.\n\n"
+            "Select a BIN log above, then choose Analyse.",
+        ),
+    ),
+)
+def test_initial_bin_module_reports_use_operator_facing_wording(window, name, expected):
+    report = window.report_for(name).toPlainText()
+
+    assert report == expected
+    assert "evidence pipeline" not in report
 
 
 def test_navigation_preserves_selected_bin_and_existing_report(qt_app, window, tmp_path):

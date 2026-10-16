@@ -72,14 +72,23 @@ def test_empty_refresh_needs_no_bin_and_creates_no_persistence(
     qt_app, tmp_path, make_window
 ):
     window = make_window(_service(tmp_path))
+    widget = window._pack_performance.widget
+    assert widget.report.toPlainText() == (
+        "Pack Performance\n\n"
+        "Compare battery-pack performance across logs.\n\n"
+        "Select a Pack ID, then choose View report.\n\n"
+        "Reports use saved battery history; no BIN selection is required."
+    )
     widget = _open_and_wait(qt_app, window)
 
     assert window.selected_log is None
-    assert widget.pack_selector.count() == 0
+    assert widget.pack_selector.count() == 1
+    assert widget.pack_selector.currentText() == "— Select Pack ID —"
+    assert widget.selected_pack_id is None
     assert not widget.view_button.isEnabled()
     assert widget.refresh_button.isEnabled()
     assert widget.report.toPlainText() == "No known Battery Pack IDs."
-    assert "does not modify" in widget.read_only_notice.text()
+    assert not hasattr(widget, "read_only_notice")
     assert not (tmp_path / "packs.json").exists()
     assert not (tmp_path / "history.json").exists()
 
@@ -201,6 +210,10 @@ def test_report_action_handles_no_observations_and_preserves_store_bytes(
     window = make_window(_service(tmp_path))
     widget = _open_and_wait(qt_app, window)
 
+    assert widget.selected_pack_id is None
+    assert not widget.view_button.isEnabled()
+    widget.pack_selector.setCurrentText("Pack A")
+    assert widget.view_button.isEnabled()
     widget.view_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
@@ -230,8 +243,9 @@ def test_refresh_retains_existing_selection_and_explains_renamed_selection(
     assert tuple(
         widget.pack_selector.itemText(index)
         for index in range(widget.pack_selector.count())
-    ) == ("Pack A", "Pack C")
-    assert widget.selected_pack_id == "Pack A"
+    ) == ("— Select Pack ID —", "Pack A", "Pack C")
+    assert widget.selected_pack_id is None
+    assert not widget.view_button.isEnabled()
     assert "Pack B is no longer registered" in widget.report.toPlainText()
 
 
@@ -280,7 +294,9 @@ def test_storage_error_recovers_on_refresh(qt_app, make_window):
     widget.refresh_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
 
-    assert widget.selected_pack_id == "Pack A"
+    assert widget.selected_pack_id is None
+    assert widget.pack_selector.currentText() == "— Select Pack ID —"
+    assert not widget.view_button.isEnabled()
     assert widget.refresh_button.isEnabled()
     assert "Error" not in widget.report.toPlainText()
 

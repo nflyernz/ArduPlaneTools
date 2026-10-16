@@ -256,6 +256,10 @@ def test_optional_workflow_keeps_bin_cache_and_removes_only_overlay(
     _select_and_analyse(qt_app, window, tmp_path, adapter_calls)
 
     assert widget.report.toPlainText() == "aircraft summary"
+    assert widget.candidate_hint.text() == (
+        "Discover nearby EdgeTX CSV files or browse to one. Previewing a "
+        "candidate does not establish pairing."
+    )
     widget.discover_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
     assert "candidate diagnostic" in widget.candidate_hint.text()
@@ -278,6 +282,10 @@ def test_optional_workflow_keeps_bin_cache_and_removes_only_overlay(
     widget.use_candidate_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
     assert "EdgeTX explicit evidence" in widget.report.toPlainText()
+    assert widget.candidate_hint.text() == (
+        f"Using selected CSV: {csv_path.name}.\n"
+        "Manual selection does not verify pairing or alignment."
+    )
     assert adapter_calls == [widget.result.source_path]
     assert not (tmp_path / "packs.json").exists()
     assert not (tmp_path / "history.json").exists()
@@ -374,7 +382,7 @@ def test_candidate_diagnostic_is_visible_and_tracks_current_selection(
     assert widget.candidate_diagnostic_group.isVisible()
     assert "Auto-eligible candidate: automatic.csv" in widget.candidate_hint.text()
     assert "ordered loss pattern" in widget.candidate_hint.text()
-    assert "does not establish pairing" in widget.candidate_diagnostic_group.title()
+    assert widget.candidate_diagnostic_group.title() == ""
     assert "pairing and alignment remain unverified" in widget.candidate_hint.text()
 
     widget.candidate_combo.setCurrentIndex(1)
@@ -388,6 +396,50 @@ def test_candidate_diagnostic_is_visible_and_tracks_current_selection(
     assert "required columns are missing" in widget.candidate_hint.text()
     assert adapter_calls == [(tmp_path / "radio.bin").resolve()]
     assert window._analysis_thread is None
+
+
+def test_automatic_pairing_failure_is_actionable_and_keeps_diagnostic(
+    qt_app,
+    tmp_path,
+    make_window,
+):
+    csv_path = tmp_path / "explicit.csv"
+    calls = []
+
+    def adapter(path):
+        calls.append(path)
+        return RadioLinkGuiResult(path, "summary", "detail", object(), object())
+
+    class Service:
+        def discover(self, context):
+            return EdgeTxCandidateSet(
+                context.source_path,
+                (
+                    EdgeTxCandidatePreview(
+                        csv_path,
+                        "Clock offset is unresolved; explicit selection required",
+                        _session(csv_path),
+                        _overlay(csv_path, "accepted explicit"),
+                    ),
+                ),
+            )
+
+    window = make_window(adapter, Service())
+    widget = window._radio_link.widget
+    _select_and_analyse(qt_app, window, tmp_path, calls)
+    widget.discover_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    widget.automatic_button.click()
+
+    message = widget.candidate_hint.text()
+    assert message.startswith(
+        "Automatic pairing unavailable: No CSV could be reliably matched to this "
+        "BIN. Use Discover nearby to find candidates, then choose a CSV and click "
+        "Use selected."
+    )
+    assert "Clock offset is unresolved" in message
+    assert widget.report.toPlainText() == "summary"
 
 
 def test_malformed_candidate_failure_preserves_bin_and_allows_retry(

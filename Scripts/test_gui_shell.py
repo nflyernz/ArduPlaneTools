@@ -24,9 +24,9 @@ VISIBLE_TAB_LABELS = (
     "Landing",
     "AUTOTUNE",
     "Stall",
+    "Events",
     "Radio Link",
     "Range-Walk Comparison",
-    "Events",
 )
 
 
@@ -201,7 +201,8 @@ def test_tab_switching_updates_visible_module_context(qt_app, window):
     assert window.current_analysis == "Range-Walk Comparison"
     assert window.analysis_tabs.currentWidget().isVisible()
     report = window.report_for("Range-Walk Comparison").toPlainText()
-    assert "Range-Walk CSV / marker preview" in report
+    assert report.startswith("Range-Walk Comparison\n\n")
+    assert "Select an EdgeTX CSV to detect markers and prepare a range walk." in report
     assert (
         "CSV preview, saved baselines and additional-walk preparation ready; "
         "RF comparison not connected"
@@ -228,6 +229,6 @@ def test_shell_interactions_do_not_execute_landing_analysis(
     window.show_analysis_tab("Landing")
     qt_app.processEvents()
 
-    assert "Reports use the existing Landing evidence pipeline" in window.report_for(
-        "Landing"
-    ).toPlainText()
+    report = window.report_for("Landing").toPlainText()
+    assert "Review approach, preflare, flare and landing evidence." in report
+    assert "evidence pipeline" not in report
