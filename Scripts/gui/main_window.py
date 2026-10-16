@@ -34,8 +34,9 @@ from .landing_adapter import analyse_landing_log
 from .module_catalog import (
     EXECUTABLE_ANALYSES as _EXECUTABLE_ANALYSES,
     MODULE_DESCRIPTIONS as _MODULE_DESCRIPTIONS,
-    connection_description,
+    OVERVIEW_SECTIONS as _OVERVIEW_SECTIONS,
     connection_status,
+    display_label,
 )
 from .pack_management_adapter import (
     BatteryPackManagementService,
@@ -51,16 +52,16 @@ from .takeoff_adapter import analyse_takeoff_log
 
 
 ANALYSIS_TABS = (
-    "Landing",
-    "Events",
     "Battery",
     "Battery Pack Management",
     "Pack Performance",
     "TAKEOFF",
+    "Landing",
     "AUTOTUNE",
+    "Stall",
     "Radio Link",
     "Range-Walk Comparison",
-    "Stall",
+    "Events",
 )
 
 
@@ -180,7 +181,10 @@ class MainWindow(QMainWindow):
         self.analysis_tabs.tabBar().setExpanding(False)
         self.analysis_tabs.addTab(self._create_overview_page(), "Overview")
         for name in ANALYSIS_TABS:
-            self.analysis_tabs.addTab(self._create_analysis_page(name), name)
+            self.analysis_tabs.addTab(
+                self._create_analysis_page(name),
+                display_label(name),
+            )
         self.analysis_tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.analysis_tabs, 1)
 
@@ -210,8 +214,9 @@ class MainWindow(QMainWindow):
 
     @property
     def current_analysis(self) -> str:
-        """Return the visible analysis context."""
-        return self.analysis_tabs.tabText(self.analysis_tabs.currentIndex())
+        """Return the stable identifier for the visible analysis context."""
+        index = self.analysis_tabs.currentIndex()
+        return "Overview" if index <= 0 else ANALYSIS_TABS[index - 1]
 
     def report_for(self, analysis: str) -> QPlainTextEdit:
         """Return the read-only report surface for an analysis tab."""
@@ -341,28 +346,44 @@ class MainWindow(QMainWindow):
         subtitle = QLabel("Evidence-based ArduPlane flight-log analysis")
         layout.addWidget(subtitle)
 
-        modules = QGridLayout()
-        modules.setHorizontalSpacing(10)
-        modules.setVerticalSpacing(6)
-        for index, name in enumerate(ANALYSIS_TABS):
-            connection = connection_description(name)
-            button = QCommandLinkButton(
-                name,
-                f"{_MODULE_DESCRIPTIONS[name]}\n{connection}",
-            )
-            button.setObjectName(
-                f"overview_{name.lower().replace(' ', '_').replace('-', '_')}"
-            )
-            button_font = button.font()
-            button_font.setPointSizeF(button_font.pointSizeF() + 2.0)
-            button.setFont(button_font)
-            button.setMinimumHeight(84)
-            button.clicked.connect(
-                lambda _checked=False, analysis=name: self.show_analysis_tab(analysis)
-            )
-            modules.addWidget(button, index // 2, index % 2)
-            self.overview_buttons[name] = button
-        layout.addLayout(modules)
+        for section_title, module_names in _OVERVIEW_SECTIONS:
+            section = QGroupBox()
+            section_layout = QVBoxLayout(section)
+            section_layout.setContentsMargins(8, 6, 8, 8)
+            section_layout.setSpacing(2)
+            section_heading = QLabel(section_title)
+            section_heading.setObjectName("overviewSectionHeading")
+            section_heading_font = section_heading.font()
+            section_heading_font.setBold(True)
+            section_heading.setFont(section_heading_font)
+            section_layout.addWidget(section_heading)
+            modules = QGridLayout()
+            modules.setContentsMargins(0, 0, 0, 0)
+            modules.setHorizontalSpacing(10)
+            modules.setVerticalSpacing(4)
+            modules.setColumnStretch(0, 1)
+            modules.setColumnStretch(1, 1)
+            for index, name in enumerate(module_names):
+                button = QCommandLinkButton(
+                    display_label(name),
+                    _MODULE_DESCRIPTIONS[name],
+                )
+                button.setObjectName(
+                    f"overview_{name.lower().replace(' ', '_').replace('-', '_')}"
+                )
+                button_font = button.font()
+                button_font.setPointSizeF(button_font.pointSizeF() + 2.0)
+                button.setFont(button_font)
+                button.setMinimumHeight(70)
+                button.clicked.connect(
+                    lambda _checked=False, analysis=name: self.show_analysis_tab(
+                        analysis
+                    )
+                )
+                modules.addWidget(button, index // 2, index % 2)
+                self.overview_buttons[name] = button
+            section_layout.addLayout(modules)
+            layout.addWidget(section)
         layout.addStretch(1)
         return page
 
@@ -370,7 +391,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(8, 10, 8, 8)
-        heading = QLabel(name)
+        heading = QLabel(display_label(name))
         heading.setStyleSheet("font-weight: 600;")
         layout.addWidget(heading)
 
@@ -527,7 +548,7 @@ class MainWindow(QMainWindow):
             )
         elif name == "Battery":
             return (
-                "Battery\n\n"
+                "Battery Analysis\n\n"
                 "Select a BIN log above, then choose Analyse.\n\n"
                 "Reports use the existing Battery evidence pipeline without "
                 "changing pack tracking or history."
@@ -982,7 +1003,7 @@ class MainWindow(QMainWindow):
             return
         state = connection_status(self.current_analysis)
         self.statusBar().showMessage(
-            f"{prefix}{self.current_analysis} — {source} — {state}"
+            f"{prefix}{display_label(self.current_analysis)} — {source} — {state}"
         )
 
     def closeEvent(self, event) -> None:
