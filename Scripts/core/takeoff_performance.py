@@ -381,6 +381,29 @@ class _TelemetryRow:
     row: pd.Series
 
 
+class TakeoffTelemetryRowCache:
+    """Lazily prepare immutable telemetry ordering for one loaded flight log."""
+
+    def __init__(self, flight_log: FlightLog):
+        self.flight_log = flight_log
+        self._prepared: dict[str, tuple[_TelemetryRow, ...]] = {}
+
+    def rows(self, message: str) -> tuple[_TelemetryRow, ...]:
+        """Return one message stream using the established row semantics."""
+        if message not in self._prepared:
+            dataframe = self.flight_log.get(message)
+            rows = []
+            if not dataframe.empty and "TimeUS" in dataframe.columns:
+                for source_order, (_, row) in enumerate(dataframe.iterrows()):
+                    time_us = TakeoffPerformanceProcessor._integer(row.get("TimeUS"))
+                    if time_us is not None:
+                        rows.append(_TelemetryRow(time_us, source_order, row))
+            self._prepared[message] = tuple(
+                sorted(rows, key=lambda item: (item.time_us, item.source_order))
+            )
+        return self._prepared[message]
+
+
 @dataclass(frozen=True, slots=True)
 class _ConfigurationParameterSpec:
     """Formatting metadata for one selected launch parameter."""
@@ -469,9 +492,13 @@ class TakeoffPerformanceProcessor:
         self,
         flight_log: FlightLog,
         execution: TakeoffExecution,
+        row_cache: TakeoffTelemetryRowCache | None = None,
     ):
+        if row_cache is not None and row_cache.flight_log is not flight_log:
+            raise ValueError("Telemetry-row cache belongs to a different flight log")
         self.flight_log = flight_log
         self.execution = execution
+        self._row_cache = row_cache or TakeoffTelemetryRowCache(flight_log)
 
     def analyse(self) -> TakeoffPerformanceAnalysis | None:
         """Return metrics for one owned trigger, or None when unsupported."""
@@ -1756,16 +1783,8 @@ class TakeoffPerformanceProcessor:
             if start_us < telemetry.time_us < end_us
         ]
 
-    def _rows(self, message: str) -> list[_TelemetryRow]:
-        dataframe = self.flight_log.get(message)
-        if dataframe.empty or "TimeUS" not in dataframe.columns:
-            return []
-        rows = []
-        for source_order, (_, row) in enumerate(dataframe.iterrows()):
-            time_us = self._integer(row.get("TimeUS"))
-            if time_us is not None:
-                rows.append(_TelemetryRow(time_us, source_order, row))
-        return sorted(rows, key=lambda item: (item.time_us, item.source_order))
+    def _rows(self, message: str) -> tuple[_TelemetryRow, ...]:
+        return self._row_cache.rows(message)
 
     @staticmethod
     def _finite_float(value: object) -> float | None:
