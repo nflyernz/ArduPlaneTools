@@ -80,15 +80,6 @@ class RangeWalkPreviewWidget(QWidget):
         page1_layout.setContentsMargins(0, 0, 0, 0)
         self.pages.addWidget(page1)
 
-        notice = QLabel(
-            "<b>Range-Walk Comparison</b><br>"
-            "Compare repeatable radio range-walk recordings.<br>"
-            "Select an EdgeTX CSV to detect markers and prepare a range walk.<br>"
-            "The shared Source BIN selection does not apply."
-        )
-        notice.setWordWrap(True)
-        page1_layout.addWidget(notice)
-        self.preview_notice = notice
         source_layout = QHBoxLayout()
         source_layout.addWidget(QLabel("EdgeTX CSV:"))
         self.source_path_edit = QLineEdit()
@@ -161,12 +152,7 @@ class RangeWalkPreviewWidget(QWidget):
         self.report.setObjectName("range_walk_preview_report")
         self.report.setReadOnly(True)
         self.report.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.report.setPlainText(
-            "Range-Walk Comparison\n\n"
-            "Compare repeatable radio range-walk recordings.\n\n"
-            "Select an EdgeTX CSV to detect markers and prepare a range walk.\n\n"
-            "The shared Source BIN selection does not apply."
-        )
+        self.report.setPlainText("No CSV inspection or marker detection run yet.")
         page1_layout.addWidget(self.report, 1)
         self._build_baseline_page()
         self._build_history_page()

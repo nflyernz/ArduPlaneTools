@@ -119,13 +119,7 @@ class RadioLinkWidget(QWidget):
         self.report.setObjectName("radio_link_report")
         self.report.setReadOnly(True)
         self.report.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.report.setPlainText(
-            "Radio Link\n\n"
-            "Inspect radio-link quality and failsafe evidence.\n\n"
-            "Select a BIN log above, then choose Analyse.\n\n"
-            "The initial report shows a summary. Choose Show detailed evidence "
-            "for the full findings."
-        )
+        self.report.setPlainText("No analysis run yet.")
         layout.addWidget(self.report, 1)
         self._update_controls(False)
 

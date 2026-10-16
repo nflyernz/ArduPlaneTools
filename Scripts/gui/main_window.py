@@ -391,9 +391,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(8, 10, 8, 8)
-        heading = QLabel(display_label(name))
-        heading.setStyleSheet("font-weight: 600;")
-        layout.addWidget(heading)
+        self._add_module_header(name, layout)
 
         action_layout = QHBoxLayout()
         action_layout.addStretch(1)
@@ -448,11 +446,59 @@ class MainWindow(QMainWindow):
         report.setObjectName(f"{name.lower().replace(' ', '_')}_report")
         report.setReadOnly(True)
         report.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        report.setPlainText(self._context_message(name))
+        report.setPlainText(
+            "No management operation run yet."
+            if name == "Battery Pack Management"
+            else "No analysis run yet."
+        )
         report.setToolTip("Analysis report area")
         layout.addWidget(report, 1)
         self._reports[name] = report
         return page
+
+    def _add_module_header(self, name: str, layout: QVBoxLayout) -> None:
+        """Add the shared name, purpose and first action for one module."""
+        slug = name.lower().replace(" ", "_").replace("-", "_")
+        heading = QLabel(display_label(name))
+        heading.setObjectName(f"{slug}HeaderTitle")
+        heading.setStyleSheet("font-weight: 600;")
+        layout.addWidget(heading)
+
+        description = QLabel(_MODULE_DESCRIPTIONS[name])
+        description.setObjectName(f"{slug}HeaderDescription")
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        instruction = QLabel(self._module_instruction(name))
+        instruction.setObjectName(f"{slug}HeaderInstruction")
+        instruction.setWordWrap(True)
+        layout.addWidget(instruction)
+
+        if name == "Battery":
+            read_only = QLabel(
+                "This analysis is read-only. Battery pack identities, log "
+                "associations and history are managed separately under Battery "
+                "Pack Management."
+            )
+            read_only.setObjectName("batteryOperationalNote")
+            read_only.setWordWrap(True)
+            layout.addWidget(read_only)
+
+    @staticmethod
+    def _module_instruction(name: str) -> str:
+        if name == "Battery Pack Management":
+            return "Select a BIN log above to view or manage its pack association."
+        if name == "Pack Performance":
+            return (
+                "Select a Pack ID, then choose View report. "
+                "No BIN selection is required."
+            )
+        if name == "Range-Walk Comparison":
+            return (
+                "Select an EdgeTX CSV to detect markers and prepare a range walk. "
+                "The shared Source BIN selection does not apply."
+            )
+        return "Select a BIN log above, then choose Analyse."
 
     def _create_pack_management_controls(self, layout: QVBoxLayout) -> None:
         """Build explicit pack identity and history controls."""
@@ -526,28 +572,6 @@ class MainWindow(QMainWindow):
         self.pack_record_history_button.clicked.connect(self.record_pack_history)
         history_layout.addWidget(self.pack_record_history_button)
         layout.addWidget(history_group)
-
-    @staticmethod
-    def _context_message(name: str) -> str:
-        if name == "Battery Pack Management":
-            return (
-                "Battery Pack Management\n\n"
-                f"{_MODULE_DESCRIPTIONS[name]}\n\n"
-                "Select a BIN log to load its persistent association. Changes "
-                "and history recording occur only after explicit confirmation."
-            )
-        message = (
-            f"{display_label(name)}\n\n"
-            f"{_MODULE_DESCRIPTIONS[name]}\n\n"
-            "Select a BIN log above, then choose Analyse."
-        )
-        if name == "Battery":
-            message += (
-                "\n\nThis analysis is read-only. Battery pack identities, log "
-                "associations and history are managed separately under Battery "
-                "Pack Management."
-            )
-        return message
 
     def _request_pack_lookup(self) -> None:
         """Resolve the current BIN association without writing persistence."""

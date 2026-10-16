@@ -52,12 +52,7 @@ class PackPerformanceWidget(QWidget):
         self.report.setObjectName("pack_performance_report")
         self.report.setReadOnly(True)
         self.report.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.report.setPlainText(
-            "Pack Performance\n\n"
-            "Compare battery-pack performance across logs.\n\n"
-            "Select a Pack ID, then choose View report.\n\n"
-            "Reports use saved battery history; no BIN selection is required."
-        )
+        self.report.setPlainText("No report loaded yet.")
         layout.addWidget(self.report, 1)
         self.set_busy(False)
 
