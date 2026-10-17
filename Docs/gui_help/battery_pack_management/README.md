@@ -1,13 +1,15 @@
 # Battery Pack Management
 
-Battery Pack Management maintains user-defined identities for physical battery packs and associates source BIN content with those identities. Select one BIN with the shared chooser, then open this tab to see whether its content identity is unseen, tracked to a Pack ID, or explicitly not tracked. An association applies to the entire source BIN, not to one flight within it.
+Battery Pack Management lets you identify your physical batteries and link flight logs to them, so APT can build historical battery performance reports.
 
-The GUI can assign the selected BIN to an existing Pack ID, atomically create and assign a new Pack ID, or rename an existing Pack ID. Renaming is global: every BIN identity associated with the old Pack ID is updated. A log is identified by its SHA-256 content fingerprint, so identical-content files share an association even when their filenames differ.
+Select a BIN log using the shared chooser, then open this tab to see which Pack ID is assigned to it. You can select an existing Pack ID, create a new one, or mark the BIN as not tracked. A Pack ID applies to the entire BIN log, not individual flights within it.
 
-Every write requires explicit confirmation. Opening the tab, selecting a BIN, refreshing its association or cancelling a confirmation does not change persistent data. Duplicate or invalid Pack IDs are rejected rather than merged, and failed writes retain the previously persisted store.
+You can also rename an existing Pack ID. Renaming updates all saved BIN records that use that Pack ID.
 
-**Record AUTO takeoff history** is a separate explicit action available only for a tracked BIN. It processes all supported flights and battery instances through the existing history recorder and reports how many new observations were stored. Repeating the action for evidence already recorded reports zero; assignment and rename actions never record history automatically.
+Changes require confirmation. Simply opening the tab, selecting a BIN or refreshing the information does not change saved records. Duplicate or invalid Pack IDs are rejected.
 
-Pack identities and explicitly recorded history support Pack Performance reports. Historical observations retain their original ingest provenance, while current report ownership follows the source BIN's current association.
+**Record AUTO takeoff history** saves supported takeoff and battery observations from the selected BIN to the assigned battery's history. These saved observations can then be viewed and compared across flight logs in the **Pack Performance** tab.
 
-Pack assignment is user metadata. ArduPlaneTools cannot determine which physical battery was installed from DataFlash evidence alone, and it does not merge packs automatically.
+Recording history requires a BIN with an assigned Pack ID. The action reports how many new observations were saved. Repeating it will not duplicate observations already recorded. Assigning or renaming a Pack ID does not automatically record history.
+
+APT cannot determine which physical battery was installed from the flight log alone. You identify the battery by assigning its Pack ID. Identical copies of a BIN log share the same saved Pack ID, even if their filenames differ.

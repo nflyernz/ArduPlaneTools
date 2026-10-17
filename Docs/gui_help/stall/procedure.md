@@ -19,15 +19,14 @@ This procedure supports the Stall Analysis evidence model for deliberate FBWA sl
 1. Review the aircraft, control setup, centre of gravity, weather, test area and applicable operating rules.
 2. Brief the intended FBWA entry, demand, termination cues, MANUAL recovery action and altitude limits.
 3. Confirm that control surfaces, airspeed instrumentation where fitted, mode selection and logging are operating normally.
-4. Begin a clean DataFlash BIN and establish stable flight with sufficient height and space for the planned test and recovery.
+4. Establish stable flight with sufficient height and space for the planned test and recovery. Confirm that DataFlash logging is active.
 
 ## FBWA slow-flight evidence
 
 1. Enter FBWA and establish the intended starting condition without abrupt control inputs.
-2. Reduce energy progressively using the aircraft-specific test plan while monitoring attitude, airspeed evidence, control response and altitude margin.
-3. Apply only the planned elevator demand. Terminate the test if control becomes uncertain, the recovery-altitude limit is approached, or the aircraft departs the intended condition.
-4. If an attitude departure is attempted or observed, release the test demand and execute the established recovery plan. Do not hold nose-up demand into an uncontrolled departure.
-5. Confirm stable airspeed and attitude after recovery. Reassess conditions and safety margins before any further attempt.
+2. Reduce energy progressively while monitoring attitude, airspeed evidence, control response and altitude margin.
+3. If an attitude departure is observed, release the test demand and execute the established recovery plan.
+4. Confirm stable airspeed and attitude after recovery. Reassess conditions and safety margins before any further attempt.
 
 ## After flight
 

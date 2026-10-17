@@ -63,61 +63,49 @@ def test_only_documented_field_modules_have_test_procedure_buttons(window):
         (
             "Radio Link",
             (
-                "Safe preparation",
-                "Isolate propulsion",
-                "Recording boundaries",
-                "fresh flight-controller power-on session",
-                "fresh transmitter power-on and CSV-logging session",
-                "Do not combine recordings across power cycles",
-                "CSV logging stops at shutdown",
-                "separate transmitter session",
-                "no continuous transmitter telemetry",
-                "do not prove that a BIN and CSV belong",
-                "short-failsafe response",
-                "long-failsafe response",
-                "Restore valid RC input",
-                "does not exercise every",
-                "Aircraft BIN evidence",
-                "transmitter-side source",
-                "Optional EdgeTX CSV recording and analysis",
+                "Radio Link Test Procedure",
+                "two separate tests",
+                "Bench transmitter-off/on",
+                "Ground walk to link loss",
+                "Remove the propeller",
+                "No Pulses",
+                "fresh aircraft and transmitter power-on sessions",
+                "at least five seconds of additional margin",
+                "short and long failsafe actions and recovery",
+                "CSV logging stops when the transmitter powers off",
+                "recording after transmitter restart is a separate session",
+                "transmitter normally remains powered and recording",
+                "BIN establishes logged failsafe episodes",
+                "CSV provides supplementary transmitter-side telemetry",
                 "Discover nearby",
                 "Auto pair",
-                "exactly one eligible candidate",
+                "diagnostic hints",
                 "Use selected",
-                "not proof that the BIN and CSV belong",
-                "pairing status",
-                "alignment status",
-                "not necessarily measurements",
-                "Remove CSV evidence",
-                "not a measured RF-link failure",
+                "Manual selection does not prove",
+                "five-marker Range-Walk Comparison procedure",
             ),
         ),
         (
             "Range-Walk Comparison",
             (
-                "Safe ground preparation",
-                "isolate propulsion",
-                "Do not arm the aircraft",
-                "fresh EdgeTX CSV-logging session",
-                "Baseline radio configuration",
-                "Walk 1 is the baseline",
-                "separate reconnaissance walk is not required",
-                "five safe physical landmarks",
-                "Landmark 5 is the safe turnaround",
-                "full elevator-down position",
+                "Range-Walk Comparison Test Procedure",
+                "five identifiable landmarks",
+                "Five landmarks define four measured sections",
+                "Walk 1 establishes the baseline",
+                "Record an additional walk",
+                "three seconds",
                 "Return the elevator stick to neutral",
-                "do not manufacture a missing marker",
-                "must not be assumed to have equal distance",
-                "not measured poor signal",
-                "CSV and marker preview",
-                "estimates neutral and endpoints only from sustained observations",
-                "Leave Auto selected",
-                "clearly stronger",
-                "Use Inverse",
-                "reports the ambiguity",
-                "requires no manual neutral or near-down entry",
-                "33% neutral-return tolerance",
-                "Candidate detection does not confirm",
+                "Automatic (recommended)",
+                "Opposite direction",
+                "Detect markers",
+                "Next: Walk Setup",
+                "History & Comparison",
+                "Baseline radio configuration",
+                "repeat the walk rather than inventing one",
+                "Leave missing markers unassigned",
+                "do not assume that four detected markers represent landmarks 1–4",
+                "same walking route",
+                "RF settings unchanged",
             ),
         ),
         (
@@ -131,6 +119,9 @@ def test_only_documented_field_modules_have_test_procedure_buttons(window):
                 "restore stable airspeed and attitude",
                 "does not itself prove or guarantee recovery",
                 "does not by itself prove an aerodynamic stall",
+                "Confirm that DataFlash logging is active",
+                "Reduce energy progressively",
+                "release the test demand",
             ),
         ),
     ],
@@ -159,6 +150,9 @@ def test_procedure_opens_directly_without_bin_or_analysis_dispatch(
     assert viewer.browser.isReadOnly()
     assert "Documentation unavailable" not in text
     assert all(expected in text for expected in required_text)
+    if module == "Stall":
+        assert "Begin a clean DataFlash BIN" not in text
+        assert "Apply only the planned elevator demand" not in text
 
 
 def test_procedure_files_are_local_nonempty_markdown():
@@ -179,14 +173,12 @@ def test_radio_link_procedure_keeps_aircraft_and_transmitter_sessions_separate()
         encoding="utf-8"
     )
 
-    assert "**Aircraft BIN session:**" in text
-    assert "power down the aircraft safely to end that session" in text
-    assert "**EdgeTX CSV session:**" in text
-    assert "transmitter is safely powered down" in text
-    assert "Do not combine recordings across power cycles" in text
-    assert "recording made after restarting the transmitter" in text
-    assert "no continuous transmitter telemetry across the power-off interval" in text
-    assert "boundaries alone do not prove that a BIN and CSV belong" in text
+    assert "fresh aircraft and transmitter power-on sessions" in text
+    assert "CSV logging stops when the transmitter powers off" in text
+    assert "recording after transmitter restart is a separate session" in text
+    assert "Do not combine the files" in text
+    assert "transmitter normally remains powered and recording" in text
+    assert "Manual selection does not prove the BIN and CSV came from" in text
 
 
 def test_docs_and_procedure_windows_coexist_and_retain_separate_identity(
@@ -205,7 +197,7 @@ def test_docs_and_procedure_windows_coexist_and_retain_separate_identity(
     assert docs.isVisible() and procedure.isVisible()
     assert docs.tabs.count() == 2
     assert "Radio Link Analysis" in docs.readme_browser.toPlainText()
-    assert "Radio Link ground-test procedure" in procedure.browser.toPlainText()
+    assert "Radio Link Test Procedure" in procedure.browser.toPlainText()
 
     subject.docs_buttons["Radio Link"].click()
     subject.procedure_buttons["Radio Link"].click()
@@ -248,7 +240,7 @@ def test_range_walk_procedure_closes_and_reopens_without_bin(qt_app, window):
     qt_app.processEvents()
     first = subject._procedure_windows["Range-Walk Comparison"]
     assert subject.selected_log is None
-    assert "Range-Walk Comparison field-test procedure" in (
+    assert "Range-Walk Comparison Test Procedure" in (
         first.browser.toPlainText()
     )
     assert radio_calls == [] and stall_calls == []

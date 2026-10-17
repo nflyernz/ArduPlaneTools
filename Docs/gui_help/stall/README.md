@@ -1,6 +1,6 @@
 # Stall Analysis
 
-Stall Analysis reviews deliberate FBWA slow-flight attempts in one ArduPlane DataFlash BIN. It is connected to the GUI: select an existing BIN and choose **Analyse**.
+Stall Analysis reviews deliberate FBWA slow-flight attempts in one ArduPlane DataFlash BIN. Select an existing BIN and choose **Analyse**.
 
 The report classifies retained attempts as **Probable demand-opposed attitude departure**, **No demonstrated departure**, **Ambiguous**, or **Rejected candidate**. It relates continuing pilot demand, FBWA target, controller command/output, measured attitude response, raw airspeed with calibration provenance, flight context, and observed recovery-control milestones. Same-flight clean-idle probable events may form a descriptive airspeed cohort only when their evidence and calibration are compatible.
 
