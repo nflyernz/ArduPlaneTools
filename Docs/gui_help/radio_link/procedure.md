@@ -1,57 +1,70 @@
-# Radio Link ground-test procedure
+# Radio Link Test Procedure
 
-This procedure gathers controlled aircraft-side RC-failsafe evidence for Radio Link Analysis. It is a ground test. Adapt the preparation to the aircraft, site, firmware configuration and operator responsibilities.
+Radio Link Analysis examines how ArduPlane detects and responds to RC-link loss through two separate tests:
 
-## Safe preparation
+1. **Bench transmitter-off/on:** Switch the transmitter fully off to trigger failsafe, then back on to observe recovery.
+2. **Ground walk to link loss:** Walk away until RC control is lost, then return until control is restored.
 
-1. Secure the aircraft in a clear test area and keep people away from control surfaces and propulsion.
-2. Isolate propulsion so that an unexpected output cannot produce thrust. Removing the propeller is the preferred physical isolation where practical; follow the aircraft's electrical and battery safety procedures.
-3. Confirm that the flight controller, receiver and transmitter installation are complete and powered as intended for the test.
-4. Verify the configured Plane RC-failsafe settings, including the short and long timeout and action settings applicable to the installed firmware. Record any settings needed to interpret the test.
-5. Establish a valid RC link and confirm normal control input before interrupting it.
-6. If the intended evidence requires an armed state, arm only after propulsion is physically isolated and all ground-test precautions are in place. Radio Link Analysis preserves armed, disarmed and unknown states separately.
+Both tests require an aircraft DataFlash BIN. EdgeTX CSV telemetry is optional supporting evidence. Neither test is the five-marker Range-Walk Comparison procedure.
 
-## Recording boundaries
+## Safety and preparation — both tests
 
-Keep the aircraft and transmitter recordings within their own power-on sessions. Do not combine recordings across power cycles or treat separate sessions as continuous evidence.
+1. Remove the propeller, secure the aircraft and keep people clear of moving parts.
+2. Confirm DataFlash logging and normal receiver/transmitter operation.
+3. Review configured short and long failsafe timeouts and actions. Do not alter them merely to satisfy the analyser.
+4. Configure the receiver to provide an ArduPilot-recognised failsafe indication on RF loss. **No Pulses** is the recommended setting where supported; digital protocols may provide their own failsafe indication. Verify actual ArduPlane detection during the propeller-off test. Holding channels or sending unrecognised preset values may conceal RF loss.
+5. Record TX power, packet rate, dynamic-power state and other relevant RF settings.
+6. **Start fresh aircraft and transmitter power-on sessions for each test.** Wait for valid GPS/date-time before interrupting the link.
+7. If recording EdgeTX telemetry, enable CSV logging and confirm GPS telemetry where available.
+8. Arm only when deliberately testing armed-state actions, with the propeller removed and the aircraft secured. Disarmed results are not equivalent.
 
-- **Aircraft BIN session:** Begin with the aircraft powered down, then use a fresh flight-controller power-on session for the intended test. After restoring valid RC input, confirming the expected recovery and disarming where applicable, power down the aircraft safely to end that session. Retain the BIN produced by that single aircraft session.
-- **EdgeTX CSV session:** Begin with the transmitter powered down, then use a fresh transmitter power-on and CSV-logging session with the intended model and telemetry configuration. Keep the corresponding recording within that transmitter session and end it when the transmitter is safely powered down.
+For deliberate long-failsafe tests, allow the applicable configured timeout plus **at least five seconds of additional margin**.
 
-If switching off the transmitter is part of the failsafe test, EdgeTX CSV logging stops at shutdown. A recording made after restarting the transmitter belongs to a separate transmitter session; there is no continuous transmitter telemetry across the power-off interval. Keep the separate CSV files separate.
+## Test 1 — Bench transmitter-off/on
 
-Aircraft and transmitter power-cycle boundaries describe their respective recording sessions. Matching or similar boundaries alone do not prove that a BIN and CSV belong to the same test; pairing and alignment still require the evidence review described below.
+This test observes ArduPlane's short and long failsafe actions and recovery during complete transmitter shutdown.
 
-## Controlled interruption
+1. Establish normal RC control and the intended armed/disarmed state.
+2. Switch the transmitter fully off.
+3. Keep it off long enough to observe the intended failsafe response, including the additional margin for long failsafe.
+4. Switch the transmitter back on.
+5. Confirm RC-link recovery, check the resulting mode and select a safe mode if required.
+6. Disarm if armed, then power down the aircraft.
+7. Retain the BIN from that aircraft session.
 
-1. Within the fresh aircraft session, allow the aircraft to establish normal RC input before beginning the intended test.
-2. Deliberately interrupt RC input using the planned test method.
-3. Observe the configured short-failsafe response and, if the test plan calls for it, maintain the interruption long enough to observe the configured long-failsafe response.
-4. Record observable mode changes or messages without relying on them as the only evidence. The BIN analysis associates logged RCI2, MSG and MODE evidence according to their separate meanings.
-5. Restore valid RC input deliberately and confirm that control input and the expected flight mode have recovered before ending the recording.
-6. Disarm where applicable, power down the aircraft safely to end the session and retain its BIN.
+EdgeTX CSV logging stops when the transmitter powers off. The recording after transmitter restart is a separate session. Do not combine the files or imply continuous telemetry during shutdown.
 
-Transmitter shutdown is one controlled way to interrupt RC input. It does not exercise every interference, antenna, receiver, protocol or partial-link failure mode and must not be treated as a complete RF-system qualification.
+## Test 2 — Ground walk to link loss
 
-## Analyse the BIN
+This test observes failsafe behaviour as the usable RF link is lost and subsequently restored.
 
-1. Open **Radio Link** in ArduPlaneTools and select the recorded BIN.
-2. Choose **Analyse** and review the summary first.
-3. Open **Show detailed evidence** to inspect sampled RC-input invalid boundaries, short and long failsafe messages, mode response, recovery, timing qualifications and commanded-output evidence.
-4. Treat Plane's BIN failsafe evidence as authoritative for aircraft response. BIN timestamps describe logged and sampled observations; they do not establish the exact physical RF-loss instant.
+1. Choose a safe walking route; keep the aircraft stationary, secured and with propeller removed.
+2. Begin fresh aircraft and transmitter recording sessions. Confirm normal RC control, GPS/date-time and RF settings.
+3. Establish the intended armed/disarmed state under the precautions above.
+4. Walk away while monitoring transmitter link and telemetry indications.
+5. Continue until the RC link is clearly lost.
+6. For long failsafe, remain beyond usable RC input for the configured timing plus the additional margin, provided it is safe to do so.
+7. Walk back until RC control returns.
+8. Verify control and mode recovery, then disarm if armed.
+9. Power down and retain the aircraft BIN and corresponding EdgeTX CSV.
 
-Aircraft BIN evidence does not provide transmitter-side RF margin, transmitter power state, packet rate or distance.
+The transmitter normally remains powered and recording during this walk, unlike the transmitter-off test. The test does not establish physical RF-loss distance unless that distance is independently measured.
 
-## Optional EdgeTX CSV recording and analysis
+## Analyse the recordings
 
-This optional recording is a separate transmitter-side source that supplements the aircraft ground test. It does not change the physical test method or the aircraft BIN evidence.
+1. Open **Radio Link**, select the aircraft BIN and choose **Analyse**.
+2. Review the summary and **Show detailed evidence**.
+3. Use **Discover nearby** for optional CSV candidates.
+4. Use **Auto pair** when a uniquely eligible CSV is available. Otherwise, use the diagnostic hints to guide **Use selected** or **Browse CSV…**.
+5. Review pairing, alignment, RF measurements, missing telemetry and warnings.
 
-1. Follow the transmitter recording boundary above and confirm EdgeTX CSV logging before the controlled test.
-2. After the test, retain the original transmitter CSV together with its corresponding aircraft BIN. CSV clock times may differ from aircraft GPS time, so session pairing and timeline alignment require careful review.
-3. In the GUI, analyse the aircraft BIN first. Then choose **Discover nearby** to inspect CSV files beside the BIN, or **Browse CSV…** to choose a file elsewhere.
-4. Inspect each candidate's diagnostic hints. Choose **Auto pair** only when the application identifies exactly one eligible candidate.
-5. Choose **Use selected** to explicitly associate the selected CSV with the analysed BIN. Explicit selection records the user's choice; it is not proof that the BIN and CSV belong to the same flight or session.
-6. Review the reported pairing status, alignment status, telemetry availability and warnings. Distinguish session-wide RF observations from episode-specific measurements. RF observations are not necessarily measurements at the aircraft's logged failsafe boundaries.
-7. Choose **Remove CSV evidence** to remove the optional transmitter evidence and return to the cached BIN-only report. This does not delete the CSV or rerun the aircraft analysis.
+Manual selection does not prove the BIN and CSV came from the same test.
 
-Missing or zero-filled transmitter telemetry is unavailable evidence, not a measured RF-link failure. Transmitter evidence must not alter the Plane failsafe episodes or aircraft response established from the BIN.
+## Interpreting results
+
+- The BIN establishes logged failsafe episodes, commands, mode response and recovery.
+- The CSV provides supplementary transmitter-side telemetry.
+- Episode-specific RF measurements require adequate alignment evidence.
+- Missing or zero-filled telemetry is not a valid RF measurement.
+- Logged motor/throttle commands do not prove physical motor operation.
+- The exact instant of physical RF loss cannot be inferred from sampled logging alone.
