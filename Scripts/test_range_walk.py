@@ -343,6 +343,37 @@ def test_fluctuating_rf_graphs_share_rssi_scale_and_keep_real_gaps(
             actual_close(figure)
 
 
+def test_section_plot_qualifies_unverified_and_different_rf_settings(
+        monkeypatch, tmp_path):
+    import matplotlib.pyplot as plt
+
+    first = _walk(_session(tmp_path, name="baseline.csv"), baseline=True)
+    unknown = _walk(
+        _session(tmp_path, name="unknown.csv"),
+        settings=WalkSettings("50 mW", "", "", "off"),
+    )
+    different = _walk(
+        _session(tmp_path, name="different.csv"),
+        settings=WalkSettings("100 mW", "250 Hz", "2.4 GHz / mode 2", "off"),
+    )
+    figures = []
+    actual_close = plt.close
+    monkeypatch.setattr(plt, "close", lambda figure: figures.append(figure))
+    try:
+        for walk in (unknown, different):
+            presentation.write_range_walk_graphs(
+                [first, walk], LANDMARKS, tmp_path / walk.label.replace(" ", "_")
+            )
+        assert "RF settings not independently verified" in (
+            figures[2].axes[0].lines[1].get_label()
+        )
+        assert "RF settings differ" in figures[5].axes[0].lines[1].get_label()
+        assert "RF settings differ" not in figures[2].axes[0].lines[1].get_label()
+    finally:
+        for figure in figures:
+            actual_close(figure)
+
+
 def test_section_comparison_does_not_plot_unavailable_metrics_as_zero(
         monkeypatch, tmp_path):
     import matplotlib.pyplot as plt
