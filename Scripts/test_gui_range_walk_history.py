@@ -651,6 +651,7 @@ def test_saved_comparison_reconstructs_sections_and_displays_plots(
     assert "100% observed time" in widget.comparison_table.item(1, 6).text()
     assert "settings inherited" in widget.comparison_table.item(1, 8).text()
     assert widget.plot_tabs.count() == 3
+    assert widget.plot_tabs.tabText(2) == "Section RSSI and RQly P10 comparison"
     assert len(widget._plot_pixmaps) == 3
     assert all(not pixmap.isNull() for pixmap in widget._plot_pixmaps)
     qualification = widget.comparison_qualification.text()

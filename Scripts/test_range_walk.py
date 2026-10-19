@@ -315,11 +315,55 @@ def test_fluctuating_rf_graphs_share_rssi_scale_and_keep_real_gaps(
         assert {label.get_text() for label in figures[0].axes[0].texts} == {
             "1", "2", "3", "4", "5"}
         assert "turnaround" in figures[0].texts[1].get_text().casefold()
-        assert figures[2].axes[0].get_xlim()[1] > 3
+        comparison = figures[2]
+        assert len(comparison.axes) == 2
+        assert comparison.axes[0].get_xlim()[1] > 3
+        assert comparison.axes[1].get_ylim() == (-2, 102)
+        assert len(comparison.axes[0].lines) == 2
+        assert len(comparison.axes[1].lines) == 2
+        assert [line.get_color() for line in comparison.axes[0].lines] == [
+            line.get_color() for line in comparison.axes[1].lines
+        ]
+        assert list(comparison.axes[0].lines[0].get_ydata()) == [
+            section.p10_values["1RSS(dB)"] for section in first.sections
+        ]
+        assert list(comparison.axes[1].lines[0].get_ydata()) == [
+            section.p10_values["RQly(%)"] for section in first.sections
+        ]
+        assert (
+            "metric-specific observed-time coverage"
+            in comparison.texts[-1].get_text()
+        )
         for path in paths:
             with Image.open(path) as image:
                 assert image.width == 1200
                 assert image.height <= 700
+    finally:
+        for figure in figures:
+            actual_close(figure)
+
+
+def test_section_comparison_does_not_plot_unavailable_metrics_as_zero(
+        monkeypatch, tmp_path):
+    import matplotlib.pyplot as plt
+
+    first = _walk(
+        _session(tmp_path, name="unavailable.csv", unavailable=((4, 8),)),
+        baseline=True,
+    )
+    second = _walk(_session(tmp_path, name="available.csv", rssi=-80))
+    figures = []
+    actual_close = plt.close
+    monkeypatch.setattr(plt, "close", lambda figure: figures.append(figure))
+    try:
+        presentation.write_range_walk_graphs(
+            [first, second], LANDMARKS, tmp_path / "unavailable_graphs"
+        )
+        comparison = figures[2]
+        assert math.isnan(comparison.axes[0].lines[0].get_ydata()[0])
+        assert math.isnan(comparison.axes[1].lines[0].get_ydata()[0])
+        assert 0 not in comparison.axes[0].lines[0].get_ydata()
+        assert 0 not in comparison.axes[1].lines[0].get_ydata()
     finally:
         for figure in figures:
             actual_close(figure)
