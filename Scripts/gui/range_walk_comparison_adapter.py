@@ -178,7 +178,7 @@ def _plot_title(filename: str) -> str:
         return "Walk 1 RF"
     if filename == "walk_2_rf.png":
         return "Comparison walk RF"
-    return "Section 1RSS P10 comparison"
+    return "Section RSSI and RQly P10 comparison"
 
 
 def _saved_metadata(
