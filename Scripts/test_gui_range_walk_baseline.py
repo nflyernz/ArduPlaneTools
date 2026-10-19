@@ -314,7 +314,9 @@ def test_range_walk_help_describes_baseline_scope_and_invalidation():
     ):
         assert required in procedure
     assert "checksum-named preserved copy" in glossary
-    assert "not yet available in the GUI" in readme
+    assert "History & Comparison" in readme
+    assert "checksum-verified CSV copies" in readme
+    assert "not independent confirmation" in readme
     for text in (glossary, procedure):
         assert "Baseline radio configuration" in text
     assert "Update saved Walk 1" in glossary

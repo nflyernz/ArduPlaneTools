@@ -13,6 +13,7 @@ from core.range_walk import (
     MarkerCalibration,
     WalkSettings,
     build_walk,
+    build_walk_from_landmarks,
     detect_markers,
     interval_evidence,
     settings_comparable,
@@ -133,6 +134,31 @@ def test_five_explicit_landmarks_extra_candidate_and_missing_boundaries(tmp_path
     incomplete = _walk(session, selected=(1, 2, None, 4, 6))
     assert incomplete.sections[1:3] == (None, None)
     assert incomplete.sections[0] is not None
+
+
+def test_confirmed_landmark_reconstruction_matches_detected_walk(tmp_path):
+    session = _session(tmp_path, unavailable=((17, 18),))
+    detected = _walk(session, baseline=True)
+
+    reconstructed = build_walk_from_landmarks(
+        session,
+        detected.label,
+        detected.antenna,
+        detected.settings,
+        detected.candidates,
+        detected.landmarks,
+    )
+
+    assert reconstructed == detected
+    with pytest.raises(ValueError, match="five landmark positions"):
+        build_walk_from_landmarks(
+            session,
+            detected.label,
+            detected.antenna,
+            detected.settings,
+            detected.candidates,
+            detected.landmarks[:4],
+        )
 
 
 def test_unavailable_partial_ambiguous_and_valid_zero_are_distinct(tmp_path):
