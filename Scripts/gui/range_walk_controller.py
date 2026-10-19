@@ -26,6 +26,10 @@ from .range_walk_history_adapter import (
     SavedWalk1Result,
     UpdateWalk1Request,
 )
+from .range_walk_comparison_adapter import (
+    RangeWalkComparisonRequest,
+    RangeWalkComparisonResult,
+)
 from .range_walk_widget import RangeWalkPreviewWidget
 
 
@@ -61,6 +65,7 @@ class RangeWalkPreviewController:
             self.request_preview,
             self.request_persist,
             self.request_history,
+            self.request_comparison,
             parent,
         )
         self.widget = widget
@@ -148,7 +153,26 @@ class RangeWalkPreviewController:
         self._require_widget().show_history_busy()
         self.show_status("Loading saved Range-Walk baselines")
 
+    def request_comparison(self) -> None:
+        if self.is_busy():
+            return
+        baseline_id, walk_id = self._require_widget().selected_history_ids()
+        if baseline_id is None or walk_id is None:
+            return
+        self._request_id += 1
+        request = RangeWalkComparisonRequest(
+            baseline_id, walk_id, self._request_id
+        )
+        self._task = "compare"
+        self.start_worker(
+            self.analysis_name, request, self.history_service.compare
+        )
+        self._require_widget().show_comparison_busy()
+        self.show_status("Building saved Range-Walk RF comparison")
+
     def handle_success(self, result: object) -> bool:
+        if isinstance(result, RangeWalkComparisonResult):
+            return self._handle_comparison(result)
         if isinstance(result, SavedAdditionalWalkResult):
             return self._handle_saved_additional_walk(result)
         if isinstance(result, SavedWalk1Result):
@@ -181,6 +205,9 @@ class RangeWalkPreviewController:
         elif operation == "history":
             message = f"Unable to load Range-Walk history: {exc}"
             self._require_widget().show_history_error(message)
+        elif operation == "compare":
+            message = f"Unable to compare saved Range-Walk evidence: {exc}"
+            self._require_widget().show_comparison_error(message)
         else:
             message = f"Unable to preview Range-Walk CSV: {exc}"
             self._require_widget().show_error(message, operation)
@@ -253,10 +280,28 @@ class RangeWalkPreviewController:
         if result.request_id != self._request_id:
             self.show_status("Stale Range-Walk history result was withheld")
             return True
-        self._require_widget().show_history(result.text, result.records)
+        self._require_widget().show_history(
+            result.text, result.records, result.walks
+        )
         self.show_status(
             f"Loaded {len(result.records)} baseline(s) and "
             f"{len(result.walks)} additional walk(s)"
+        )
+        return True
+
+    def _handle_comparison(self, result: RangeWalkComparisonResult) -> bool:
+        widget = self._require_widget()
+        if (
+            result.request_id != self._request_id
+            or widget.selected_history_ids()
+            != (result.baseline.baseline_id, result.walk.walk_id)
+        ):
+            self.show_status("Stale Range-Walk comparison was withheld")
+            return True
+        widget.show_comparison(result)
+        self.show_status(
+            f"Range-Walk comparison ready — {result.baseline.label} / "
+            f"{result.walk.label}"
         )
         return True
 

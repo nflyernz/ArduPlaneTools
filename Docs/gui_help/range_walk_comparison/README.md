@@ -14,6 +14,6 @@ For reliable comparisons, keep the route, landmarks, transmitter RF settings and
 
 Each saved walk preserves its original CSV evidence. Missing markers can be recorded in additional walks rather than guessed or assigned automatically.
 
-RF comparison reports and graphs are currently available through APT's interactive command-line workflow. They are not yet available in the GUI.
+The GUI **History & Comparison** page reconstructs section statistics and RF plots from the checksum-verified CSV copies saved with each baseline and additional walk. Select a baseline and one associated walk, then choose **Compare selected walks**. Missing telemetry remains unavailable evidence rather than zero signal, and saved settings inherited from Walk 1 are not independent confirmation of the later walk's settings.
 
 See **Test Procedure** for instructions on recording and saving your walks.
