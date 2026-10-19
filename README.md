@@ -154,11 +154,12 @@ for testing. Complete steps 1–10 once.
 4. Right-click the downloaded ZIP, choose **Extract All…**, retain the proposed
    destination, and select **Extract**. The folder is normally named
    `ArduPlaneTools-main`.
-5. Download the recommended **Windows installer (64-bit)** for
-   [Python 3.13.16](https://www.python.org/downloads/release/python-31316/)
-   from Python.org. Run it, enable **Add python.exe to PATH** if offered, and
-   complete the standard installation. Do not select the experimental
-   free-threaded build.
+5. Open the [Python 3.13.16 download page](https://www.python.org/downloads/release/python-31316/).
+   Scroll down to **Files** and select **Windows installer (64-bit)**. Do not
+   select the Python install manager button near the top of the page. Run the
+   downloaded installer, keep the **Python launcher** enabled, and select
+   **Add python.exe to PATH** if offered. Complete the standard installation;
+   do not select the experimental free-threaded build.
 6. Open **Command Prompt**: open the Start menu, type `Command Prompt`, and
    select it.
 7. Change into the extracted folder. For the normal Downloads location, copy
