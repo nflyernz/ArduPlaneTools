@@ -282,7 +282,16 @@ def write_range_walk_graphs(walks: list[WalkEvidence],
     for number, walk in enumerate(walks, 1):
         label = f"Walk {number} — {walk.label}"
         if number > 1 and not settings_comparable(walks[0], walk):
-            label += " (not like-for-like settings)"
+            fields = ("tx_power", "packet_rate", "rf_mode", "dynamic_power")
+            known_difference = any(
+                getattr(walks[0].settings, field)
+                and getattr(walk.settings, field)
+                and getattr(walks[0].settings, field) !=
+                getattr(walk.settings, field)
+                for field in fields
+            )
+            label += (" (RF settings differ)" if known_difference
+                      else " (RF settings not independently verified)")
         for axis, field in zip(axes, ("1RSS(dB)", "RQly(%)")):
             values = [section.p10_values[field] if section else None
                       for section in walk.sections]
