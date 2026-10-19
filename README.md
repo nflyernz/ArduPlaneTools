@@ -2,7 +2,9 @@
 
 ArduPlaneTools (APT) is a Python application for evidence-based analysis of
 ArduPlane flight logs. It reads ArduPlane DataFlash BIN logs and, where a
-workflow supports it, EdgeTX transmitter CSV recordings.
+workflow supports it, EdgeTX transmitter CSV recordings. See the
+[illustrated APT Wiki](https://github.com/nflyernz/ArduPlaneTools/wiki) for
+step-by-step module guides, screenshots and reference material.
 
 APT focuses on ArduPlane 4.7.x evidence. It provides a native PySide6 desktop
 interface and a terminal interface. Reports preserve missing or ambiguous
