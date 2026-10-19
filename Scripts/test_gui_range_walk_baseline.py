@@ -290,39 +290,35 @@ def test_range_walk_help_describes_baseline_scope_and_invalidation():
         root / "Docs/gui_help/range_walk_comparison/procedure.md"
     ).read_text()
 
-    for text in (readme, procedure):
-        assert "Walk 1 baseline" in text
-        assert "extra candidates" in text
-        assert "changing the CSV" in text
-    assert "additional walks associated with those baselines" in readme
-    assert "additional-walk entry" in procedure
-    for text in (readme, glossary, procedure):
-        assert "no separate" in text
+    assert "Walk 1 establishes the baseline" in readme
+    assert "Walk 1 establishes the baseline for every subsequent comparison" in procedure
+    assert "five physical landmarks" in readme
+    assert "four sections" in readme
+    assert "Later walks repeat the same route and landmarks" in readme
+    assert "Exclude extra candidates" in procedure
+    assert "rather than guessed or assigned automatically" in readme
+    assert "Leave missing markers unassigned" in procedure
+    assert "no separate description field" in glossary
+    for text in (glossary, procedure):
         assert "landmark 5" in text.lower()
-    assert "without reordering" in readme
+    assert "never moved out of recorded order" in glossary
     assert "Optional operator-entered" in glossary
     for required in (
-        "same five physical landmarks",
-        "same landmark order",
-        "same turnaround",
-        "same walking route",
-        "same RF settings",
-        "The radio configuration is the variable being tested.",
         "Record exactly what changes between walks",
     ):
         assert required in readme
+    for required in (
+        "Repeat the same walking route, five landmarks, marker holds and turnaround",
+        "Keep the transmitter RF settings unchanged",
+        "Change only the radio configuration you intend to compare",
+    ):
         assert required in procedure
-    assert "checksum-named copy" in procedure
-    assert "comparisons are not yet available" in readme
-    for text in (readme, glossary, procedure):
+    assert "checksum-named preserved copy" in glossary
+    assert "not yet available in the GUI" in readme
+    for text in (glossary, procedure):
         assert "Baseline radio configuration" in text
-    assert "Update saved Walk 1" in readme
     assert "Update saved Walk 1" in glossary
     assert "Update saved Walk 1" in procedure
-    for required in (
-        "Test radio configuration",
-        "missing/unconfirmed",
-        "four candidates",
-        "does not establish that the physical landmark was not visited",
-    ):
-        assert required in readme or required in procedure or required in glossary
+    assert "Test radio configuration" in glossary
+    assert "four detected markers represent landmarks 1–4" in procedure
+    assert "does not prove that the operator failed to visit that landmark" in glossary
