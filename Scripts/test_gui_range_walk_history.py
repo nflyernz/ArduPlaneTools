@@ -1,5 +1,6 @@
 """GUI integration tests for persistent Range-Walk Walk 1 history."""
 
+import json
 import os
 from pathlib import Path
 import threading
@@ -11,10 +12,14 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from core.range_walk_history import RangeWalkHistoryStore
+from analyses.range_walk import format_range_walk_report
+from core.edgetx import read_edgetx_csv
+from core.range_walk import build_walk_from_landmarks
+from core.range_walk_history import RangeWalkHistoryError, RangeWalkHistoryStore
 from gui import MainWindow
 from gui.pack_management_adapter import BatteryPackManagementService
 from gui.pack_performance_adapter import BatteryPackPerformanceService
+from gui.range_walk_comparison_adapter import RangeWalkComparisonRequest
 from gui.range_walk_history_adapter import RangeWalkHistoryService
 from test_range_walk import _session
 
@@ -143,7 +148,7 @@ def test_page2_persists_and_reopened_page3_loads_history(
     assert "Preserved source CSV: Yes" in report
     assert "Radio-local recording:" in report
     assert "incomplete RF settings" in report
-    assert "Comparisons are not yet available" in report
+    assert "Select one baseline and associated walk" in report
 
 
 def test_page3_navigation_preserves_page2_draft(qt_app, tmp_path, make_window):
@@ -300,7 +305,7 @@ def test_history_reports_corrupt_or_missing_managed_evidence(
     report = widget.history_report.toPlainText()
     assert "Range-Walk History Error" in report
     assert "Managed CSV is missing" in report
-    assert "Comparisons are not yet available" in report
+    assert "No comparison was calculated" in report
 
 
 def test_stale_save_result_is_withheld_after_source_change(
@@ -544,7 +549,7 @@ def test_restarted_history_groups_additional_walk_under_parent(
     assert "Confirmed landmarks: 5/5" in report
     assert "Available complete sections: 4/4" in report
     assert "Evidence integrity: managed CSV checksum validated" in report
-    assert "Comparisons are not yet available" in report
+    assert "Select one baseline and associated walk" in report
 
 
 def test_stale_additional_walk_result_does_not_replace_newer_visible_draft(
@@ -589,3 +594,283 @@ def test_stale_additional_walk_result_does_not_replace_newer_visible_draft(
     )
     assert len(store.walks) == 1
     assert store.walks[0].label == "Walk 2 — relocated receiver"
+
+
+def _save_comparison_pair(
+    qt_app,
+    tmp_path,
+    window,
+    *,
+    unavailable=(),
+    mapping=(1, 2, 3, 4, 5),
+):
+    baseline_source = _session(tmp_path, name="comparison-baseline.csv").path
+    baseline = _save_baseline(qt_app, window, baseline_source)
+    comparison_source = _session(
+        tmp_path,
+        name="comparison-walk.csv",
+        rssi=-80,
+        quality=85,
+        unavailable=unavailable,
+    ).path
+    widget = _prepare_additional(
+        qt_app, window, comparison_source, baseline.baseline_id
+    )
+    for combo, number in zip(widget.candidate_combos, mapping):
+        combo.setCurrentIndex(combo.findData(number))
+    widget.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    return baseline_source, comparison_source
+
+
+def test_saved_comparison_reconstructs_sections_and_displays_plots(
+    qt_app, tmp_path, make_window
+):
+    window = make_window()
+    baseline_source, comparison_source = _save_comparison_pair(
+        qt_app, tmp_path, window
+    )
+    baseline_source.unlink()
+    comparison_source.unlink()
+    widget = window._range_walk.widget
+
+    widget.baseline_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert widget.history_baseline_combo.currentData() is not None
+    assert widget.history_walk_combo.currentData() is not None
+    assert widget.compare_history_button.isEnabled()
+
+    widget.compare_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None, timeout=15)
+
+    assert widget.comparison_table.rowCount() == 8
+    assert widget.comparison_table.item(0, 0).text() == "1→2"
+    assert widget.comparison_table.item(0, 3).text() == "-90.0 dBm"
+    assert widget.comparison_table.item(1, 3).text() == "-80.0 dBm"
+    assert widget.comparison_table.item(1, 4).text() == "85.0%"
+    assert "100% observed time" in widget.comparison_table.item(1, 6).text()
+    assert "settings inherited" in widget.comparison_table.item(1, 8).text()
+    assert widget.plot_tabs.count() == 3
+    assert widget.plot_tabs.tabText(2) == "Section RSSI and RQly P10 comparison"
+    assert len(widget._plot_pixmaps) == 3
+    assert all(not pixmap.isNull() for pixmap in widget._plot_pixmaps)
+    qualification = widget.comparison_qualification.text()
+    assert "not independently verified" in qualification
+    assert "not proof of continuous receiver reception" in qualification
+    assert "not zero RF signal" in qualification
+    assert "aircraft BIN failsafe evidence is separate" in qualification
+    assert "No automatic antenna winner" in qualification
+    details = widget.history_report.toPlainText()
+    assert "Saved evidence metadata" in details
+    assert "Managed CSV:" in details
+
+
+def test_saved_comparison_is_read_only_and_returns_existing_report_and_pngs(
+    qt_app, tmp_path, make_window, history_service
+):
+    window = make_window()
+    _save_comparison_pair(qt_app, tmp_path, window)
+    store = RangeWalkHistoryStore(
+        history_service.history_path, history_service.evidence_dir
+    )
+    baseline = store.records[0]
+    walk = store.walks[0]
+    history_before = store.path.read_bytes()
+    evidence_before = {
+        path: path.read_bytes() for path in store.evidence_dir.glob("*.csv")
+    }
+
+    result = history_service.compare(
+        RangeWalkComparisonRequest(baseline.baseline_id, walk.walk_id, 17)
+    )
+    direct_walks = [
+        build_walk_from_landmarks(
+            read_edgetx_csv(record.stored_csv_path),
+            record.label,
+            record.antenna,
+            record.settings,
+            record.candidates,
+            record.landmarks,
+        )
+        for record in (baseline, walk)
+    ]
+
+    assert result.request_id == 17
+    assert len(result.rows) == 8
+    assert result.report == format_range_walk_report(
+        direct_walks, baseline.landmark_names, baseline.turnaround
+    )
+    assert result.report in result.details
+    assert [plot.filename for plot in result.plots] == [
+        "walk_1_rf.png",
+        "walk_2_rf.png",
+        "section_1rss_p10.png",
+    ]
+    assert all(plot.data.startswith(b"\x89PNG\r\n\x1a\n") for plot in result.plots)
+    assert store.path.read_bytes() == history_before
+    assert {
+        path: path.read_bytes() for path in store.evidence_dir.glob("*.csv")
+    } == evidence_before
+
+
+def test_history_selection_filters_walks_by_parent(qt_app, tmp_path, make_window):
+    window = make_window()
+    first_source = _session(tmp_path, name="first-baseline.csv").path
+    first = _save_baseline(qt_app, window, first_source)
+    first_walk = _prepare_additional(
+        qt_app,
+        window,
+        _session(tmp_path, name="first-walk.csv", rssi=-80).path,
+        first.baseline_id,
+    )
+    for combo, number in zip(first_walk.candidate_combos, (1, 2, 3, 4, 5)):
+        combo.setCurrentIndex(combo.findData(number))
+    first_walk.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    first_walk.walk_type_combo.setCurrentIndex(
+        first_walk.walk_type_combo.findData("baseline")
+    )
+
+    second = _save_baseline(
+        qt_app,
+        window,
+        _session(tmp_path, name="second-baseline.csv", down=-1024).path,
+    )
+    second_walk = _prepare_additional(
+        qt_app,
+        window,
+        _session(
+            tmp_path, name="second-walk.csv", down=-1024, rssi=-75
+        ).path,
+        second.baseline_id,
+    )
+    for combo, number in zip(second_walk.candidate_combos, (1, 2, 3, 4, 5)):
+        combo.setCurrentIndex(combo.findData(number))
+    second_walk.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    widget = window._range_walk.widget
+    widget.baseline_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    widget.history_baseline_combo.setCurrentIndex(
+        widget.history_baseline_combo.findData(first.baseline_id)
+    )
+    first_walk_ids = {
+        widget.history_walk_combo.itemData(index)
+        for index in range(1, widget.history_walk_combo.count())
+    }
+    widget.history_baseline_combo.setCurrentIndex(
+        widget.history_baseline_combo.findData(second.baseline_id)
+    )
+    second_walk_ids = {
+        widget.history_walk_combo.itemData(index)
+        for index in range(1, widget.history_walk_combo.count())
+    }
+
+    store = RangeWalkHistoryStore(
+        window._range_walk.history_service.history_path,
+        window._range_walk.history_service.evidence_dir,
+    )
+    assert first_walk_ids == {
+        walk.walk_id
+        for walk in store.walks
+        if walk.parent_baseline_id == first.baseline_id
+    }
+    assert second_walk_ids == {
+        walk.walk_id
+        for walk in store.walks
+        if walk.parent_baseline_id == second.baseline_id
+    }
+    assert first_walk_ids.isdisjoint(second_walk_ids)
+    first_walk_id = next(iter(first_walk_ids))
+    with pytest.raises(RangeWalkHistoryError, match="does not belong"):
+        window._range_walk.history_service.compare(
+            RangeWalkComparisonRequest(second.baseline_id, first_walk_id, 23)
+        )
+
+
+def test_saved_comparison_keeps_unavailable_rf_distinct_from_zero(
+    qt_app, tmp_path, make_window
+):
+    window = make_window()
+    _save_comparison_pair(qt_app, tmp_path, window, unavailable=((4, 8),))
+    widget = window._range_walk.widget
+    widget.baseline_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    widget.compare_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None, timeout=15)
+
+    assert widget.comparison_table.item(1, 2).text() == "Unavailable"
+    assert widget.comparison_table.item(1, 3).text() == "Unavailable"
+    assert "0% observed time" in widget.comparison_table.item(1, 6).text()
+    assert widget.comparison_table.item(1, 8).text() == "Unavailable RF evidence"
+    assert " | 0.0 dBm" not in widget.history_report.toPlainText()
+
+
+def test_comparison_failure_clears_previous_values_and_plots(
+    qt_app, tmp_path, make_window, history_service
+):
+    window = make_window()
+    _save_comparison_pair(qt_app, tmp_path, window)
+    widget = window._range_walk.widget
+    widget.baseline_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    store = RangeWalkHistoryStore(
+        history_service.history_path, history_service.evidence_dir
+    )
+    selected_walk = next(
+        walk
+        for walk in store.walks
+        if walk.walk_id == widget.history_walk_combo.currentData()
+    )
+    selected_walk.stored_csv_path.unlink()
+
+    widget.compare_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    assert widget.comparison_table.rowCount() == 0
+    assert widget.plot_tabs.count() == 0
+    assert "Managed CSV is missing" in widget.history_report.toPlainText()
+    assert "No RF values or plots were inferred" in widget.history_report.toPlainText()
+
+
+def test_saved_comparison_marks_sections_touching_missing_landmark_incomplete(
+    qt_app, tmp_path, make_window
+):
+    window = make_window()
+    _save_comparison_pair(
+        qt_app, tmp_path, window, mapping=(1, 2, None, 4, 5)
+    )
+    widget = window._range_walk.widget
+    widget.baseline_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    widget.compare_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None, timeout=15)
+
+    assert widget.comparison_table.item(3, 2).text() == "Incomplete"
+    assert widget.comparison_table.item(3, 8).text() == "Incomplete marker boundary"
+    assert widget.comparison_table.item(5, 2).text() == "Incomplete"
+    assert widget.comparison_table.item(5, 8).text() == "Incomplete marker boundary"
+
+
+def test_version1_baseline_remains_readable_without_comparison(
+    qt_app, tmp_path, make_window, history_service
+):
+    window = make_window()
+    _save_baseline(qt_app, window, _session(tmp_path, name="legacy.csv").path)
+    data = json.loads(history_service.history_path.read_text())
+    data["version"] = 1
+    data.pop("walks")
+    history_service.history_path.write_text(json.dumps(data))
+
+    reopened = make_window()
+    widget = reopened._range_walk.widget
+    widget.page1_history_button.click()
+    _wait_until(qt_app, lambda: reopened._analysis_thread is None)
+
+    assert widget.history_baseline_combo.currentData() is not None
+    assert widget.history_walk_combo.count() == 1
+    assert widget.history_walk_combo.currentData() is None
+    assert not widget.compare_history_button.isEnabled()
+    assert "has no associated comparison walks" in widget.comparison_state_label.text()
+    assert "Walk 1 baseline 1" in widget.history_report.toPlainText()

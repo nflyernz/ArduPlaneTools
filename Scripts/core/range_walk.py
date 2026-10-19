@@ -233,6 +233,22 @@ def build_walk(session: EdgeTxSession, label: str, antenna: str,
                selected: tuple[int | None, ...], *, baseline: bool = False) -> WalkEvidence:
     candidates = detect_markers(session, calibration)
     landmarks = select_landmarks(candidates, selected, baseline=baseline)
+    return build_walk_from_landmarks(
+        session, label, antenna, settings, candidates, landmarks
+    )
+
+
+def build_walk_from_landmarks(
+    session: EdgeTxSession,
+    label: str,
+    antenna: str,
+    settings: WalkSettings,
+    candidates: tuple[LandmarkMarker, ...],
+    landmarks: tuple[LandmarkMarker | None, ...],
+) -> WalkEvidence:
+    """Build RF evidence from an already-confirmed five-landmark mapping."""
+    if len(landmarks) != 5:
+        raise ValueError("Range walk requires five landmark positions")
     sections = tuple(
         interval_evidence(session, first.release, second.onset)
         if first and second and first.release < second.onset else None

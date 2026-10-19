@@ -37,6 +37,8 @@ from .range_walk_adapter import (
     inspect_range_walk_csv,
 )
 from .range_walk_setup import apply_parent_baseline, configure_walk_type
+from .range_walk_comparison_adapter import RangeWalkComparisonResult
+from .range_walk_comparison_view import RangeWalkComparisonView
 
 
 class RangeWalkPreviewWidget(QWidget):
@@ -48,11 +50,13 @@ class RangeWalkPreviewWidget(QWidget):
         detect,
         persist_baseline=None,
         load_history=None,
+        compare_history=None,
         parent=None,
     ):
         super().__init__(parent)
         self._persist_baseline = persist_baseline
         self._load_history = load_history
+        self._compare_history = compare_history
         self._source_path: Path | None = None
         self._inspection: RangeWalkCsvInspection | None = None
         self._result: RangeWalkPreviewResult | None = None
@@ -474,20 +478,18 @@ class RangeWalkPreviewWidget(QWidget):
         navigation.addWidget(self.refresh_history_button)
         layout.addLayout(navigation)
         layout.addWidget(QLabel("<h2>History &amp; Comparison</h2>"))
-        notice = QLabel(
-            "Saved Walk 1 baselines and associated later walks are read-only. "
-            "RF comparisons are not yet available."
-        )
-        notice.setWordWrap(True)
-        layout.addWidget(notice)
-        self.history_report = QPlainTextEdit()
-        self.history_report.setObjectName("rangeWalkHistoryReport")
-        self.history_report.setReadOnly(True)
-        self.history_report.setPlainText(
-            "Range-Walk History & Comparison\n\nOpen this page to load history.\n"
-            "RF comparisons are not yet available."
-        )
-        layout.addWidget(self.history_report, 1)
+        self.history_view = RangeWalkComparisonView(self._compare_history, page)
+        layout.addWidget(self.history_view, 1)
+        self.history_baseline_combo = self.history_view.baseline_combo
+        self.history_walk_combo = self.history_view.walk_combo
+        self.compare_history_button = self.history_view.compare_button
+        self.comparison_state_label = self.history_view.state_label
+        self.comparison_qualification = self.history_view.qualification
+        self.comparison_table = self.history_view.table
+        self.plot_tabs = self.history_view.plot_tabs
+        self.history_tabs = self.history_view.tabs
+        self.history_report = self.history_view.details
+        self._plot_pixmaps = self.history_view._plot_pixmaps
 
     def _show_baseline_page(self) -> None:
         if self._result is None:
@@ -501,6 +503,10 @@ class RangeWalkPreviewWidget(QWidget):
     def _request_history(self) -> None:
         if self._load_history is not None:
             self._load_history()
+
+    def selected_history_ids(self) -> tuple[str | None, str | None]:
+        """Return the explicit Page 3 baseline and child selections."""
+        return self.history_view.selected_ids()
 
     def _history_back(self) -> None:
         self.pages.setCurrentIndex(1 if self._result is not None else 0)
@@ -725,14 +731,13 @@ class RangeWalkPreviewWidget(QWidget):
         self._update_controls()
 
     def show_history_busy(self) -> None:
-        self.history_report.setPlainText(
-            "Loading and validating saved Range-Walk history…"
-        )
+        self.history_view.show_history_busy()
 
     def show_history(
         self,
         text: str,
         records: tuple[StoredWalk1Baseline, ...] = (),
+        walks: tuple[StoredAdditionalWalk, ...] = (),
     ) -> None:
         selected_id = self.parent_baseline_combo.currentData()
         self._history_records = {record.baseline_id: record for record in records}
@@ -746,15 +751,21 @@ class RangeWalkPreviewWidget(QWidget):
         selected_index = self.parent_baseline_combo.findData(selected_id)
         self.parent_baseline_combo.setCurrentIndex(max(0, selected_index))
         self.parent_baseline_combo.blockSignals(False)
-        self.history_report.setPlainText(text)
+        self.history_view.show_history(text, records, walks)
         self._parent_baseline_changed()
 
     def show_history_error(self, message: str) -> None:
-        self.history_report.setPlainText(
-            "Range-Walk History Error\n"
-            "========================\n"
-            f"{message}\n\nComparisons are not yet available."
-        )
+        self._history_records = {}
+        self.history_view.show_history_error(message)
+
+    def show_comparison_busy(self) -> None:
+        self.history_view.show_comparison_busy()
+
+    def show_comparison_error(self, message: str) -> None:
+        self.history_view.show_comparison_error(message)
+
+    def show_comparison(self, result: RangeWalkComparisonResult) -> None:
+        self.history_view.show_comparison(result)
 
     def _draft_changed(self) -> None:
         self._draft_revision += 1
@@ -847,6 +858,7 @@ class RangeWalkPreviewWidget(QWidget):
         self.page1_history_button.setEnabled(available)
         self.history_back_button.setEnabled(available)
         self.refresh_history_button.setEnabled(available)
+        self.history_view.set_busy(self._busy, self._busy_task)
         self.save_baseline_button.setText(
             "Saving…"
             if self._busy and self._busy_task == "save"

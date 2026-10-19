@@ -56,6 +56,6 @@ Open **History & Comparison** to view saved baselines and their additional walks
 
 APT shows which landmarks were confirmed or missing and which sections have enough marker evidence for comparison. Both ends of a section must be identified.
 
-RF comparison calculations and graphs are not yet available on this GUI page.
+Select the saved Walk 1 baseline and one associated walk, then choose **Compare selected walks**. Review all four section rows, coverage qualifications, plots and detailed metadata. Settings inherited from Walk 1 are not independent confirmation of the later walk's configuration.
 
 **Important:** Missing or zero-filled RF telemetry is not a measurement of poor signal. The comparison does not establish an exact range limit or prove which radio configuration will perform best in flight.

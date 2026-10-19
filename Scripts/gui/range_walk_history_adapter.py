@@ -12,6 +12,11 @@ from core.range_walk_history import (
 )
 
 from .range_walk_adapter import AdditionalWalk, Walk1Baseline
+from .range_walk_comparison_adapter import (
+    RangeWalkComparisonRequest,
+    RangeWalkComparisonResult,
+    compare_saved_range_walks,
+)
 
 
 @dataclass(frozen=True)
@@ -120,6 +125,12 @@ class RangeWalkHistoryService:
             format_range_walk_history(records, walks),
         )
 
+    def compare(
+        self, request: RangeWalkComparisonRequest
+    ) -> RangeWalkComparisonResult:
+        """Reconstruct one saved comparison from checksum-managed CSV evidence."""
+        return compare_saved_range_walks(request, self._store())
+
     def _store(self):
         return self.store_factory(self.history_path, self.evidence_dir)
 
@@ -133,8 +144,8 @@ def format_range_walk_history(
         "Range-Walk History & Comparison",
         "================================",
         "Saved baselines and associated later walks are read-only in this view.",
-        "Comparisons are not yet available.",
-        "RF performance comparisons, rankings and graphs remain deferred.",
+        "Select one baseline and associated walk to calculate RF evidence and plots.",
+        "Comparison does not declare an antenna winner.",
     ]
     if not records:
         lines.extend(["", "No saved Walk 1 baselines."])

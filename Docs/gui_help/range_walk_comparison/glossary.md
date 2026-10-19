@@ -10,7 +10,7 @@
 - **RF Settings** — Optional operator-entered TX power, packet rate, RF mode/band and dynamic-power state retained for later comparability checks.
 - **Managed CSV** — The checksum-named preserved copy of the original transmitter recording owned by a saved baseline.
 - **Update saved Walk 1** — Corrects the saved label, Baseline radio configuration or optional RF settings while retaining the original evidence identity and landmark mapping.
-- **History & Comparison** — The read-only GUI page grouping validated saved baselines and associated additional walks; RF comparisons are not yet available there.
+- **History & Comparison** — The read-only GUI page grouping validated baselines and associated walks, with four-section RF evidence, coverage, plots and detailed saved metadata.
 - **Missing marker evidence** — An explicit missing assignment for a physical landmark in a later walk. It does not prove that the operator failed to visit that landmark.
 - **Complete section** — A moving section whose two adjacent landmark markers are both present and chronologically valid. A missing landmark makes each touching section unavailable.
 - **Moving section** — Release of marker N to onset of marker N+1; five landmarks define four sections.

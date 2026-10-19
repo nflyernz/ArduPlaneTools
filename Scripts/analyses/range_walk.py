@@ -273,36 +273,57 @@ def write_range_walk_graphs(walks: list[WalkEvidence],
         plt.close(fig)
         paths.append(path)
 
-    fig, axis = plt.subplots(figsize=(10, 4.8))
-    fig.subplots_adjust(left=0.10, right=0.97, bottom=0.19,
-                        top=max(0.67, 0.79 - 0.035 * (key_lines - 1)))
+    fig, axes = plt.subplots(2, 1, figsize=(10, 5.8), sharex=True)
+    fig.subplots_adjust(left=0.10, right=0.97, bottom=0.15,
+                        top=max(0.67, 0.82 - 0.035 * (key_lines - 1)),
+                        hspace=0.18)
     xs = np.arange(4)
+    colours = ("tab:blue", "tab:orange")
     for number, walk in enumerate(walks, 1):
-        p10 = [section.p10_values["1RSS(dB)"] if section else None
-               for section in walk.sections]
-        ys = [value if value is not None else np.nan for value in p10]
         label = f"Walk {number} — {walk.label}"
         if number > 1 and not settings_comparable(walks[0], walk):
-            label += " (not like-for-like settings)"
-        axis.plot(xs, ys, marker="o", label=label)
-        for x, y, section in zip(xs, ys, walk.sections):
-            if section is not None and not np.isnan(y):
-                axis.annotate(f"{100 * section.rssi_coverage:.0f}%", (x, y),
+            fields = ("tx_power", "packet_rate", "rf_mode", "dynamic_power")
+            known_difference = any(
+                getattr(walks[0].settings, field)
+                and getattr(walk.settings, field)
+                and getattr(walks[0].settings, field) !=
+                getattr(walk.settings, field)
+                for field in fields
+            )
+            label += (" (RF settings differ)" if known_difference
+                      else " (RF settings not independently verified)")
+        for axis, field in zip(axes, ("1RSS(dB)", "RQly(%)")):
+            values = [section.p10_values[field] if section else None
+                      for section in walk.sections]
+            ys = [value if value is not None else np.nan for value in values]
+            axis.plot(xs, ys, marker="o", color=colours[(number - 1) % 2],
+                      label=label)
+            for x, y, section in zip(xs, ys, walk.sections):
+                if section is None or np.isnan(y):
+                    continue
+                coverage = (section.usable_time_s[field]
+                            / section.duration_s if section.duration_s else 0)
+                axis.annotate(f"{100 * coverage:.0f}%", (x, y),
                               xytext=(-12 if number % 2 else 12,
                                       7 + 12 * ((number - 1) // 2)),
                               textcoords="offset points", ha="center", fontsize=8)
-    axis.set_xticks(xs, [f"{i}→{i + 1}" for i in range(1, 5)])
-    axis.set_xlim(-0.3, 3.3)
-    axis.margins(y=0.2)
-    axis.set_ylabel("1RSS P10 of usable logged reported values (dBm)")
-    axis.set_xlabel("Landmark-bounded outward section; not equal-distance positions")
+    for axis in axes:
+        axis.set_xlim(-0.3, 3.3)
+        axis.margins(y=0.2)
+        axis.grid(alpha=0.25)
+        axis.legend(fontsize=8)
+    axes[0].set_ylabel("1RSS P10 of usable logged values (dBm)")
+    axes[1].set_ylabel("RQly P10 of usable logged values (%)")
+    axes[1].set_ylim(-2, 102)
+    axes[1].set_xticks(xs, [f"{i}→{i + 1}" for i in range(1, 5)])
+    axes[1].set_xlabel(
+        "Landmark-bounded outward section; not equal-distance positions"
+    )
     fig.suptitle("Section comparison — Walk 1 fixed baseline | EdgeTX CSV",
                  y=0.99, fontsize=11)
     fig.text(0.5, 0.925, landmark_key, ha="center", va="top", fontsize=8.5)
-    fig.text(0.5, 0.02, "Point labels = 1RSS observed-time coverage; "
+    fig.text(0.5, 0.02, "Point labels = metric-specific observed-time coverage; "
              "missing points = unavailable", ha="center", fontsize=8)
-    axis.grid(alpha=0.25)
-    axis.legend(fontsize=8)
     path = output / "section_1rss_p10.png"
     fig.savefig(path, dpi=120)
     plt.close(fig)
