@@ -12,10 +12,14 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from core.range_walk_history import RangeWalkHistoryStore
+from analyses.range_walk import format_range_walk_report
+from core.edgetx import read_edgetx_csv
+from core.range_walk import build_walk_from_landmarks
+from core.range_walk_history import RangeWalkHistoryError, RangeWalkHistoryStore
 from gui import MainWindow
 from gui.pack_management_adapter import BatteryPackManagementService
 from gui.pack_performance_adapter import BatteryPackPerformanceService
+from gui.range_walk_comparison_adapter import RangeWalkComparisonRequest
 from gui.range_walk_history_adapter import RangeWalkHistoryService
 from test_range_walk import _session
 
@@ -658,6 +662,130 @@ def test_saved_comparison_reconstructs_sections_and_displays_plots(
     details = widget.history_report.toPlainText()
     assert "Saved evidence metadata" in details
     assert "Managed CSV:" in details
+
+
+def test_saved_comparison_is_read_only_and_returns_existing_report_and_pngs(
+    qt_app, tmp_path, make_window, history_service
+):
+    window = make_window()
+    _save_comparison_pair(qt_app, tmp_path, window)
+    store = RangeWalkHistoryStore(
+        history_service.history_path, history_service.evidence_dir
+    )
+    baseline = store.records[0]
+    walk = store.walks[0]
+    history_before = store.path.read_bytes()
+    evidence_before = {
+        path: path.read_bytes() for path in store.evidence_dir.glob("*.csv")
+    }
+
+    result = history_service.compare(
+        RangeWalkComparisonRequest(baseline.baseline_id, walk.walk_id, 17)
+    )
+    direct_walks = [
+        build_walk_from_landmarks(
+            read_edgetx_csv(record.stored_csv_path),
+            record.label,
+            record.antenna,
+            record.settings,
+            record.candidates,
+            record.landmarks,
+        )
+        for record in (baseline, walk)
+    ]
+
+    assert result.request_id == 17
+    assert len(result.rows) == 8
+    assert result.report == format_range_walk_report(
+        direct_walks, baseline.landmark_names, baseline.turnaround
+    )
+    assert result.report in result.details
+    assert [plot.filename for plot in result.plots] == [
+        "walk_1_rf.png",
+        "walk_2_rf.png",
+        "section_1rss_p10.png",
+    ]
+    assert all(plot.data.startswith(b"\x89PNG\r\n\x1a\n") for plot in result.plots)
+    assert store.path.read_bytes() == history_before
+    assert {
+        path: path.read_bytes() for path in store.evidence_dir.glob("*.csv")
+    } == evidence_before
+
+
+def test_history_selection_filters_walks_by_parent(qt_app, tmp_path, make_window):
+    window = make_window()
+    first_source = _session(tmp_path, name="first-baseline.csv").path
+    first = _save_baseline(qt_app, window, first_source)
+    first_walk = _prepare_additional(
+        qt_app,
+        window,
+        _session(tmp_path, name="first-walk.csv", rssi=-80).path,
+        first.baseline_id,
+    )
+    for combo, number in zip(first_walk.candidate_combos, (1, 2, 3, 4, 5)):
+        combo.setCurrentIndex(combo.findData(number))
+    first_walk.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    first_walk.walk_type_combo.setCurrentIndex(
+        first_walk.walk_type_combo.findData("baseline")
+    )
+
+    second = _save_baseline(
+        qt_app,
+        window,
+        _session(tmp_path, name="second-baseline.csv", down=-1024).path,
+    )
+    second_walk = _prepare_additional(
+        qt_app,
+        window,
+        _session(
+            tmp_path, name="second-walk.csv", down=-1024, rssi=-75
+        ).path,
+        second.baseline_id,
+    )
+    for combo, number in zip(second_walk.candidate_combos, (1, 2, 3, 4, 5)):
+        combo.setCurrentIndex(combo.findData(number))
+    second_walk.save_baseline_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    widget = window._range_walk.widget
+    widget.baseline_history_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    widget.history_baseline_combo.setCurrentIndex(
+        widget.history_baseline_combo.findData(first.baseline_id)
+    )
+    first_walk_ids = {
+        widget.history_walk_combo.itemData(index)
+        for index in range(1, widget.history_walk_combo.count())
+    }
+    widget.history_baseline_combo.setCurrentIndex(
+        widget.history_baseline_combo.findData(second.baseline_id)
+    )
+    second_walk_ids = {
+        widget.history_walk_combo.itemData(index)
+        for index in range(1, widget.history_walk_combo.count())
+    }
+
+    store = RangeWalkHistoryStore(
+        window._range_walk.history_service.history_path,
+        window._range_walk.history_service.evidence_dir,
+    )
+    assert first_walk_ids == {
+        walk.walk_id
+        for walk in store.walks
+        if walk.parent_baseline_id == first.baseline_id
+    }
+    assert second_walk_ids == {
+        walk.walk_id
+        for walk in store.walks
+        if walk.parent_baseline_id == second.baseline_id
+    }
+    assert first_walk_ids.isdisjoint(second_walk_ids)
+    first_walk_id = next(iter(first_walk_ids))
+    with pytest.raises(RangeWalkHistoryError, match="does not belong"):
+        window._range_walk.history_service.compare(
+            RangeWalkComparisonRequest(second.baseline_id, first_walk_id, 23)
+        )
 
 
 def test_saved_comparison_keeps_unavailable_rf_distinct_from_zero(
