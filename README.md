@@ -1,500 +1,316 @@
-# ArduPlaneTools
+# ArduPlaneTools (APT)
 
-ArduPlaneTools (APT) is a Python toolkit for evidence-based analysis of
-ArduPlane fixed-wing flight logs and related transmitter evidence.
+ArduPlaneTools (APT) is a Python application for evidence-based analysis of
+ArduPlane flight logs. It reads ArduPlane DataFlash BIN logs and, where a
+workflow supports it, EdgeTX transmitter CSV recordings.
 
-It reads ArduPlane DataFlash BIN logs and EdgeTX CSV recordings, then presents
-analysis-specific measured and logged evidence without replacing operational
-judgement.
+APT focuses on ArduPlane 4.7.x evidence. It provides a native PySide6 desktop
+interface and a terminal interface. Reports preserve missing or ambiguous
+evidence instead of filling gaps with assumptions.
 
-The longer-term goal is to extend the modular flight-analysis framework into
-areas such as cruise performance, TECS behaviour and RTL while retaining the
-same evidence standards.
+## Features
 
-## Current Status
+### Battery & packs
 
-The project is under active development.
+- **Battery Analysis** — Examines flight-scoped battery consumption, voltage
+  sag, current, power, capacity and configured voltage margins from a selected
+  BIN log. The GUI analysis is read-only.
+- **Battery Pack Management** — Assigns physical Pack IDs to BIN-log
+  fingerprints, renames packs and records supported AUTO-takeoff observations
+  into battery history after confirmation.
+- **Pack Performance** — Compares saved observations for a selected physical
+  pack across logs, including first takeoffs by session and all retained AUTO
+  takeoffs. It does not require a selected BIN and does not calculate a battery
+  health score.
 
-Implemented user-facing workflows include Landing, Event Timeline, Battery,
-AUTOTUNE, TAKEOFF, Radio Link, Radio Link Range-Walk Comparison and Stall
-Analysis, plus Battery Pack Management and Pack Performance reporting. Cruise
-Analysis, Sensor Diagnostics and Log Summary remain placeholders.
+### Flight analysis
 
-Landing Analysis has been regression-tested against a set of development
-ArduPlane 4.7 flight logs containing successful landings, aborted approaches,
-multiple landing attempts, missing flare evidence and different landing
-termination cases.
+- **TAKEOFF** — Reviews TAKEOFF-mode triggers, execution stages, completion or
+  mode-exit censoring, and associated logged performance evidence.
+- **Landing** — Separates approach, preflare, flare, optional rangefinder and
+  landing or rollout-completion evidence for detected landing attempts.
+- **AUTOTUNE** — Examines recorded tuning sessions, active axes, gain changes,
+  limits, completion milestones and save or restore evidence.
+- **Stall** — Reviews deliberate FBWA slow-flight attempts and probable
+  demand-opposed attitude departures. A reported departure does not prove an
+  aerodynamic stall or establish a stall speed.
+- **Events** — Presents supported firmware messages, landing-stage changes and
+  flight-mode records chronologically within each detected flight.
 
-Raw development flight logs and aircraft parameter files are intentionally
-not included in the public repository.
+### Radio & diagnostics
 
-## Design Philosophy
-
-The analyzer is intended to report what the flight log supports rather than
-judge the quality of the flight.
-
-The current landing analysis therefore concentrates on measured or logged
-evidence such as:
-
-- landing-attempt boundaries
-- approach altitude
-- glide slope
-- preflare timing and height
-- airspeed
-- GPS groundspeed
-- sink rate
-- flare timing and height
-- distance from the mission landing target
-- rangefinder acquisition
-- GPS rollout-stop evidence
-- landing termination reason
-
-Missing or ambiguous evidence is reported as unavailable rather than inferred.
-
-Unusual telemetry is preserved as evidence rather than automatically
-reinterpreted as pilot error, aircraft error or firmware error.
+- **Radio Link** — Identifies aircraft-side RC failsafe episodes and response
+  from BIN evidence. Optional EdgeTX CSV evidence is kept separate and is added
+  only with explicit pairing and alignment qualifications.
+- **Range-Walk Comparison** — Detects deliberate transmitter marker holds,
+  saves a five-landmark Walk 1 baseline and later walks, and compares four
+  route sections using qualified RSSI, link-quality, SNR and coverage evidence.
 
 ## Requirements
 
-The project currently uses Python 3 and the packages listed in
-`requirements.txt`.
+- **Python 3.13** (the normal, GIL-enabled build)
+- A source checkout or downloaded source archive
+- Enough free disk space for Python packages, logs and any saved history
 
-A Python virtual environment is recommended.
+`requirements-gui.txt` installs the complete GUI environment. It includes
+`requirements.txt` plus PySide6 6.12.0. The pinned runtime packages are:
 
-Example:
-
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+```text
+contourpy 1.3.3          MAVProxy 1.8.74       pyserial 3.5
+cycler 0.12.1           numpy 2.5.0            python-dateutil 2.9.0.post0
+fastcrc 0.3.6           packaging 26.2         PyYAML 6.0.3
+fonttools 4.63.0        pandas 3.0.3           six 1.17.0
+kiwisolver 1.5.0        pillow 12.3.0          PySide6 6.12.0
+lxml 6.1.1              pymavlink 2.4.49
+matplotlib 3.11.0       pynmeagps 1.1.5
+                        pyparsing 3.3.2
 ```
 
-## Running the Analyzer
+The native GUI has been developed and validated on macOS. The automated base
+test suite also runs on Ubuntu with Python 3.13. Windows has not yet received
+equivalent project validation; its instructions below describe the intended
+portable setup and should be treated as requiring confirmation on the target
+computer.
 
-From the repository root:
+APT is currently distributed as source code. There is no installer, DMG,
+signed application or published binary release.
+
+## Installation on macOS
+
+These steps use a ZIP download. You do not need a GitHub account, Git or prior
+command-line experience. Complete steps 1–10 once.
+
+1. Open the [ArduPlaneTools repository](https://github.com/nflyernz/ArduPlaneTools)
+   in a web browser.
+2. Select the green **Code** button above the repository file list.
+3. Select **Download ZIP**.
+4. Open **Finder**, select **Downloads**, and double-click the downloaded ZIP
+   if macOS has not already extracted it. The resulting folder is normally
+   named `ArduPlaneTools-main`.
+5. Download the **macOS installer** for
+   [Python 3.13.16](https://www.python.org/downloads/release/python-31316/)
+   from Python.org. Open the downloaded package and follow its installer. Use
+   the standard Python build, not the experimental free-threaded build.
+6. Open **Terminal**: press Command-Space, type `Terminal`, then press Return.
+7. Change into the extracted folder. If it is in Downloads, copy and paste:
+
+   ```bash
+   cd ~/Downloads/ArduPlaneTools-main
+   ```
+
+   `cd` means “change directory.” If you moved or renamed the folder, type
+   `cd ` with a trailing space, drag the folder from Finder into Terminal, and
+   press Return.
+8. Create APT's isolated Python environment:
+
+   ```bash
+   python3.13 -m venv venv
+   ```
+
+   A virtual environment is a private set of Python packages stored inside the
+   APT folder. It avoids changing packages used by other applications.
+9. Install the GUI and analysis dependencies:
+
+   ```bash
+   venv/bin/python -m pip install --upgrade pip
+   venv/bin/python -m pip install -r requirements-gui.txt
+   ```
+
+10. Launch the desktop GUI:
+
+    ```bash
+    venv/bin/python Scripts/gui_app.py
+    ```
+
+### Starting APT again on macOS
+
+On subsequent days, open Terminal and run only:
+
+```bash
+cd ~/Downloads/ArduPlaneTools-main
+venv/bin/python Scripts/gui_app.py
+```
+
+If the folder is elsewhere, use its actual path in the `cd` command. Keep the
+folder intact because it contains the virtual environment and APT's saved data.
+
+To use the optional terminal interface instead of the GUI:
 
 ```bash
 venv/bin/python Scripts/analyse.py
 ```
 
-If the virtual environment is already active, `python Scripts/analyse.py` is
-equivalent.
+## Installation on Windows
 
-### Desktop shell (Phase 1)
+Windows support has not yet been validated to the same level as macOS. These
+steps use standard portable Python and Qt commands and are the intended setup
+for testing. Complete steps 1–10 once.
 
-The optional PySide6 desktop shell can be installed and launched separately:
+1. Open the [ArduPlaneTools repository](https://github.com/nflyernz/ArduPlaneTools)
+   in a web browser.
+2. Select the green **Code** button, then select **Download ZIP**. No GitHub
+   account is required.
+3. Open **File Explorer** and select **Downloads**.
+4. Right-click the downloaded ZIP, choose **Extract All…**, retain the proposed
+   destination, and select **Extract**. The folder is normally named
+   `ArduPlaneTools-main`.
+5. Open the [Python 3.13.16 download page](https://www.python.org/downloads/release/python-31316/).
+   Scroll down to **Files** and select **Windows installer (64-bit)**. Do not
+   select the Python install manager button near the top of the page. Run the
+   downloaded installer, keep the **Python launcher** enabled, and select
+   **Add python.exe to PATH** if offered. Complete the standard installation;
+   do not select the experimental free-threaded build.
+6. Open **Command Prompt**: open the Start menu, type `Command Prompt`, and
+   select it.
+7. Change into the extracted folder. For the normal Downloads location, copy
+   and paste:
+
+   ```bat
+   cd /d "%USERPROFILE%\Downloads\ArduPlaneTools-main"
+   ```
+
+   If you chose another destination, type `cd /d ` followed by the full folder
+   path in quotation marks.
+8. Create APT's isolated Python environment:
+
+   ```bat
+   py -3.13 -m venv venv
+   ```
+
+9. Install the GUI and analysis dependencies:
+
+   ```bat
+   venv\Scripts\python.exe -m pip install --upgrade pip
+   venv\Scripts\python.exe -m pip install -r requirements-gui.txt
+   ```
+
+10. Launch the desktop GUI:
+
+    ```bat
+    venv\Scripts\python.exe Scripts\gui_app.py
+    ```
+
+### Starting APT again on Windows
+
+On subsequent days, open Command Prompt and run only:
+
+```bat
+cd /d "%USERPROFILE%\Downloads\ArduPlaneTools-main"
+venv\Scripts\python.exe Scripts\gui_app.py
+```
+
+To use the optional terminal interface instead of the GUI:
+
+```bat
+venv\Scripts\python.exe Scripts\analyse.py
+```
+
+## Installation from a Git checkout
+
+People who already use Git may clone the repository instead of downloading a
+ZIP, then run the same platform-specific virtual-environment and installation
+commands from the cloned `ArduPlaneTools` directory:
 
 ```bash
-venv/bin/python -m pip install -r requirements-gui.txt
-venv/bin/python Scripts/gui_app.py
+git clone https://github.com/nflyernz/ArduPlaneTools.git
+cd ArduPlaneTools
 ```
 
-The Phase 1 shell provides native file selection, analysis tabs and report
-surfaces. Analysis execution is not connected yet; the existing CLI remains
-the operational analysis interface.
+Git is optional and is not required for normal ZIP installation.
 
-The main menu currently presents:
+## Troubleshooting installation
 
-```text
-Flight Analysis
-================
-1. Landing Analysis
-2. Event Timeline
-3. Battery Analysis
-4. Cruise Analysis (not implemented)
-5. Autotune Review
-6. Sensor Diagnostics (not implemented)
-7. Log Summary (not implemented)
-8. Battery Pack Management
-9. Pack Performance Report
-10. Takeoff Analysis
-11. Radio Link Analysis
-12. Radio Link Range-Walk Comparison
-13. Stall Analysis
-0. Exit
-```
+### “Python was not found” or “command not found”
 
-Most BIN-based analyses use the shared log selector. It lists BIN files in the
-current directory and supports numbered single-log selection, browsing to
-another directory, manual file paths (including `~`) and cancellation. The
-selected directory is remembered for later analyses in the same session.
-Landing Analysis additionally offers whole-directory analysis; other analyses
-retain their single-log or analysis-specific input rules.
+- On macOS, close and reopen Terminal after installing Python, then try
+  `python3.13 --version`. If it still fails, reinstall Python 3.13 from the
+  Python.org macOS package.
+- On Windows, close and reopen Command Prompt, then try `py -3.13 --version`.
+  If that fails, rerun the Python installer and enable its PATH or launcher
+  option.
 
-The implemented workflows provide:
+The version command should report `Python 3.13.x` before you create the virtual
+environment.
 
-- **Landing Analysis:** individual flights and bounded AUTO landing attempts.
-- **Event Timeline:** chronological flight events from a selected BIN.
-- **Battery Analysis:** flight-scoped battery evidence and optional physical
-  Pack ID association.
-- **Autotune Review:** authoritative AUTOTUNE sessions, axes, persistence and
-  evidence warnings.
-- **Takeoff Analysis:** ArduPlane TAKEOFF-mode trigger, control-stage and
-  performance evidence.
-- **Radio Link Analysis:** BIN-authoritative RC failsafe episodes and aircraft
-  response, with optional EdgeTX evidence where correlation supports it.
-- **Radio Link Range-Walk Comparison:** landmark-aligned EdgeTX CSV comparison
-  using Walk 1 as the fixed baseline.
-- **Stall Analysis:** FBWA slow-flight attempt evidence and descriptive
-  characterization with explicit safety qualifications.
-- **Battery Pack Management and Pack Performance:** durable Pack ID ownership
-  and stored AUTO-takeoff battery observations.
+### “No such file or directory” or “The system cannot find the path”
 
-**13. Stall Analysis** examines FBWA slow-flight attempts in a single BIN log.
-It reports demand-versus-response evidence and per-flight descriptive airspeed
-statistics, without claiming a confirmed aerodynamic stall. Read the
-[Stall Analysis guide](Docs/Stall_Analysis_Guide.md) and its safety warning
-before using it for deliberate tests.
+The `cd` command does not point to the extracted APT folder. Find
+`ArduPlaneTools-main` in Finder or File Explorer and use its actual location.
+Confirm that the folder contains `README.md`, `requirements-gui.txt` and the
+`Scripts` directory.
 
-## Landing Analysis
+### Dependency installation fails
 
-Select:
+Check that the command prompt is inside the APT folder and that the virtual
+environment was created successfully. Then rerun the pip-upgrade command,
+followed by the `requirements-gui.txt` installation command for your platform.
+An internet connection is required while pip downloads packages. Read the last
+error lines: security software, a proxy, insufficient disk space or an
+unsupported Python version can prevent installation. Do not continue to the
+launch command until installation finishes without an error.
 
-```text
-1. Landing Analysis
-```
+## Running APT
 
-Landing Analysis uses the shared selector and accepts either:
+The GUI entry point is `Scripts/gui_app.py`. Choose **Source BIN** for analyses
+that use an ArduPlane DataFlash log. Range-Walk Comparison selects EdgeTX CSV
+files within its own page, and Pack Performance reads previously saved history.
 
-- a single ArduPilot `.bin` / `.BIN` flight log; or
-- a directory containing multiple `.bin` / `.BIN` flight logs.
+Quick Start:
 
-For a manually entered single log:
+1. Start the GUI with the command for your platform.
+2. Select a BIN log when the module requires one.
+3. Choose a module from **Overview** or the tabs.
+4. Select **Analyse**, or use the action named on that module's page.
+5. Read the report, evidence qualifications and any unavailable-data notices.
 
-```text
-Log file or directory: Logs/log_19.bin
-```
-
-For whole-directory mode:
-
-```text
-Log file or directory: Logs/
-```
-
-When a directory is supplied, Landing Analysis processes every `.bin` and
-`.BIN` log in that directory in sequence.
-
-A single BIN log may itself contain multiple flights. Each detected flight is
-analysed independently, and each flight may contain zero, one or multiple
-AUTO landing attempts.
-
-Conceptually:
-
-```text
-Directory
-    |
-    +-- BIN log
-    |     +-- Flight 1
-    |     |     +-- Landing attempt 1
-    |     |     +-- Landing attempt 2
-    |     |
-    |     +-- Flight 2
-    |           +-- Landing attempt 1
-    |
-    +-- BIN log
-    |     +-- Flight 1
-    |           +-- Landing attempt 1
-    |
-    +-- ...
-```
-
-This allows the same analysis workflow to be used for an individual flight log
-or for batch analysis of a collection of logs.
-
-## Example Landing Output
-
-A landing attempt is presented in sections similar to:
-
-```text
-FLIGHT 1
-======================================================================
-
-Landing 1 Attempt 1
-----------------------------------------------------------------------
-
-Landing window              11:57.705 -> 12:23.104
-Landing duration            25.4 s
-
-APPROACH
-
-Approach altitude           20.5 m
-Glide slope                 3.9 deg
-
-PREFLARE
-
-Time                        12:15.904
-Preflare height             4.9 m
-Airspeed                    11.0 m/s
-GPS groundspeed             11.1 m/s
-Sink rate                   1.5 m/s
-
-FLARE
-
-Time                        12:16.404
-Flare-timing height         4.6 m
-Sink rate                   1.6 m/s
-Airspeed                    11.5 m/s
-GPS groundspeed             11.5 m/s
-Flare distance to target    45.8 m
-
-RANGEFINDER
-
-First non-zero              12:08.925
-First distance              11.7 m
-First in range              12:09.023
-In-range distance           5.8 m
-Continuous from             12:12.184
-
-LANDING / ROLLOUT COMPLETION
-
-GPS stop                    12:23.104
-Flare -> stop               6.7 s
-Distance from target        19.1 m
-End reason                  GPS stop
-```
-
-Values are derived from the evidence available in the log. Optional evidence
-such as airspeed or rangefinder data is not required for the landing attempt
-itself to be detected.
-
-## Landing Attempt Detection
-
-Landing attempts are detected within an already identified flight.
-
-The detector uses logged ArduPlane landing state and associated flight evidence
-to establish bounded AUTO landing attempts.
-
-A landing attempt can terminate for different logged or measured reasons,
-including:
-
-- an aborted landing
-- leaving the landing state
-- a mode transition
-- disarm where applicable
-- a persistent low-GPS-speed rollout stop
-- the end of the parent flight window
-
-The termination reason is retained as part of the analysis evidence.
-
-GPS stop represents landing/rollout completion. It is not labelled as
-touchdown.
-
-## Mission Landing Target
-
-Where the log contains a complete and unambiguous mission snapshot, Landing
-Analysis can associate the applicable `MAV_CMD_NAV_LAND` target with an attempt.
-
-This allows the analyzer to report measurements such as:
-
-```text
-Flare distance to target
-Distance from target
-```
-
-Mission data is treated conservatively. If the applicable mission snapshot is
-missing, incomplete or ambiguous, target-dependent measurements are left
-unavailable rather than selecting a target by assumption.
-
-## Rangefinder Evidence
-
-Rangefinder data is optional.
-
-Where available, Landing Analysis reports evidence including:
-
-- first non-zero measurement
-- first measurement within the configured usable range
-- distance at acquisition
-- beginning of continuous rangefinder data
-
-Rangefinder telemetry is reported as logged evidence. It is not required for
-landing-attempt detection.
-
-This distinction is useful when investigating unusual rangefinder behaviour
-during the transition into the sensor's usable range.
-
-## Parameter Files
-
-The framework supports companion parameter files for parameter-dependent
-analysis.
-
-The framework reconstructs timestamped parameter history from in-log `PARM`
-records and can query the value applicable at a specific event time. Analyses
-consume that history only where their evidence contract requires it. Companion
-parameter files may still provide a parameter snapshot associated with a log.
-
-Parameter files used during development are not included in the public
-repository.
-
-## Architecture
-
-The core architecture separates source telemetry, flight scope, evidence
-processing and analysis.
-
-```text
-BIN log
-   |
-   v
-FlightReader
-   |
-   v
-FlightLog
-   |
-   +-- telemetry
-   +-- parameters
-   +-- events
-   +-- mode segments
-   +-- metadata
-          |
-          v
-   FlightWindow(s)
-          |
-          v
-   analysis-specific windows
-          |
-          v
-   processors / detectors
-          |
-          v
-      analysis
-          |
-          v
-        result
-```
-
-`FlightLog` owns decoded source telemetry.
-
-`FlightWindow` defines the bounds of an individual flight without taking
-ownership of that telemetry.
-
-Analysis-specific windows such as `LandingWindow` are children of a
-`FlightWindow`.
-
-Processors and detectors provide scoped evidence. Analysis modules combine that
-evidence into results.
-
-This structure is intended to allow future analyses to reuse the same decoded
-flight data without duplicating the log-reading and flight-scoping framework.
-
-## Repository Structure
-
-The main project areas are:
-
-```text
-Config/
-    analysis configuration
-
-Docs/
-    architecture, validation, roadmap and historical implementation plans
-
-Scripts/
-    analyse.py              application entry point
-    analyses/               user-facing analyses
-    core/                   flight-data and evidence-processing framework
-    test_*.py               development and regression harnesses
-```
-
-Local flight logs are deliberately excluded from Git:
-
-```text
-Logs/
-```
-
-Generated analysis output is also not maintained as source material in the
-repository.
-
-## Validation
-
-Development uses both focused harnesses and regression tests.
-
-Two important regression commands are:
-
-```bash
-python Scripts/test_landing_regression.py
-python Scripts/test_event_timeline.py
-```
-
-The landing regression covers established development cases including:
-
-- multiple flights within a BIN log
-- multiple landing attempts within a flight
-- aborted landing attempts
-- attempts with no logged flare
-- GPS-stop completion
-- flight-window-ended attempts
-- optional airspeed data
-- optional rangefinder data
-- mission target distance
-- incomplete mission snapshots
-
-The Event Timeline regression validates established event extraction across the
-development log set.
-
-A general syntax check can also be run with:
-
-```bash
-python -m compileall -q Scripts
-```
-
-See `Docs/Validation.md` for the project's validation approach.
+The optional terminal entry point is `Scripts/analyse.py`. It provides the
+existing text menu and interactive selectors for supported workflows.
 
 ## Documentation
 
-Additional project documentation is under `Docs/`.
+Every GUI module provides **Docs** with workflow and interpretation guidance.
+Radio Link, Range-Walk Comparison and Stall also provide dedicated **Test
+Procedure** guidance where deliberate testing needs additional preparation.
 
-Important documents include:
+The project [GitHub Wiki](https://github.com/nflyernz/ArduPlaneTools/wiki) is
+the intended home of the detailed illustrated manual. It is being prepared
+separately; this README does not assume that particular Wiki chapters are
+already published.
 
-```text
-Docs/Architecture.md
-Docs/Validation.md
-Docs/ArduPlane_Analyzer_Roadmap.md
-Docs/Implementation/v0.5-plan-final.md
-```
+Repository documentation also includes the current
+[validation record](Docs/Validation.md) and the
+[Stall Analysis guide](Docs/Stall_Analysis_Guide.md).
 
-Older roadmaps and implementation plans are retained as historical development
-records.
+## Data, privacy and limitations
 
-## Current Development Direction
+APT reads source logs locally. Flight logs can contain sensitive information,
+including GPS coordinates, routes, timestamps and aircraft configuration. Take
+care before sharing a BIN, CSV, report or backup.
 
-Landing Analysis established the framework now shared by the implemented
-analyses listed above.
+Persistent records are stored relative to the APT folder:
 
-Current and future work is tracked in:
+- `Data/battery_packs.json` — Pack IDs and BIN-log associations.
+- `Data/battery_pack_history.json` — recorded supported battery observations.
+- `Data/range_walk_history.json` — saved Range-Walk metadata and mappings.
+- `Data/range_walk_csv/` — checksum-named managed copies of saved Range-Walk
+  CSV evidence.
 
-```text
-Docs/ArduPlane_Analyzer_Roadmap.md
-```
+Back up the `Data` folder if these records matter to you. Restoring or replacing
+the application folder without it can lose the saved associations and history.
+The source BIN files are not embedded in battery history; Range-Walk explicitly
+preserves managed CSV evidence for reconstruction.
 
-The broader direction is to retain the same evidence-first architecture while
-adding other useful fixed-wing analyses.
+APT reports what supported logged evidence establishes. Missing telemetry is
+reported as unavailable and is not replaced with zero or inferred values.
+Commands and logged states are not necessarily physical feedback. Results are
+analysis evidence, not flight-safety certification, maintenance approval or a
+substitute for pilot judgement and safe test planning.
 
-Potential future areas include:
+## Project status
 
-- TECS behaviour
-- cruise performance
-- RTL
-- richer reporting
-- graphical presentation
+The planned APT v1.0 feature set is complete in the source repository. The
+current focus is documentation, review and release preparation.
 
-These are development directions rather than promises of currently available
-functionality.
-
-## Privacy
-
-ArduPilot BIN logs can contain precise GPS coordinates and other information
-about an aircraft and its operating location.
-
-For that reason, the project's development BIN logs and companion parameter
-files are intentionally excluded from the public repository.
-
-Users should consider the contents of their own flight logs before publishing
-or sharing them.
-
-## Project Scope
-
-ArduPlaneTools is an independent analysis project.
-
-It is intended to help inspect and understand evidence recorded by ArduPilot
-flight logs. It does not replace ArduPilot's own documentation, ground-control
-software, flight testing or appropriate operational judgement.
-
-The project is currently focused on ArduPlane 4.7.x development logs.
+APT remains focused on the validated ArduPlane 4.7.x evidence model. Broader
+firmware compatibility, complete Windows validation and packaged desktop
+distribution have not yet been established.
