@@ -1,0 +1,191 @@
+name: Windows x64 packaging
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - app-packaging
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Test and build Windows x64 preview
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      APT_BUILD_ROOT: ${{ runner.temp }}\ArduPlaneTools-windows-build
+      APT_PACKAGING_VENV: ${{ runner.temp }}\ArduPlaneTools-pyinstaller-venv
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.13 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-gui.txt
+            Packaging/requirements-windows-build.txt
+
+      - name: Install test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-gui.txt pytest==9.1.1
+
+      - name: Run Windows test suite
+        shell: pwsh
+        run: python -m pytest Scripts/
+
+      - name: Build Windows x64 application
+        shell: pwsh
+        run: ./Packaging/build_windows.ps1
+
+      - name: Validate packaged resources and dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dist = Join-Path $env:APT_BUILD_ROOT "dist\ArduPlaneTools"
+          $internal = Join-Path $dist "_internal"
+          $executable = Join-Path $dist "ArduPlaneTools.exe"
+          $archiveViewer = Join-Path $env:APT_PACKAGING_VENV "Scripts\pyi-archive_viewer.exe"
+
+          if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+              throw "Packaged executable is missing."
+          }
+          if (-not (Get-ChildItem -LiteralPath $dist -Recurse -Filter "qwindows.dll" -File)) {
+              throw "The Qt Windows platform plugin is missing."
+          }
+
+          function Assert-ResourceTree([string]$Source, [string]$Bundled) {
+              $sourceRoot = (Resolve-Path -LiteralPath $Source).Path
+              $bundledRoot = (Resolve-Path -LiteralPath $Bundled).Path
+              $sourceFiles = Get-ChildItem -LiteralPath $sourceRoot -Recurse -File
+              $bundledFiles = Get-ChildItem -LiteralPath $bundledRoot -Recurse -File
+              if ($sourceFiles.Count -ne $bundledFiles.Count) {
+                  throw "Bundled resource count differs for $Source."
+              }
+              foreach ($sourceFile in $sourceFiles) {
+                  $relative = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart('\')
+                  $bundledFile = Join-Path $bundledRoot $relative
+                  if (-not (Test-Path -LiteralPath $bundledFile -PathType Leaf)) {
+                      throw "Bundled resource is missing: $relative"
+                  }
+                  if ((Get-FileHash -Algorithm SHA256 $sourceFile).Hash -ne (Get-FileHash -Algorithm SHA256 $bundledFile).Hash) {
+                      throw "Bundled resource differs: $relative"
+                  }
+              }
+          }
+
+          Assert-ResourceTree "Config" (Join-Path $internal "Config")
+          Assert-ResourceTree "Docs\gui_help" (Join-Path $internal "Docs\gui_help")
+
+          $archiveListing = & $archiveViewer -l -r $executable 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to inspect the packaged Python archive."
+          }
+          foreach ($dialect in @(
+              "pymavlink.dialects.v10.ardupilotmega",
+              "pymavlink.dialects.v20.ardupilotmega"
+          )) {
+              if (-not $archiveListing.Contains($dialect)) {
+                  throw "Packaged pymavlink dialect is missing: $dialect"
+              }
+          }
+
+          foreach ($forbiddenDirectory in @("Data", "Logs", "Params")) {
+              if (Test-Path -LiteralPath (Join-Path $internal $forbiddenDirectory)) {
+                  throw "Forbidden directory was bundled: $forbiddenDirectory"
+              }
+          }
+          $forbiddenNames = @(
+              "battery_packs.json",
+              "battery_pack_history.json",
+              "range_walk_history.json"
+          )
+          $forbiddenFiles = Get-ChildItem -LiteralPath $dist -Recurse -File | Where-Object {
+              $_.Extension -ieq ".bin" -or $forbiddenNames -contains $_.Name
+          }
+          if ($forbiddenFiles) {
+              throw "Private flight or history data was bundled: $($forbiddenFiles.FullName -join ', ')"
+          }
+
+          @'
+          from pathlib import Path
+          import os
+
+          root = Path(os.environ["APT_BUILD_ROOT"]) / "dist" / "ArduPlaneTools"
+          needles = [
+              os.environ["GITHUB_WORKSPACE"].encode(),
+              os.environ["GITHUB_WORKSPACE"].encode("utf-16-le"),
+          ]
+          for path in root.rglob("*"):
+              if not path.is_file():
+                  continue
+              overlap = max(map(len, needles)) - 1
+              tail = b""
+              with path.open("rb") as stream:
+                  while chunk := stream.read(1024 * 1024):
+                      data = tail + chunk
+                      if any(needle in data for needle in needles):
+                          raise SystemExit(f"Development workspace path embedded in {path}")
+                      tail = data[-overlap:]
+          '@ | python -
+
+      - name: Smoke-test packaged GUI without Python on PATH
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $executable = Join-Path $env:APT_BUILD_ROOT "dist\ArduPlaneTools\ArduPlaneTools.exe"
+          $smokeData = Join-Path $env:RUNNER_TEMP "ArduPlaneTools-smoke-data"
+          New-Item -ItemType Directory -Path $smokeData -Force | Out-Null
+          $savedPath = $env:PATH
+          $savedLocalAppData = $env:LOCALAPPDATA
+          try {
+              $env:LOCALAPPDATA = $smokeData
+              $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+              $process = Start-Process -FilePath $executable -PassThru
+              Start-Sleep -Seconds 10
+              if ($process.HasExited) {
+                  throw "Packaged GUI exited during startup with code $($process.ExitCode)."
+              }
+              if (-not $process.CloseMainWindow()) {
+                  throw "Packaged GUI did not expose a closable main window."
+              }
+              if (-not $process.WaitForExit(15000)) {
+                  $process.Kill()
+                  throw "Packaged GUI did not close cleanly."
+              }
+              if ($process.ExitCode -ne 0) {
+                  throw "Packaged GUI exited with code $($process.ExitCode)."
+              }
+          }
+          finally {
+              $env:PATH = $savedPath
+              $env:LOCALAPPDATA = $savedLocalAppData
+          }
+          if (Get-ChildItem -LiteralPath $smokeData -Force) {
+              throw "GUI startup wrote persistent data during the isolated smoke test."
+          }
+
+      - name: Record distribution size
+        shell: pwsh
+        run: |
+          $dist = Join-Path $env:APT_BUILD_ROOT "dist\ArduPlaneTools"
+          $bytes = (Get-ChildItem -LiteralPath $dist -Recurse -File | Measure-Object -Property Length -Sum).Sum
+          "Windows distribution size: $bytes bytes" | Tee-Object -FilePath (Join-Path $env:APT_BUILD_ROOT "windows-distribution-size.txt")
+          "## Windows x64 package`n`nDistribution size: **$bytes bytes**" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload Windows x64 preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArduPlaneTools-windows-x64-preview
+          path: ${{ env.APT_BUILD_ROOT }}\dist\ArduPlaneTools
+          if-no-files-found: error
+          retention-days: 14
