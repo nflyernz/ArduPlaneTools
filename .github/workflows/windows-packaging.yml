@@ -14,13 +14,16 @@ jobs:
     name: Test and build Windows x64 preview
     runs-on: windows-latest
     timeout-minutes: 45
-    env:
-      APT_BUILD_ROOT: ${{ runner.temp }}\ArduPlaneTools-windows-build
-      APT_PACKAGING_VENV: ${{ runner.temp }}\ArduPlaneTools-pyinstaller-venv
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Configure temporary packaging paths
+        shell: pwsh
+        run: |
+          "APT_BUILD_ROOT=$env:RUNNER_TEMP\ArduPlaneTools-windows-build" >> $env:GITHUB_ENV
+          "APT_PACKAGING_VENV=$env:RUNNER_TEMP\ArduPlaneTools-pyinstaller-venv" >> $env:GITHUB_ENV
 
       - name: Set up Python 3.13 x64
         uses: actions/setup-python@v5
