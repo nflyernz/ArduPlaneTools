@@ -48,7 +48,48 @@ evidence instead of filling gaps with assumptions.
   saves a five-landmark Walk 1 baseline and later walks, and compares four
   route sections using qualified RSSI, link-quality, SNR and coverage evidence.
 
-## Requirements
+## Desktop downloads (recommended)
+
+The published [**v1.1.0-beta.1 desktop preview**](https://github.com/nflyernz/ArduPlaneTools/releases/tag/v1.1.0-beta.1)
+includes an Apple Silicon macOS DMG and a portable Windows x64 ZIP. Neither
+desktop package requires installing Python, Git or a source checkout.
+
+### macOS (Apple Silicon / arm64)
+
+1. Download `ArduPlaneTools-v1.1.0-beta.1-macOS-arm64.dmg` from the
+   [release page](https://github.com/nflyernz/ArduPlaneTools/releases/tag/v1.1.0-beta.1).
+2. Open the DMG, drag **ArduPlaneTools** to the **Applications** shortcut, and
+   eject the disk image.
+3. Open **ArduPlaneTools** from Applications.
+
+The app is **ad-hoc signed and not Apple-notarized**. macOS may block the
+first launch. After attempting to open it, go to **System Settings → Privacy
+& Security** and approve **Open Anyway** for ArduPlaneTools if offered;
+alternatively, Control-click the app and select **Open** where available.
+Do not disable Gatekeeper globally. This preview is not built for Intel Macs.
+
+### Windows (x64)
+
+1. Download `ArduPlaneTools-v1.1.0-beta.1-Windows-x64.zip` from the
+   [release page](https://github.com/nflyernz/ArduPlaneTools/releases/tag/v1.1.0-beta.1).
+2. Extract the **entire** ZIP archive.
+3. Open the extracted `ArduPlaneTools` directory and run
+   `ArduPlaneTools.exe`. Keep its `_internal` folder and other files together.
+
+The Windows executable is unsigned and has no installer. Windows may display
+a security or SmartScreen warning; review the publisher and source before
+making an exception. Native Windows packaging, BIN/CSV analysis and GUI
+startup have passed automated testing, but an independent interactive Windows
+acceptance test is still outstanding.
+
+### Verify the download
+
+The release includes `SHA256SUMS.txt` and `BUILD-METADATA.txt` for file
+integrity and source-commit provenance. See the
+[release notes](https://github.com/nflyernz/ArduPlaneTools/releases/tag/v1.1.0-beta.1)
+for the published checksums, platform limitations and supported firmware scope.
+
+## Requirements for installing from source
 
 - **Python 3.13** (the normal, GIL-enabled build)
 - A source checkout or downloaded source archive
@@ -68,16 +109,12 @@ matplotlib 3.11.0       pynmeagps 1.1.5
                         pyparsing 3.3.2
 ```
 
-The native GUI has been developed and validated on macOS. The automated base
-test suite also runs on Ubuntu with Python 3.13. Windows has not yet received
-equivalent project validation; its instructions below describe the intended
-portable setup and should be treated as requiring confirmation on the target
-computer.
+These requirements apply **only to running APT from source**. For ordinary
+desktop use, prefer the prebuilt packages above. The full source-based GUI
+has been developed on macOS, with Ubuntu CI and native Windows packaging
+validation. Interactive Windows desktop acceptance remains outstanding.
 
-APT is currently distributed as source code. There is no installer, DMG,
-signed application or published binary release.
-
-## Installation on macOS
+## Installation on macOS (from source)
 
 These steps use a ZIP download. You do not need a GitHub account, Git or prior
 command-line experience. Complete steps 1–10 once.
@@ -142,7 +179,7 @@ To use the optional terminal interface instead of the GUI:
 venv/bin/python Scripts/analyse.py
 ```
 
-## Installation on Windows
+## Installation on Windows (from source)
 
 Windows support has not yet been validated to the same level as macOS. These
 steps use standard portable Python and Qt commands and are the intended setup
@@ -207,7 +244,7 @@ To use the optional terminal interface instead of the GUI:
 venv\Scripts\python.exe Scripts\analyse.py
 ```
 
-## Installation from a Git checkout
+## Installation from a Git checkout (source)
 
 People who already use Git may clone the repository instead of downloading a
 ZIP, then run the same platform-specific virtual-environment and installation
@@ -253,13 +290,14 @@ launch command until installation finishes without an error.
 
 ## Running APT
 
-The GUI entry point is `Scripts/gui_app.py`. Choose **Source BIN** for analyses
-that use an ArduPlane DataFlash log. Range-Walk Comparison selects EdgeTX CSV
-files within its own page, and Pack Performance reads previously saved history.
+Open the installed desktop application, or run `Scripts/gui_app.py` when
+working from source. Choose **Source BIN** for analyses that use an ArduPlane
+DataFlash log. Range-Walk Comparison selects EdgeTX CSV files within its own
+page, and Pack Performance reads previously saved history.
 
 Quick Start:
 
-1. Start the GUI with the command for your platform.
+1. Start the installed application (or launch the GUI from source).
 2. Select a BIN log when the module requires one.
 3. Choose a module from **Overview** or the tabs.
 4. Select **Analyse**, or use the action named on that module's page.
@@ -274,10 +312,10 @@ Every GUI module provides **Docs** with workflow and interpretation guidance.
 Radio Link, Range-Walk Comparison and Stall also provide dedicated **Test
 Procedure** guidance where deliberate testing needs additional preparation.
 
-The project [GitHub Wiki](https://github.com/nflyernz/ArduPlaneTools/wiki) is
-the intended home of the detailed illustrated manual. It is being prepared
-separately; this README does not assume that particular Wiki chapters are
-already published.
+The project [GitHub Wiki](https://github.com/nflyernz/ArduPlaneTools/wiki)
+contains the illustrated module manual. Developer-facing build and release
+procedures are under [Packaging](Packaging/README-release.md), and
+[macOS packaging details](Packaging/README-macOS.md) include Gatekeeper guidance.
 
 Repository documentation also includes the current
 [validation record](Docs/Validation.md) and the
@@ -289,18 +327,29 @@ APT reads source logs locally. Flight logs can contain sensitive information,
 including GPS coordinates, routes, timestamps and aircraft configuration. Take
 care before sharing a BIN, CSV, report or backup.
 
-Persistent records are stored relative to the APT folder:
+APT stores persistent records **outside the application bundle and source
+checkout**, in the user-writable application-data directory:
 
-- `Data/battery_packs.json` — Pack IDs and BIN-log associations.
-- `Data/battery_pack_history.json` — recorded supported battery observations.
-- `Data/range_walk_history.json` — saved Range-Walk metadata and mappings.
-- `Data/range_walk_csv/` — checksum-named managed copies of saved Range-Walk
-  CSV evidence.
+- macOS: `~/Library/Application Support/ArduPlaneTools/`
+- Windows: `%LOCALAPPDATA%\\ArduPlaneTools\\`
+- Linux source installations: `\${XDG_DATA_HOME:-~/.local/share}/ArduPlaneTools/`
+  (XDG fallback shown; absolute `XDG_DATA_HOME` values are supported).
 
-Back up the `Data` folder if these records matter to you. Restoring or replacing
-the application folder without it can lose the saved associations and history.
-The source BIN files are not embedded in battery history; Range-Walk explicitly
-preserves managed CSV evidence for reconstruction.
+The directory contains `battery_packs.json`, `battery_pack_history.json`,
+`range_walk_history.json` and managed `range_walk_csv/` files as those
+features are used. Back up that directory independently of the application.
+Installing a new DMG or replacing the Windows application folder does not
+automatically migrate or remove these records.
+
+Older APT checkouts may have a repository-local `Data/` directory. Migration
+is **never automatic**. The explicit `Scripts/migrate_data.py` command supports
+`--dry-run` and `--apply` for an eligible legacy Data folder, but refuses
+an existing destination. **Do not overwrite or merge an existing application
+data directory**, particularly one containing new records. Preserve backups
+and consult the migration implementation before attempting a move.
+
+The source BIN files are not embedded in battery history; Range-Walk
+explicitly preserves managed CSV evidence for reconstruction.
 
 APT reports what supported logged evidence establishes. Missing telemetry is
 reported as unavailable and is not replaced with zero or inferred values.
@@ -310,9 +359,13 @@ substitute for pilot judgement and safe test planning.
 
 ## Project status
 
-The planned APT v1.0 feature set is complete in the source repository. The
-current focus is documentation, review and release preparation.
+The APT v1.0 feature set is implemented, and the first native desktop preview,
+[**v1.1.0-beta.1**](https://github.com/nflyernz/ArduPlaneTools/releases/tag/v1.1.0-beta.1),
+is published for macOS Apple Silicon and Windows x64. APT remains focused
+on ArduPlane 4.7.x log evidence.
 
-APT remains focused on the validated ArduPlane 4.7.x evidence model. Broader
-firmware compatibility, complete Windows validation and packaged desktop
-distribution have not yet been established.
+The published macOS build passed local installation and real-log checks,
+including expected first-launch Privacy & Security approval. Native Windows
+automated package, synthetic analysis and GUI startup tests pass; interactive
+Windows acceptance, Developer ID signing and Apple notarization remain
+future work. Broader firmware compatibility has not been established.
