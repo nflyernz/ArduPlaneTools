@@ -171,7 +171,7 @@ def test_takeoff_presentation_handles_no_detected_executions(monkeypatch, capsys
     _run_with_executions(monkeypatch, ())
 
     output = capsys.readouterr().out
-    assert "Log: Logs/synthetic.bin" in output
+    assert f"Log: {Path('Logs/synthetic.bin')}" in output
     assert "Firmware: Evidence unavailable" in output
     assert "No TAKEOFF-mode executions found." in output
 
@@ -185,7 +185,7 @@ def test_takeoff_presentation_labels_available_firmware(monkeypatch, capsys):
     )
 
     output = capsys.readouterr().out
-    assert "Log: Logs/synthetic.bin" in output
+    assert f"Log: {Path('Logs/synthetic.bin')}" in output
     assert "Firmware: ArduPlane V4.7.1 (dbe79216)" in output
     assert "No TAKEOFF-mode executions found." in output
 

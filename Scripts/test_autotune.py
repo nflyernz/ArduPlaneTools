@@ -979,7 +979,7 @@ def test_presentation_uses_single_log_shared_selector(monkeypatch, capsys):
     presentation.AutotuneAnalysisPresentation().run()
     output = capsys.readouterr().out
     assert received[0][0] == selected
-    assert "Log: Logs/synthetic.bin" in output
+    assert f"Log: {selected}" in output
     assert "Firmware: ArduPlane V4.7.0" in output
     assert "Flight association: Flight 1" in output
     assert "selected; YAW_RATE_ENABLE=0" in output
@@ -994,5 +994,5 @@ def test_report_labels_missing_firmware_evidence():
         Path("Logs/no-ver.bin"),
     )
 
-    assert "Log: Logs/no-ver.bin" in report
+    assert f"Log: {Path('Logs/no-ver.bin')}" in report
     assert "Firmware: Evidence unavailable" in report
