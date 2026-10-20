@@ -171,7 +171,8 @@ venv/bin/python Scripts/gui_app.py
 ```
 
 If the folder is elsewhere, use its actual path in the `cd` command. Keep the
-folder intact because it contains the virtual environment and APT's saved data.
+folder intact because it contains the virtual environment and APT source files.
+Persistent APT data is stored separately, as described below.
 
 To use the optional terminal interface instead of the GUI:
 
