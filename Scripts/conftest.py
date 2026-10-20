@@ -1,8 +1,37 @@
 """Shared pytest fixtures for the optional Qt GUI tests."""
 
 import os
+import shutil
+import tempfile
+from pathlib import Path
 
 import pytest
+
+
+_TEST_USER_HOME = Path(tempfile.mkdtemp(prefix="arduplanetools-tests-"))
+_TEST_ENVIRONMENT = {
+    name: os.environ.get(name)
+    for name in ("HOME", "LOCALAPPDATA", "XDG_DATA_HOME")
+}
+os.environ.update(
+    {
+        "HOME": str(_TEST_USER_HOME),
+        "LOCALAPPDATA": str(_TEST_USER_HOME / "LocalAppData"),
+        "XDG_DATA_HOME": str(_TEST_USER_HOME / "xdg-data"),
+    }
+)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _isolated_application_data():
+    """Prevent default stores from reaching the user's real data directory."""
+    yield
+    shutil.rmtree(_TEST_USER_HOME, ignore_errors=True)
+    for name, value in _TEST_ENVIRONMENT.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
 
 
 @pytest.fixture(scope="session")
