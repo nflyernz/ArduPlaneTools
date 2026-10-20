@@ -1,11 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller definition for the unsigned native macOS application."""
 
+import os
 from pathlib import Path
 
 
 project_root = Path(SPECPATH).parent
 scripts_root = project_root / "Scripts"
+version = os.environ.get("APT_VERSION", "1.0.0")
+source_commit = os.environ.get("APT_SOURCE_COMMIT", "unknown")
 
 analysis = Analysis(
     [str(scripts_root / "gui_app.py")],
@@ -63,8 +66,10 @@ application = BUNDLE(
     bundle_identifier="org.arduplanetools.app",
     info_plist={
         "CFBundleDisplayName": "ArduPlaneTools",
-        "CFBundleShortVersionString": "1.0.0",
-        "CFBundleVersion": "1.0.0",
+        "CFBundleShortVersionString": version,
+        "CFBundleVersion": version,
+        "APTBuildVersion": version,
+        "APTSourceCommit": source_commit,
         "NSHighResolutionCapable": True,
     },
 )

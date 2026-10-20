@@ -58,6 +58,8 @@ $env:PYINSTALLER_CONFIG_DIR = $configurationDirectory
 
 $buildInformation = @(
     "application=ArduPlaneTools"
+    "version=$(if ($env:APT_VERSION) { $env:APT_VERSION } else { '1.0.0' })"
+    "source_commit=$(if ($env:APT_SOURCE_COMMIT) { $env:APT_SOURCE_COMMIT } else { 'unknown' })"
     "architecture=$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
     "windows=$([Environment]::OSVersion.VersionString)"
     "python=$(& $venvPython --version 2>&1)"
