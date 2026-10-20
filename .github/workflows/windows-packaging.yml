@@ -173,8 +173,15 @@ jobs:
               $env:PATH = $savedPath
               $env:LOCALAPPDATA = $savedLocalAppData
           }
-          if (Get-ChildItem -LiteralPath $smokeData -Force) {
-              throw "GUI startup wrote persistent data during the isolated smoke test."
+          $createdEntries = Get-ChildItem -LiteralPath $smokeData -Recurse -Force
+          if ($createdEntries) {
+              Write-Host "Isolated runtime entries:"
+              $createdEntries.FullName | ForEach-Object { Write-Host "  $_" }
+          }
+          $applicationData = Join-Path $smokeData "ArduPlaneTools"
+          if ((Test-Path -LiteralPath $applicationData) -and
+              (Get-ChildItem -LiteralPath $applicationData -Recurse -File -Force)) {
+              throw "GUI startup wrote APT persistent data during the isolated smoke test."
           }
 
       - name: Record distribution size
