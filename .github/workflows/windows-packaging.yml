@@ -9,6 +9,11 @@ on:
         required: false
         type: string
         default: ArduPlaneTools-windows-x64-preview
+      asset_version:
+        description: Version token used in the portable ZIP filename
+        required: false
+        type: string
+        default: preview
       source_commit:
         description: Exact source commit to build
         required: false
@@ -43,6 +48,7 @@ jobs:
         run: |
           "APT_BUILD_ROOT=$env:RUNNER_TEMP\ArduPlaneTools-windows-build" >> $env:GITHUB_ENV
           "APT_PACKAGING_VENV=$env:RUNNER_TEMP\ArduPlaneTools-pyinstaller-venv" >> $env:GITHUB_ENV
+          "APT_ASSET_VERSION=${{ inputs.asset_version || 'preview' }}" >> $env:GITHUB_ENV
           "APT_SOURCE_COMMIT=${{ inputs.source_commit || github.sha }}" >> $env:GITHUB_ENV
           "APT_VERSION=${{ inputs.version || '0.0.0' }}" >> $env:GITHUB_ENV
 
@@ -308,7 +314,7 @@ jobs:
           $dist = Join-Path $env:APT_BUILD_ROOT "dist\ArduPlaneTools"
           $release = Join-Path $env:APT_BUILD_ROOT "release"
           $metadata = Join-Path $dist "BUILD-METADATA.txt"
-          $zip = Join-Path $release "ArduPlaneTools-preview-Windows-x64.zip"
+          $zip = Join-Path $release "ArduPlaneTools-$env:APT_ASSET_VERSION-Windows-x64.zip"
           New-Item -ItemType Directory -Path $release -Force | Out-Null
           Copy-Item -LiteralPath (Join-Path $env:APT_BUILD_ROOT "build-info.txt") -Destination $metadata
           Compress-Archive -LiteralPath $dist -DestinationPath $zip -CompressionLevel Optimal -Force
@@ -356,9 +362,9 @@ jobs:
           "Portable ZIP size: **$zipBytes bytes**" >> $env:GITHUB_STEP_SUMMARY
 
       - name: Upload Windows x64 preview
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ inputs.artifact_name || 'ArduPlaneTools-windows-x64-preview' }}
-          path: ${{ env.APT_BUILD_ROOT }}\release\ArduPlaneTools-preview-Windows-x64.zip
+          path: ${{ env.APT_BUILD_ROOT }}\release\*.zip
           if-no-files-found: error
           retention-days: 14

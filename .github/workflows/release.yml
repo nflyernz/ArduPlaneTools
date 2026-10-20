@@ -2,6 +2,17 @@ name: Release candidate builds
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: Desktop preview version without the leading v
+        required: true
+        type: string
+        default: 1.1.0-beta.1
+      create_draft_release:
+        description: Create an unpublished draft prerelease after validation
+        required: true
+        type: boolean
+        default: false
   pull_request:
     branches:
       - main
@@ -11,34 +22,62 @@ permissions:
 
 concurrency:
   group: release-candidate-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   preflight:
-    name: Resolve release-candidate source
+    name: Resolve release-candidate source and version
     runs-on: ubuntu-latest
     outputs:
-      source_commit: ${{ steps.source.outputs.commit }}
-      version: ${{ steps.source.outputs.version }}
+      source_commit: ${{ steps.metadata.outputs.source_commit }}
+      version: ${{ steps.metadata.outputs.version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      macos_short_version: ${{ steps.metadata.outputs.macos_short_version }}
+      macos_bundle_version: ${{ steps.metadata.outputs.macos_bundle_version }}
+      create_draft_release: ${{ steps.metadata.outputs.create_draft_release }}
+      artifact_name: ${{ steps.metadata.outputs.artifact_name }}
     steps:
-      - name: Require main for manual builds
-        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
-        run: |
-          echo "Manual release-candidate builds must be dispatched from main." >&2
-          exit 1
+      - name: Check out exact source commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Record source identity
-        id: source
+      - name: Validate release metadata and gate
+        id: metadata
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          GIT_REF: ${{ github.ref }}
+          RELEASE_REQUESTED: ${{ inputs.create_draft_release || false }}
+          REQUESTED_VERSION: ${{ inputs.version || '1.1.0-beta.1' }}
           SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          echo "commit=$SOURCE_COMMIT" >> "$GITHUB_OUTPUT"
-          echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+          python Packaging/release_version.py \
+            "$REQUESTED_VERSION" \
+            --event-name "$EVENT_NAME" \
+            --git-ref "$GIT_REF" \
+            --release-requested "$RELEASE_REQUESTED" \
+            --github-output "$GITHUB_OUTPUT"
+          echo "source_commit=$SOURCE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=ArduPlaneTools-release-candidate-v${REQUESTED_VERSION}-${SOURCE_COMMIT}" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize release-candidate identity
+        env:
+          SOURCE_COMMIT: ${{ steps.metadata.outputs.source_commit }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          MACOS_SHORT_VERSION: ${{ steps.metadata.outputs.macos_short_version }}
+          MACOS_BUNDLE_VERSION: ${{ steps.metadata.outputs.macos_bundle_version }}
+          RELEASE_ENABLED: ${{ steps.metadata.outputs.create_draft_release }}
+        run: |
           {
             echo "## Release-candidate source"
             echo
             echo "Source commit: \`$SOURCE_COMMIT\`"
-            echo "Preview version: \`0.0.0\`"
+            echo "Preview version: \`$VERSION\`"
+            echo "GitHub tag: \`$TAG\`"
+            echo "macOS short version: \`$MACOS_SHORT_VERSION\`"
+            echo "macOS bundle version: \`$MACOS_BUNDLE_VERSION\`"
+            echo "Draft release enabled: \`$RELEASE_ENABLED\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   macos-arm64:
@@ -47,6 +86,9 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 45
     env:
+      APT_ARTIFACT_VERSION: ${{ needs.preflight.outputs.tag }}
+      APT_MACOS_BUNDLE_VERSION: ${{ needs.preflight.outputs.macos_bundle_version }}
+      APT_MACOS_SHORT_VERSION: ${{ needs.preflight.outputs.macos_short_version }}
       APT_SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
       APT_VERSION: ${{ needs.preflight.outputs.version }}
 
@@ -101,8 +143,8 @@ jobs:
           test -d "$app"
           test -x "$executable"
           file "$executable" | grep -q 'arm64'
-          test "$(plutil -extract CFBundleShortVersionString raw -o - "$plist")" = "$APT_VERSION"
-          test "$(plutil -extract CFBundleVersion raw -o - "$plist")" = "$APT_VERSION"
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$plist")" = "$APT_MACOS_SHORT_VERSION"
+          test "$(plutil -extract CFBundleVersion raw -o - "$plist")" = "$APT_MACOS_BUNDLE_VERSION"
           test "$(plutil -extract APTBuildVersion raw -o - "$plist")" = "$APT_VERSION"
           test "$(plutil -extract APTSourceCommit raw -o - "$plist")" = "$APT_SOURCE_COMMIT"
           diff -qr Config "$app/Contents/Resources/Config"
@@ -133,7 +175,7 @@ jobs:
         run: |
           release="$APT_BUILD_ROOT/release"
           cp "$APT_BUILD_ROOT/build-info.txt" "$release/BUILD-METADATA-macOS-arm64.txt"
-          dmg="$release/ArduPlaneTools-preview-macOS-arm64.dmg"
+          dmg="$release/ArduPlaneTools-$APT_ARTIFACT_VERSION-macOS-arm64.dmg"
           bytes=$(stat -f '%z' "$dmg")
           echo "DMG size: $bytes bytes" | tee "$release/macos-dmg-size.txt"
           {
@@ -144,11 +186,11 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload macOS ARM64 build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ArduPlaneTools-macos-arm64-build
           path: |
-            ${{ env.APT_BUILD_ROOT }}/release/ArduPlaneTools-preview-macOS-arm64.dmg
+            ${{ env.APT_BUILD_ROOT }}/release/ArduPlaneTools-${{ env.APT_ARTIFACT_VERSION }}-macOS-arm64.dmg
             ${{ env.APT_BUILD_ROOT }}/release/BUILD-METADATA-macOS-arm64.txt
           if-no-files-found: error
           retention-days: 14
@@ -159,6 +201,7 @@ jobs:
     uses: ./.github/workflows/windows-packaging.yml
     with:
       artifact_name: ArduPlaneTools-windows-x64-build
+      asset_version: ${{ needs.preflight.outputs.tag }}
       source_commit: ${{ needs.preflight.outputs.source_commit }}
       version: ${{ needs.preflight.outputs.version }}
 
@@ -170,29 +213,32 @@ jobs:
       - windows-x64
     runs-on: ubuntu-latest
     env:
-      SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
       APT_VERSION: ${{ needs.preflight.outputs.version }}
+      MACOS_BUNDLE_VERSION: ${{ needs.preflight.outputs.macos_bundle_version }}
+      MACOS_SHORT_VERSION: ${{ needs.preflight.outputs.macos_short_version }}
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
     steps:
       - name: Download macOS build
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: ArduPlaneTools-macos-arm64-build
           path: ${{ runner.temp }}/release-input/macos
 
       - name: Download Windows build
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: ArduPlaneTools-windows-x64-build
           path: ${{ runner.temp }}/release-input/windows
 
-      - name: Verify and assemble distributions
+      - name: Assemble distributions and metadata
         run: |
           set -euo pipefail
           input_root="$RUNNER_TEMP/release-input"
           release_dir="$RUNNER_TEMP/release-candidate"
-          mac_dmg="$input_root/macos/ArduPlaneTools-preview-macOS-arm64.dmg"
+          mac_dmg="$input_root/macos/ArduPlaneTools-$RELEASE_TAG-macOS-arm64.dmg"
           mac_metadata="$input_root/macos/BUILD-METADATA-macOS-arm64.txt"
-          windows_zip="$input_root/windows/ArduPlaneTools-preview-Windows-x64.zip"
+          windows_zip="$input_root/windows/ArduPlaneTools-$RELEASE_TAG-Windows-x64.zip"
           test -s "$mac_dmg"
           test -s "$mac_metadata"
           test -s "$windows_zip"
@@ -200,6 +246,8 @@ jobs:
           test "$(find "$input_root/windows" -maxdepth 1 -type f | wc -l)" -eq 1
           grep -Fxq "version=$APT_VERSION" "$mac_metadata"
           grep -Fxq "source_commit=$SOURCE_COMMIT" "$mac_metadata"
+          grep -Fxq "macos_short_version=$MACOS_SHORT_VERSION" "$mac_metadata"
+          grep -Fxq "macos_bundle_version=$MACOS_BUNDLE_VERSION" "$mac_metadata"
 
           windows_metadata=$(unzip -p "$windows_zip" ArduPlaneTools/BUILD-METADATA.txt | tr -d '\r')
           grep -Fxq "version=$APT_VERSION" <<< "$windows_metadata"
@@ -215,32 +263,223 @@ jobs:
           (
             cd "$release_dir"
             sha256sum \
-              ArduPlaneTools-preview-macOS-arm64.dmg \
-              ArduPlaneTools-preview-Windows-x64.zip \
+              "ArduPlaneTools-$RELEASE_TAG-macOS-arm64.dmg" \
+              "ArduPlaneTools-$RELEASE_TAG-Windows-x64.zip" \
               > SHA256SUMS.txt
           )
           {
             echo "application=ArduPlaneTools"
             echo "version=$APT_VERSION"
+            echo "tag=$RELEASE_TAG"
             echo "source_commit=$SOURCE_COMMIT"
+            echo "macos_short_version=$MACOS_SHORT_VERSION"
+            echo "macos_bundle_version=$MACOS_BUNDLE_VERSION"
             echo "macos_architecture=arm64"
             echo "windows_architecture=x64"
           } > "$release_dir/BUILD-METADATA.txt"
+
+      - name: Verify assembled release candidate
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/release-candidate"
+          test "$(find "$release_dir" -maxdepth 1 -type f | wc -l)" -eq 4
+          test -s "$release_dir/ArduPlaneTools-$RELEASE_TAG-macOS-arm64.dmg"
+          test -s "$release_dir/ArduPlaneTools-$RELEASE_TAG-Windows-x64.zip"
+          test -s "$release_dir/SHA256SUMS.txt"
+          test -s "$release_dir/BUILD-METADATA.txt"
+          grep -Fxq "version=$APT_VERSION" "$release_dir/BUILD-METADATA.txt"
+          grep -Fxq "tag=$RELEASE_TAG" "$release_dir/BUILD-METADATA.txt"
+          grep -Fxq "source_commit=$SOURCE_COMMIT" "$release_dir/BUILD-METADATA.txt"
+          grep -Fxq "macos_short_version=$MACOS_SHORT_VERSION" "$release_dir/BUILD-METADATA.txt"
+          grep -Fxq "macos_bundle_version=$MACOS_BUNDLE_VERSION" "$release_dir/BUILD-METADATA.txt"
+          test "$(wc -l < "$release_dir/SHA256SUMS.txt")" -eq 2
+          grep -q "  ArduPlaneTools-$RELEASE_TAG-macOS-arm64.dmg$" "$release_dir/SHA256SUMS.txt"
+          grep -q "  ArduPlaneTools-$RELEASE_TAG-Windows-x64.zip$" "$release_dir/SHA256SUMS.txt"
+          (
+            cd "$release_dir"
+            sha256sum --check SHA256SUMS.txt
+          )
           cat "$release_dir/SHA256SUMS.txt"
           {
             echo "## Release-candidate artifacts"
             echo
             echo "Source commit: \`$SOURCE_COMMIT\`"
+            echo "Version: \`$APT_VERSION\`"
             echo
             echo '```text'
             cat "$release_dir/SHA256SUMS.txt"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload release candidate
-        uses: actions/upload-artifact@v4
+      - name: Upload verified release candidate
+        uses: actions/upload-artifact@v7
         with:
-          name: ArduPlaneTools-release-candidate-${{ needs.preflight.outputs.source_commit }}
+          name: ${{ needs.preflight.outputs.artifact_name }}
           path: ${{ runner.temp }}/release-candidate
           if-no-files-found: error
           retention-days: 14
+
+  create-draft-release:
+    name: Create unpublished draft prerelease
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.create_draft_release == true &&
+      github.ref == 'refs/heads/main' &&
+      needs.preflight.outputs.create_draft_release == 'true'
+    needs:
+      - preflight
+      - macos-arm64
+      - windows-x64
+      - assemble
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      APT_VERSION: ${{ needs.preflight.outputs.version }}
+      MACOS_BUNDLE_VERSION: ${{ needs.preflight.outputs.macos_bundle_version }}
+      MACOS_SHORT_VERSION: ${{ needs.preflight.outputs.macos_short_version }}
+      RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+    steps:
+      - name: Check out exact source commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_commit }}
+
+      - name: Download verified release candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.preflight.outputs.artifact_name }}
+          path: ${{ runner.temp }}/release-candidate
+
+      - name: Reverify assets and prepare release notes
+        env:
+          NOTES_PATH: ${{ runner.temp }}/release-notes.md
+        run: |
+          set -euo pipefail
+          release_dir="$RUNNER_TEMP/release-candidate"
+          test "$(find "$release_dir" -maxdepth 1 -type f | wc -l)" -eq 4
+          grep -Fxq "version=$APT_VERSION" "$release_dir/BUILD-METADATA.txt"
+          grep -Fxq "tag=$RELEASE_TAG" "$release_dir/BUILD-METADATA.txt"
+          grep -Fxq "source_commit=$SOURCE_COMMIT" "$release_dir/BUILD-METADATA.txt"
+          grep -Fxq "macos_short_version=$MACOS_SHORT_VERSION" "$release_dir/BUILD-METADATA.txt"
+          grep -Fxq "macos_bundle_version=$MACOS_BUNDLE_VERSION" "$release_dir/BUILD-METADATA.txt"
+          (
+            cd "$release_dir"
+            sha256sum --check SHA256SUMS.txt
+          )
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          template = Path("Packaging/release-notes.md").read_text(encoding="utf-8")
+          checksums = (
+              Path(os.environ["RUNNER_TEMP"])
+              / "release-candidate"
+              / "SHA256SUMS.txt"
+          ).read_text(encoding="utf-8").strip()
+          rendered = (
+              template.replace("{{TAG}}", os.environ["RELEASE_TAG"])
+              .replace("{{SOURCE_COMMIT}}", os.environ["SOURCE_COMMIT"])
+              .replace("{{CHECKSUMS}}", checksums)
+          )
+          if "{{" in rendered or "}}" in rendered:
+              raise SystemExit("Release notes contain an unresolved placeholder.")
+          Path(os.environ["NOTES_PATH"]).write_text(rendered, encoding="utf-8")
+          PY
+
+      - name: Create draft prerelease and upload verified assets
+        uses: actions/github-script@v9
+        env:
+          NOTES_PATH: ${{ runner.temp }}/release-notes.md
+          RELEASE_DIR: ${{ runner.temp }}/release-candidate
+        with:
+          script: |
+            const fs = require('fs')
+            const path = require('path')
+            const owner = context.repo.owner
+            const repo = context.repo.repo
+            const tag = process.env.RELEASE_TAG
+            const sourceCommit = process.env.SOURCE_COMMIT
+            const releaseDir = process.env.RELEASE_DIR
+            const expectedAssets = [
+              [`ArduPlaneTools-${tag}-macOS-arm64.dmg`, 'application/x-apple-diskimage'],
+              [`ArduPlaneTools-${tag}-Windows-x64.zip`, 'application/zip'],
+              ['SHA256SUMS.txt', 'text/plain'],
+              ['BUILD-METADATA.txt', 'text/plain'],
+            ]
+
+            const releases = await github.paginate(
+              github.rest.repos.listReleases,
+              { owner, repo, per_page: 100 },
+            )
+            const existingRelease = releases.find((item) => item.tag_name === tag)
+            if (existingRelease) {
+              throw new Error(`Release ${tag} already exists at ${existingRelease.html_url}.`)
+            }
+
+            try {
+              await github.rest.git.getRef({ owner, repo, ref: `tags/${tag}` })
+              throw new Error(`Tag ${tag} already exists; refusing to move or reuse it.`)
+            } catch (error) {
+              if (error.status !== 404) {
+                throw error
+              }
+            }
+
+            let release
+            try {
+              const response = await github.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: tag,
+                target_commitish: sourceCommit,
+                name: `ArduPlaneTools ${tag} desktop preview`,
+                body: fs.readFileSync(process.env.NOTES_PATH, 'utf8'),
+                draft: true,
+                prerelease: true,
+                make_latest: 'false',
+              })
+              release = response.data
+              core.notice(`Created unpublished draft release: ${release.html_url}`)
+
+              for (const [name, contentType] of expectedAssets) {
+                const data = fs.readFileSync(path.join(releaseDir, name))
+                await github.rest.repos.uploadReleaseAsset({
+                  owner,
+                  repo,
+                  release_id: release.id,
+                  name,
+                  data,
+                  headers: {
+                    'content-type': contentType,
+                    'content-length': data.length,
+                  },
+                })
+              }
+
+              const uploaded = await github.paginate(
+                github.rest.repos.listReleaseAssets,
+                { owner, repo, release_id: release.id, per_page: 100 },
+              )
+              const uploadedNames = uploaded.map((asset) => asset.name).sort()
+              const expectedNames = expectedAssets.map(([name]) => name).sort()
+              if (JSON.stringify(uploadedNames) !== JSON.stringify(expectedNames)) {
+                throw new Error(
+                  `Draft release asset mismatch: ${uploadedNames.join(', ')}`,
+                )
+              }
+              core.summary
+                .addHeading('Draft prerelease created')
+                .addLink(release.html_url, release.html_url)
+                .addRaw(`\n\nTag: \`${tag}\`  \nTarget: \`${sourceCommit}\`  \nStatus: unpublished draft`)
+              await core.summary.write()
+            } catch (error) {
+              if (release) {
+                core.error(
+                  `Draft release ${release.html_url} is incomplete and remains unpublished. ` +
+                  'Inspect or delete it manually before retrying.',
+                )
+              }
+              throw error
+            }
