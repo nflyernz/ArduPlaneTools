@@ -8,6 +8,8 @@ from pathlib import Path
 project_root = Path(SPECPATH).parent
 scripts_root = project_root / "Scripts"
 version = os.environ.get("APT_VERSION", "1.0.0")
+macos_short_version = os.environ.get("APT_MACOS_SHORT_VERSION", version)
+macos_bundle_version = os.environ.get("APT_MACOS_BUNDLE_VERSION", version)
 source_commit = os.environ.get("APT_SOURCE_COMMIT", "unknown")
 
 analysis = Analysis(
@@ -66,8 +68,8 @@ application = BUNDLE(
     bundle_identifier="org.arduplanetools.app",
     info_plist={
         "CFBundleDisplayName": "ArduPlaneTools",
-        "CFBundleShortVersionString": version,
-        "CFBundleVersion": version,
+        "CFBundleShortVersionString": macos_short_version,
+        "CFBundleVersion": macos_bundle_version,
         "APTBuildVersion": version,
         "APTSourceCommit": source_commit,
         "NSHighResolutionCapable": True,
