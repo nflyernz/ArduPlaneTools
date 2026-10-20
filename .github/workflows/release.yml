@@ -1,0 +1,246 @@
+name: Release candidate builds
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: Resolve release-candidate source
+    runs-on: ubuntu-latest
+    outputs:
+      source_commit: ${{ steps.source.outputs.commit }}
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - name: Require main for manual builds
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "Manual release-candidate builds must be dispatched from main." >&2
+          exit 1
+
+      - name: Record source identity
+        id: source
+        env:
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          echo "commit=$SOURCE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "version=0.0.0" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Release-candidate source"
+            echo
+            echo "Source commit: \`$SOURCE_COMMIT\`"
+            echo "Preview version: \`0.0.0\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  macos-arm64:
+    name: Build macOS ARM64 release candidate
+    needs: preflight
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      APT_SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+      APT_VERSION: ${{ needs.preflight.outputs.version }}
+
+    steps:
+      - name: Confirm native ARM64 runner
+        run: |
+          test "$(uname -s)" = "Darwin"
+          test "$(uname -m)" = "arm64"
+          sysctl -n hw.optional.arm64 | grep -qx 1
+
+      - name: Check out exact source commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.source_commit }}
+
+      - name: Set up Python 3.13 ARM64
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          architecture: arm64
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-gui.txt
+            Packaging/requirements-macos-build.txt
+
+      - name: Configure temporary packaging paths
+        run: |
+          echo "APT_BUILD_ROOT=$RUNNER_TEMP/ArduPlaneTools-macos-build" >> "$GITHUB_ENV"
+          echo "APT_PACKAGING_VENV=$RUNNER_TEMP/ArduPlaneTools-pyinstaller-venv" >> "$GITHUB_ENV"
+
+      - name: Confirm Python architecture
+        run: |
+          python - <<'PY'
+          import platform
+          import struct
+
+          assert platform.machine() == "arm64", platform.machine()
+          assert struct.calcsize("P") == 8
+          PY
+
+      - name: Build macOS application
+        run: Packaging/build_macos.sh
+
+      - name: Validate application bundle
+        run: |
+          set -eu
+          app="$APT_BUILD_ROOT/dist/ArduPlaneTools.app"
+          executable="$app/Contents/MacOS/ArduPlaneTools"
+          plist="$app/Contents/Info.plist"
+
+          test -d "$app"
+          test -x "$executable"
+          file "$executable" | grep -q 'arm64'
+          test "$(plutil -extract CFBundleShortVersionString raw -o - "$plist")" = "$APT_VERSION"
+          test "$(plutil -extract CFBundleVersion raw -o - "$plist")" = "$APT_VERSION"
+          test "$(plutil -extract APTBuildVersion raw -o - "$plist")" = "$APT_VERSION"
+          test "$(plutil -extract APTSourceCommit raw -o - "$plist")" = "$APT_SOURCE_COMMIT"
+          diff -qr Config "$app/Contents/Resources/Config"
+          diff -qr Docs/gui_help "$app/Contents/Resources/Docs/gui_help"
+          codesign --verify --deep --strict "$app"
+
+          for directory in Data Logs Params; do
+            if find "$app" -type d -name "$directory" -print -quit | grep -q .; then
+              echo "Forbidden directory was bundled: $directory" >&2
+              exit 1
+            fi
+          done
+          if find "$app" -type f \( \
+              -iname '*.bin' -o \
+              -name 'battery_packs.json' -o \
+              -name 'battery_pack_history.json' -o \
+              -name 'range_walk_history.json' -o \
+              -name 'synthetic-range-walk.csv' \
+            \) -print -quit | grep -q .; then
+            echo "Private flight, history, or smoke-test data was bundled." >&2
+            exit 1
+          fi
+
+      - name: Build and verify DMG
+        run: Packaging/build_dmg.sh
+
+      - name: Prepare macOS artifact metadata
+        run: |
+          release="$APT_BUILD_ROOT/release"
+          cp "$APT_BUILD_ROOT/build-info.txt" "$release/BUILD-METADATA-macOS-arm64.txt"
+          dmg="$release/ArduPlaneTools-preview-macOS-arm64.dmg"
+          bytes=$(stat -f '%z' "$dmg")
+          echo "DMG size: $bytes bytes" | tee "$release/macos-dmg-size.txt"
+          {
+            echo "## macOS ARM64 package"
+            echo
+            echo "DMG size: **$bytes bytes**"
+            echo "Source commit: \`$APT_SOURCE_COMMIT\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload macOS ARM64 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArduPlaneTools-macos-arm64-build
+          path: |
+            ${{ env.APT_BUILD_ROOT }}/release/ArduPlaneTools-preview-macOS-arm64.dmg
+            ${{ env.APT_BUILD_ROOT }}/release/BUILD-METADATA-macOS-arm64.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-x64:
+    name: Build Windows x64 release candidate
+    needs: preflight
+    uses: ./.github/workflows/windows-packaging.yml
+    with:
+      artifact_name: ArduPlaneTools-windows-x64-build
+      source_commit: ${{ needs.preflight.outputs.source_commit }}
+      version: ${{ needs.preflight.outputs.version }}
+
+  assemble:
+    name: Assemble release-candidate artifacts
+    needs:
+      - preflight
+      - macos-arm64
+      - windows-x64
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_COMMIT: ${{ needs.preflight.outputs.source_commit }}
+      APT_VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - name: Download macOS build
+        uses: actions/download-artifact@v5
+        with:
+          name: ArduPlaneTools-macos-arm64-build
+          path: ${{ runner.temp }}/release-input/macos
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v5
+        with:
+          name: ArduPlaneTools-windows-x64-build
+          path: ${{ runner.temp }}/release-input/windows
+
+      - name: Verify and assemble distributions
+        run: |
+          set -euo pipefail
+          input_root="$RUNNER_TEMP/release-input"
+          release_dir="$RUNNER_TEMP/release-candidate"
+          mac_dmg="$input_root/macos/ArduPlaneTools-preview-macOS-arm64.dmg"
+          mac_metadata="$input_root/macos/BUILD-METADATA-macOS-arm64.txt"
+          windows_zip="$input_root/windows/ArduPlaneTools-preview-Windows-x64.zip"
+          test -s "$mac_dmg"
+          test -s "$mac_metadata"
+          test -s "$windows_zip"
+          test "$(find "$input_root/macos" -maxdepth 1 -type f | wc -l)" -eq 2
+          test "$(find "$input_root/windows" -maxdepth 1 -type f | wc -l)" -eq 1
+          grep -Fxq "version=$APT_VERSION" "$mac_metadata"
+          grep -Fxq "source_commit=$SOURCE_COMMIT" "$mac_metadata"
+
+          windows_metadata=$(unzip -p "$windows_zip" ArduPlaneTools/BUILD-METADATA.txt | tr -d '\r')
+          grep -Fxq "version=$APT_VERSION" <<< "$windows_metadata"
+          grep -Fxq "source_commit=$SOURCE_COMMIT" <<< "$windows_metadata"
+          test "$(unzip -Z1 "$windows_zip" | grep -c '^ArduPlaneTools/ArduPlaneTools.exe$')" -eq 1
+          if unzip -Z1 "$windows_zip" | grep -Ev '^ArduPlaneTools/' | grep -q .; then
+            echo "Windows ZIP contains entries outside ArduPlaneTools/." >&2
+            exit 1
+          fi
+
+          mkdir "$release_dir"
+          cp "$mac_dmg" "$windows_zip" "$release_dir/"
+          (
+            cd "$release_dir"
+            sha256sum \
+              ArduPlaneTools-preview-macOS-arm64.dmg \
+              ArduPlaneTools-preview-Windows-x64.zip \
+              > SHA256SUMS.txt
+          )
+          {
+            echo "application=ArduPlaneTools"
+            echo "version=$APT_VERSION"
+            echo "source_commit=$SOURCE_COMMIT"
+            echo "macos_architecture=arm64"
+            echo "windows_architecture=x64"
+          } > "$release_dir/BUILD-METADATA.txt"
+          cat "$release_dir/SHA256SUMS.txt"
+          {
+            echo "## Release-candidate artifacts"
+            echo
+            echo "Source commit: \`$SOURCE_COMMIT\`"
+            echo
+            echo '```text'
+            cat "$release_dir/SHA256SUMS.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArduPlaneTools-release-candidate-${{ needs.preflight.outputs.source_commit }}
+          path: ${{ runner.temp }}/release-candidate
+          if-no-files-found: error
+          retention-days: 14

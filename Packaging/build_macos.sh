@@ -7,6 +7,8 @@ project_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 python_bin=${PYTHON_BIN:-python3.13}
 build_root=${APT_BUILD_ROOT:-/tmp/ArduPlaneTools-macos-build}
 venv_dir=${APT_PACKAGING_VENV:-/tmp/ArduPlaneTools-pyinstaller-venv}
+version=${APT_VERSION:-1.0.0}
+source_commit=${APT_SOURCE_COMMIT:-unknown}
 work_dir="$build_root/work"
 dist_dir="$build_root/dist"
 export PYINSTALLER_CONFIG_DIR="$build_root/pyinstaller-config"
@@ -26,6 +28,8 @@ fi
 mkdir -p "$build_root"
 {
     echo "application=ArduPlaneTools"
+    echo "version=$version"
+    echo "source_commit=$source_commit"
     echo "architecture=$(uname -m)"
     echo "macos=$(sw_vers -productVersion)"
     echo "python=$($venv_dir/bin/python --version 2>&1)"
