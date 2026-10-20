@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from numbers import Real
 from pathlib import Path
 
+from .application_data import application_data_directory
 from .gps_time import (
     GPS_WEEK_MILLISECONDS,
     SUPPORTED_GPS_UTC_OFFSETS,
@@ -22,7 +23,7 @@ OBSERVATION_SCHEMA_VERSION = 1
 ANALYSIS_SEMANTICS_VERSION = "battery-load-v1"
 SUPPORTED_ANALYSIS_SEMANTICS = (ANALYSIS_SEMANTICS_VERSION,)
 DEFAULT_HISTORY_PATH = (
-    Path(__file__).resolve().parents[2] / "Data" / "battery_pack_history.json"
+    application_data_directory() / "battery_pack_history.json"
 )
 
 

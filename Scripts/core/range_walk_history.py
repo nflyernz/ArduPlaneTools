@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from .application_data import application_data_directory
 from .range_walk import LandmarkMarker, WalkSettings, select_landmarks
 
 
@@ -19,10 +20,10 @@ BASELINE_SCHEMA_VERSION = 1
 ADDITIONAL_WALK_SCHEMA_VERSION = 1
 EVIDENCE_SEMANTICS_VERSION = "range-walk-gui-auto-33pct-neutral-v1"
 DEFAULT_HISTORY_PATH = (
-    Path(__file__).resolve().parents[2] / "Data" / "range_walk_history.json"
+    application_data_directory() / "range_walk_history.json"
 )
 DEFAULT_EVIDENCE_DIR = (
-    Path(__file__).resolve().parents[2] / "Data" / "range_walk_csv"
+    application_data_directory() / "range_walk_csv"
 )
 
 
