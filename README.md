@@ -331,8 +331,8 @@ APT stores persistent records **outside the application bundle and source
 checkout**, in the user-writable application-data directory:
 
 - macOS: `~/Library/Application Support/ArduPlaneTools/`
-- Windows: `%LOCALAPPDATA%\\ArduPlaneTools\\`
-- Linux source installations: `\${XDG_DATA_HOME:-~/.local/share}/ArduPlaneTools/`
+- Windows: `%LOCALAPPDATA%\ArduPlaneTools\`
+- Linux source installations: `${XDG_DATA_HOME:-$HOME/.local/share}/ArduPlaneTools/`
   (XDG fallback shown; absolute `XDG_DATA_HOME` values are supported).
 
 The directory contains `battery_packs.json`, `battery_pack_history.json`,
