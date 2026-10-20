@@ -76,7 +76,7 @@ def _row(seconds, *, offset=0, quality=100, rssi=-75, snr=0, mode=2,
 
 def _write(tmp_path, rows, *, header=HEADER, name="radio.csv"):
     path = tmp_path / name
-    with path.open("w", newline="") as stream:
+    with path.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.writer(stream)
         writer.writerow(header)
         for row in rows:

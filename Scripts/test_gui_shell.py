@@ -83,6 +83,30 @@ def test_qt_application_identity_is_arduplane_tools(monkeypatch):
     }
 
 
+def test_packaging_smoke_argument_bypasses_gui(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        gui_app,
+        "_run_packaging_smoke",
+        lambda arguments: calls.append(arguments) or 17,
+    )
+
+    assert gui_app.main(
+        [
+            "gui_app.py",
+            "--packaging-smoke",
+            str(tmp_path / "fixture.bin"),
+            str(tmp_path / "fixture.csv"),
+            str(tmp_path / "result.json"),
+        ]
+    ) == 17
+    assert calls == [[
+        str(tmp_path / "fixture.bin"),
+        str(tmp_path / "fixture.csv"),
+        str(tmp_path / "result.json"),
+    ]]
+
+
 def test_expected_analysis_tabs_are_present_in_order(window):
     labels = tuple(
         window.analysis_tabs.tabText(index)

@@ -2,6 +2,8 @@ from pathlib import Path
 
 import yaml
 
+from .resources import resource_path
+
 
 class Config:
 
@@ -10,10 +12,7 @@ class Config:
         path = Path(filename)
 
         if not path.is_absolute():
-            # Core modules may be invoked from the menu, a regression
-            # harness, or another working directory. Configuration paths
-            # are repository-relative, not process-CWD-relative.
-            path = Path(__file__).resolve().parents[2] / path
+            path = resource_path(path)
 
         self.filename = path
 

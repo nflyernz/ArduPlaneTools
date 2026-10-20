@@ -8,8 +8,10 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from .application_data import application_data_directory
+
 SCHEMA_VERSION = 1
-DEFAULT_STORE_PATH = Path(__file__).resolve().parents[2] / "Data" / "battery_packs.json"
+DEFAULT_STORE_PATH = application_data_directory() / "battery_packs.json"
 
 
 class BatteryPackStoreError(ValueError):

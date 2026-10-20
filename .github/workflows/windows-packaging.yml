@@ -1,0 +1,288 @@
+name: Windows x64 packaging
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - app-packaging
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Test and build Windows x64 preview
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Configure temporary packaging paths
+        shell: pwsh
+        run: |
+          "APT_BUILD_ROOT=$env:RUNNER_TEMP\ArduPlaneTools-windows-build" >> $env:GITHUB_ENV
+          "APT_PACKAGING_VENV=$env:RUNNER_TEMP\ArduPlaneTools-pyinstaller-venv" >> $env:GITHUB_ENV
+
+      - name: Set up Python 3.13 x64
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x64
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-gui.txt
+            Packaging/requirements-windows-build.txt
+
+      - name: Install test dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-gui.txt pytest==9.1.1
+
+      - name: Generate and validate synthetic smoke fixtures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $fixtures = Join-Path $env:RUNNER_TEMP "ArduPlaneTools-smoke-fixtures"
+          $resultPath = Join-Path $fixtures "source-result.json"
+          $binPath = Join-Path $fixtures "synthetic-radio-link.bin"
+          $csvPath = Join-Path $fixtures "synthetic-range-walk.csv"
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "ArduPlaneTools-source-smoke-data"
+          python Packaging/generate_smoke_fixtures.py $fixtures
+          if ($LASTEXITCODE -ne 0) {
+              throw "Synthetic fixture generation failed."
+          }
+          python Scripts/gui_app.py --packaging-smoke $binPath $csvPath $resultPath
+          if ($LASTEXITCODE -ne 0) {
+              if (Test-Path -LiteralPath $resultPath) {
+                  Get-Content -LiteralPath $resultPath
+              }
+              throw "Source-runtime synthetic analysis failed."
+          }
+          $result = Get-Content -Raw -LiteralPath $resultPath | ConvertFrom-Json
+          if ($result.status -ne "ok" -or
+              $result.radio_link.episode_count -ne 1 -or
+              $result.range_walk.row_count -ne 132 -or
+              $result.range_walk.marker_candidates -ne 5) {
+              throw "Source-runtime synthetic analysis returned unexpected evidence."
+          }
+
+      - name: Run Windows test suite
+        shell: pwsh
+        run: python -m pytest Scripts/
+
+      - name: Build Windows x64 application
+        shell: pwsh
+        run: ./Packaging/build_windows.ps1
+
+      - name: Run packaged BIN and CSV analysis outside repository
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $executable = Join-Path $env:APT_BUILD_ROOT "dist\ArduPlaneTools\ArduPlaneTools.exe"
+          $fixtures = Join-Path $env:RUNNER_TEMP "ArduPlaneTools-smoke-fixtures"
+          $binPath = Join-Path $fixtures "synthetic-radio-link.bin"
+          $csvPath = Join-Path $fixtures "synthetic-range-walk.csv"
+          $resultPath = Join-Path $fixtures "packaged-result.json"
+          $workingDirectory = Join-Path $env:RUNNER_TEMP "ArduPlaneTools-packaged-smoke-cwd"
+          $isolatedData = Join-Path $env:RUNNER_TEMP "ArduPlaneTools-packaged-smoke-data"
+          New-Item -ItemType Directory -Path $workingDirectory -Force | Out-Null
+          New-Item -ItemType Directory -Path $isolatedData -Force | Out-Null
+          $savedLocalAppData = $env:LOCALAPPDATA
+          try {
+              $env:LOCALAPPDATA = $isolatedData
+              $arguments = @(
+                  "--packaging-smoke",
+                  "`"$binPath`"",
+                  "`"$csvPath`"",
+                  "`"$resultPath`""
+              )
+              $process = Start-Process -FilePath $executable `
+                  -ArgumentList $arguments `
+                  -WorkingDirectory $workingDirectory `
+                  -Wait `
+                  -PassThru
+              if ($process.ExitCode -ne 0) {
+                  if (Test-Path -LiteralPath $resultPath) {
+                      Get-Content -LiteralPath $resultPath
+                  }
+                  throw "Packaged synthetic analysis exited with code $($process.ExitCode)."
+              }
+          }
+          finally {
+              $env:LOCALAPPDATA = $savedLocalAppData
+          }
+          $result = Get-Content -Raw -LiteralPath $resultPath | ConvertFrom-Json
+          if ($result.status -ne "ok" -or
+              $result.radio_link.episode_count -ne 1 -or
+              $result.range_walk.row_count -ne 132 -or
+              $result.range_walk.marker_candidates -ne 5) {
+              throw "Packaged synthetic analysis returned unexpected evidence."
+          }
+          $applicationData = Join-Path $isolatedData "ArduPlaneTools"
+          if ((Test-Path -LiteralPath $applicationData) -and
+              (Get-ChildItem -LiteralPath $applicationData -Recurse -File -Force)) {
+              throw "Packaged analysis wrote APT persistent-history data."
+          }
+          Get-Content -LiteralPath $resultPath
+
+      - name: Validate packaged resources and dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dist = Join-Path $env:APT_BUILD_ROOT "dist\ArduPlaneTools"
+          $internal = Join-Path $dist "_internal"
+          $executable = Join-Path $dist "ArduPlaneTools.exe"
+          $archiveViewer = Join-Path $env:APT_PACKAGING_VENV "Scripts\pyi-archive_viewer.exe"
+
+          if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+              throw "Packaged executable is missing."
+          }
+          if (-not (Get-ChildItem -LiteralPath $dist -Recurse -Filter "qwindows.dll" -File)) {
+              throw "The Qt Windows platform plugin is missing."
+          }
+
+          function Assert-ResourceTree([string]$Source, [string]$Bundled) {
+              $sourceRoot = (Resolve-Path -LiteralPath $Source).Path
+              $bundledRoot = (Resolve-Path -LiteralPath $Bundled).Path
+              $sourceFiles = Get-ChildItem -LiteralPath $sourceRoot -Recurse -File
+              $bundledFiles = Get-ChildItem -LiteralPath $bundledRoot -Recurse -File
+              if ($sourceFiles.Count -ne $bundledFiles.Count) {
+                  throw "Bundled resource count differs for $Source."
+              }
+              foreach ($sourceFile in $sourceFiles) {
+                  $relative = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart('\')
+                  $bundledFile = Join-Path $bundledRoot $relative
+                  if (-not (Test-Path -LiteralPath $bundledFile -PathType Leaf)) {
+                      throw "Bundled resource is missing: $relative"
+                  }
+                  if ((Get-FileHash -Algorithm SHA256 $sourceFile).Hash -ne (Get-FileHash -Algorithm SHA256 $bundledFile).Hash) {
+                      throw "Bundled resource differs: $relative"
+                  }
+              }
+          }
+
+          Assert-ResourceTree "Config" (Join-Path $internal "Config")
+          Assert-ResourceTree "Docs\gui_help" (Join-Path $internal "Docs\gui_help")
+
+          $archiveListing = & $archiveViewer -l -r $executable 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) {
+              throw "Unable to inspect the packaged Python archive."
+          }
+          foreach ($dialect in @(
+              "pymavlink.dialects.v10.ardupilotmega",
+              "pymavlink.dialects.v20.ardupilotmega"
+          )) {
+              if (-not $archiveListing.Contains($dialect)) {
+                  throw "Packaged pymavlink dialect is missing: $dialect"
+              }
+          }
+
+          foreach ($forbiddenDirectory in @("Data", "Logs", "Params")) {
+              if (Test-Path -LiteralPath (Join-Path $internal $forbiddenDirectory)) {
+                  throw "Forbidden directory was bundled: $forbiddenDirectory"
+              }
+          }
+          $forbiddenNames = @(
+              "battery_packs.json",
+              "battery_pack_history.json",
+              "range_walk_history.json"
+          )
+          $forbiddenFiles = Get-ChildItem -LiteralPath $dist -Recurse -File | Where-Object {
+              $_.Extension -ieq ".bin" -or $forbiddenNames -contains $_.Name
+          }
+          if ($forbiddenFiles) {
+              throw "Private flight or history data was bundled: $($forbiddenFiles.FullName -join ', ')"
+          }
+          foreach ($fixtureName in @(
+              "synthetic-radio-link.bin",
+              "synthetic-range-walk.csv"
+          )) {
+              if (Get-ChildItem -LiteralPath $dist -Recurse -File -Filter $fixtureName) {
+                  throw "Synthetic smoke fixture was bundled: $fixtureName"
+              }
+          }
+
+          @'
+          from pathlib import Path
+          import os
+
+          root = Path(os.environ["APT_BUILD_ROOT"]) / "dist" / "ArduPlaneTools"
+          needles = [
+              os.environ["GITHUB_WORKSPACE"].encode(),
+              os.environ["GITHUB_WORKSPACE"].encode("utf-16-le"),
+          ]
+          for path in root.rglob("*"):
+              if not path.is_file():
+                  continue
+              overlap = max(map(len, needles)) - 1
+              tail = b""
+              with path.open("rb") as stream:
+                  while chunk := stream.read(1024 * 1024):
+                      data = tail + chunk
+                      if any(needle in data for needle in needles):
+                          raise SystemExit(f"Development workspace path embedded in {path}")
+                      tail = data[-overlap:]
+          '@ | python -
+
+      - name: Smoke-test packaged GUI without Python on PATH
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $executable = Join-Path $env:APT_BUILD_ROOT "dist\ArduPlaneTools\ArduPlaneTools.exe"
+          $smokeData = Join-Path $env:RUNNER_TEMP "ArduPlaneTools-smoke-data"
+          New-Item -ItemType Directory -Path $smokeData -Force | Out-Null
+          $savedPath = $env:PATH
+          $savedLocalAppData = $env:LOCALAPPDATA
+          try {
+              $env:LOCALAPPDATA = $smokeData
+              $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+              $process = Start-Process -FilePath $executable -PassThru
+              Start-Sleep -Seconds 10
+              if ($process.HasExited) {
+                  throw "Packaged GUI exited during startup with code $($process.ExitCode)."
+              }
+              if (-not $process.CloseMainWindow()) {
+                  throw "Packaged GUI did not expose a closable main window."
+              }
+              if (-not $process.WaitForExit(15000)) {
+                  $process.Kill()
+                  throw "Packaged GUI did not close cleanly."
+              }
+              if ($process.ExitCode -ne 0) {
+                  throw "Packaged GUI exited with code $($process.ExitCode)."
+              }
+          }
+          finally {
+              $env:PATH = $savedPath
+              $env:LOCALAPPDATA = $savedLocalAppData
+          }
+          $createdEntries = Get-ChildItem -LiteralPath $smokeData -Recurse -Force
+          if ($createdEntries) {
+              Write-Host "Isolated runtime entries:"
+              $createdEntries.FullName | ForEach-Object { Write-Host "  $_" }
+          }
+          $applicationData = Join-Path $smokeData "ArduPlaneTools"
+          if ((Test-Path -LiteralPath $applicationData) -and
+              (Get-ChildItem -LiteralPath $applicationData -Recurse -File -Force)) {
+              throw "GUI startup wrote APT persistent data during the isolated smoke test."
+          }
+
+      - name: Record distribution size
+        shell: pwsh
+        run: |
+          $dist = Join-Path $env:APT_BUILD_ROOT "dist\ArduPlaneTools"
+          $bytes = (Get-ChildItem -LiteralPath $dist -Recurse -File | Measure-Object -Property Length -Sum).Sum
+          "Windows distribution size: $bytes bytes" | Tee-Object -FilePath (Join-Path $env:APT_BUILD_ROOT "windows-distribution-size.txt")
+          "## Windows x64 package`n`nDistribution size: **$bytes bytes**" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload Windows x64 preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArduPlaneTools-windows-x64-preview
+          path: ${{ env.APT_BUILD_ROOT }}\dist\ArduPlaneTools
+          if-no-files-found: error
+          retention-days: 14

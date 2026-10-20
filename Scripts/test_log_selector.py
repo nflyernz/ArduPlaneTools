@@ -132,6 +132,7 @@ def test_directory_choice_expands_user_home(monkeypatch, tmp_path):
     selected = selected_directory / "flight.bin"
     selected.touch()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setattr(log_selector, "_current_directory", tmp_path)
     _inputs(monkeypatch, "d", "~/flight-logs", "1")
 
@@ -146,6 +147,7 @@ def test_manual_file_path_expands_user_home(monkeypatch, tmp_path):
     selected = home / "manual.BIN"
     selected.touch()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setattr(log_selector, "_current_directory", tmp_path)
     _inputs(monkeypatch, "p", "~/manual.BIN")
 
