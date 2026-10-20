@@ -42,6 +42,34 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-gui.txt pytest==9.1.1
 
+      - name: Generate and validate synthetic smoke fixtures
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $fixtures = Join-Path $env:RUNNER_TEMP "ArduPlaneTools-smoke-fixtures"
+          $resultPath = Join-Path $fixtures "source-result.json"
+          $binPath = Join-Path $fixtures "synthetic-radio-link.bin"
+          $csvPath = Join-Path $fixtures "synthetic-range-walk.csv"
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP "ArduPlaneTools-source-smoke-data"
+          python Packaging/generate_smoke_fixtures.py $fixtures
+          if ($LASTEXITCODE -ne 0) {
+              throw "Synthetic fixture generation failed."
+          }
+          python Scripts/gui_app.py --packaging-smoke $binPath $csvPath $resultPath
+          if ($LASTEXITCODE -ne 0) {
+              if (Test-Path -LiteralPath $resultPath) {
+                  Get-Content -LiteralPath $resultPath
+              }
+              throw "Source-runtime synthetic analysis failed."
+          }
+          $result = Get-Content -Raw -LiteralPath $resultPath | ConvertFrom-Json
+          if ($result.status -ne "ok" -or
+              $result.radio_link.episode_count -ne 1 -or
+              $result.range_walk.row_count -ne 132 -or
+              $result.range_walk.marker_candidates -ne 5) {
+              throw "Source-runtime synthetic analysis returned unexpected evidence."
+          }
+
       - name: Run Windows test suite
         shell: pwsh
         run: python -m pytest Scripts/
@@ -49,6 +77,57 @@ jobs:
       - name: Build Windows x64 application
         shell: pwsh
         run: ./Packaging/build_windows.ps1
+
+      - name: Run packaged BIN and CSV analysis outside repository
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $executable = Join-Path $env:APT_BUILD_ROOT "dist\ArduPlaneTools\ArduPlaneTools.exe"
+          $fixtures = Join-Path $env:RUNNER_TEMP "ArduPlaneTools-smoke-fixtures"
+          $binPath = Join-Path $fixtures "synthetic-radio-link.bin"
+          $csvPath = Join-Path $fixtures "synthetic-range-walk.csv"
+          $resultPath = Join-Path $fixtures "packaged-result.json"
+          $workingDirectory = Join-Path $env:RUNNER_TEMP "ArduPlaneTools-packaged-smoke-cwd"
+          $isolatedData = Join-Path $env:RUNNER_TEMP "ArduPlaneTools-packaged-smoke-data"
+          New-Item -ItemType Directory -Path $workingDirectory -Force | Out-Null
+          New-Item -ItemType Directory -Path $isolatedData -Force | Out-Null
+          $savedLocalAppData = $env:LOCALAPPDATA
+          try {
+              $env:LOCALAPPDATA = $isolatedData
+              $arguments = @(
+                  "--packaging-smoke",
+                  "`"$binPath`"",
+                  "`"$csvPath`"",
+                  "`"$resultPath`""
+              )
+              $process = Start-Process -FilePath $executable `
+                  -ArgumentList $arguments `
+                  -WorkingDirectory $workingDirectory `
+                  -Wait `
+                  -PassThru
+              if ($process.ExitCode -ne 0) {
+                  if (Test-Path -LiteralPath $resultPath) {
+                      Get-Content -LiteralPath $resultPath
+                  }
+                  throw "Packaged synthetic analysis exited with code $($process.ExitCode)."
+              }
+          }
+          finally {
+              $env:LOCALAPPDATA = $savedLocalAppData
+          }
+          $result = Get-Content -Raw -LiteralPath $resultPath | ConvertFrom-Json
+          if ($result.status -ne "ok" -or
+              $result.radio_link.episode_count -ne 1 -or
+              $result.range_walk.row_count -ne 132 -or
+              $result.range_walk.marker_candidates -ne 5) {
+              throw "Packaged synthetic analysis returned unexpected evidence."
+          }
+          $applicationData = Join-Path $isolatedData "ArduPlaneTools"
+          if ((Test-Path -LiteralPath $applicationData) -and
+              (Get-ChildItem -LiteralPath $applicationData -Recurse -File -Force)) {
+              throw "Packaged analysis wrote APT persistent-history data."
+          }
+          Get-Content -LiteralPath $resultPath
 
       - name: Validate packaged resources and dependencies
         shell: pwsh
@@ -117,6 +196,14 @@ jobs:
           }
           if ($forbiddenFiles) {
               throw "Private flight or history data was bundled: $($forbiddenFiles.FullName -join ', ')"
+          }
+          foreach ($fixtureName in @(
+              "synthetic-radio-link.bin",
+              "synthetic-range-walk.csv"
+          )) {
+              if (Get-ChildItem -LiteralPath $dist -Recurse -File -Filter $fixtureName) {
+                  throw "Synthetic smoke fixture was bundled: $fixtureName"
+              }
           }
 
           @'
