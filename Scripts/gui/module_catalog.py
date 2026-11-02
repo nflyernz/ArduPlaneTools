@@ -20,6 +20,8 @@ MODULE_DESCRIPTIONS = {
 
 MODULE_DISPLAY_LABELS = {
     "Battery": "Battery Analysis",
+    "TAKEOFF": "AUTO Takeoff",
+    "Landing": "AUTO Landing",
 }
 
 OVERVIEW_SECTIONS = (

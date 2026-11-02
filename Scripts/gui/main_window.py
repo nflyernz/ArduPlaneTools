@@ -515,14 +515,16 @@ class MainWindow(QMainWindow):
         assignment_group = QGroupBox("Assign existing Pack ID")
         assignment_layout = QHBoxLayout(assignment_group)
         self.pack_assign_combo = QComboBox()
+        self.pack_assign_combo.setMaximumWidth(250)
         self.pack_assign_combo.addItem(_PACK_ID_PLACEHOLDER, None)
         self.pack_assign_combo.currentIndexChanged.connect(
             self._update_analysis_controls
         )
         self.pack_assign_button = QPushButton("Assign selected BIN")
         self.pack_assign_button.clicked.connect(self.assign_existing_pack)
-        assignment_layout.addWidget(self.pack_assign_combo, 1)
+        assignment_layout.addWidget(self.pack_assign_combo)
         assignment_layout.addWidget(self.pack_assign_button)
+        assignment_layout.addStretch(1)
         layout.addWidget(assignment_group)
 
         create_group = QGroupBox("Create and assign Pack ID")
@@ -556,7 +558,10 @@ class MainWindow(QMainWindow):
                 "Updates the Pack ID in every saved BIN association that uses it."
             ),
         )
-        rename_form.addRow(self.pack_rename_button)
+        rename_actions = QHBoxLayout()
+        rename_actions.addStretch(1)
+        rename_actions.addWidget(self.pack_rename_button)
+        rename_form.addRow(rename_actions)
         layout.addWidget(rename_group)
 
         history_group = QGroupBox("Record AUTO takeoff history")

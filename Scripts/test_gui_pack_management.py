@@ -132,6 +132,32 @@ def test_management_starts_read_only_without_packs_or_selected_bin(
     assert not (tmp_path / "history.json").exists()
 
 
+def test_pack_management_action_controls_remain_compact_and_ordered(
+    tmp_path,
+    qt_app,
+    make_window,
+):
+    window = make_window(_service(tmp_path))
+    window.show_analysis_tab("Battery Pack Management")
+    qt_app.processEvents()
+
+    assign_combo = window.pack_assign_combo
+    assign_button = window.pack_assign_button
+    rename_button = window.pack_rename_button
+    history_button = window.pack_record_history_button
+
+    assert assign_combo.maximumWidth() == 250
+    assert assign_combo.width() <= 250
+    assert assign_button.x() > assign_combo.x()
+    assert rename_button.width() < rename_button.parentWidget().width() / 2
+    assert rename_button.geometry().right() > (
+        rename_button.parentWidget().width() - 50
+    )
+    assert rename_button.mapToGlobal(rename_button.rect().topLeft()).y() < (
+        history_button.mapToGlobal(history_button.rect().topLeft()).y()
+    )
+
+
 def test_management_has_no_analyse_button_and_cannot_dispatch_stall(
     tmp_path,
     qt_app,
