@@ -13,7 +13,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QGroupBox, QLabel
 
 from gui import ANALYSIS_TABS, MainWindow
-from gui.module_catalog import MODULE_DESCRIPTIONS
+from gui.module_catalog import MODULE_DESCRIPTIONS, display_label
 from gui.pack_performance_adapter import BatteryPackPerformanceService
 
 
@@ -22,8 +22,8 @@ VISIBLE_TAB_LABELS = (
     "Battery Analysis",
     "Battery Pack Management",
     "Pack Performance",
-    "TAKEOFF",
-    "Landing",
+    "AUTO Takeoff",
+    "AUTO Landing",
     "AUTOTUNE",
     "Stall",
     "Events",
@@ -132,7 +132,7 @@ def test_every_overview_entry_describes_and_opens_its_module(qt_app, window):
     assert tuple(window.overview_buttons) == ANALYSIS_TABS
     for name in ANALYSIS_TABS:
         button = window.overview_buttons[name]
-        expected_label = "Battery Analysis" if name == "Battery" else name
+        expected_label = display_label(name)
         assert button.text() == expected_label
         assert button.font().pointSizeF() == pytest.approx(
             window.font().pointSizeF() + 2.0
@@ -165,7 +165,7 @@ def test_module_headers_separate_context_from_empty_reports(window, name):
     title = page.findChild(QLabel, f"{slug}HeaderTitle")
     description = page.findChild(QLabel, f"{slug}HeaderDescription")
     instruction = page.findChild(QLabel, f"{slug}HeaderInstruction")
-    expected_title = "Battery Analysis" if name == "Battery" else name
+    expected_title = display_label(name)
     expected_instruction = "Select a BIN log above, then choose Analyse."
     expected_empty_state = "No analysis run yet."
     if name == "Battery Pack Management":

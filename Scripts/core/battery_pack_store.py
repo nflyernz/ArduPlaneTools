@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .application_data import application_data_directory
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_STORE_PATH = application_data_directory() / "battery_packs.json"
 
 
@@ -53,13 +53,31 @@ class BatteryPackStore:
     def __init__(self, path: str | Path = DEFAULT_STORE_PATH):
         self.path = Path(path)
         self._pack_ids: list[str] = []
+        self._archived_pack_ids: list[str] = []
         self._associations: dict[str, LogPackAssociation] = {}
         self._load()
 
     @property
     def pack_ids(self) -> tuple[str, ...]:
-        """Return known physical Pack IDs in creation order."""
+        """Return all physical Pack IDs, including archived ones, for reports."""
         return tuple(self._pack_ids)
+
+    @property
+    def active_pack_ids(self) -> tuple[str, ...]:
+        """Return Pack IDs eligible for new log assignments."""
+        return tuple(pack for pack in self._pack_ids if pack not in self._archived_pack_ids)
+
+    @property
+    def archived_pack_ids(self) -> tuple[str, ...]:
+        """Return archived Pack IDs in creation order."""
+        return tuple(pack for pack in self._pack_ids if pack in self._archived_pack_ids)
+
+    def unused_pack_ids(self, history_store: object) -> tuple[str, ...]:
+        """Return active and archived packs with no saved evidence."""
+        return tuple(
+            pack for pack in self._pack_ids
+            if self._deletion_blocker(pack, history_store) is None
+        )
 
     def association_for(self, fingerprint: str) -> LogPackAssociation:
         """Return the stored decision, or explicit unseen state."""
@@ -73,7 +91,7 @@ class BatteryPackStore:
         """Associate a source log with an existing Pack ID."""
         self._validate_fingerprint(fingerprint)
         normalized_id = self._normalize_pack_id(pack_id)
-        if normalized_id not in self._pack_ids:
+        if normalized_id not in self.active_pack_ids:
             raise BatteryPackStoreError(f"Unknown Pack ID: {normalized_id}")
         associations = dict(self._associations)
         associations[fingerprint] = LogPackAssociation(
@@ -135,7 +153,50 @@ class BatteryPackStore:
             for fingerprint, association in self._associations.items()
         }
 
-        self._save(pack_ids, associations)
+        archived = [new_id if pack == old_id else pack for pack in self._archived_pack_ids]
+        self._save(pack_ids, associations, archived)
+
+    def archive_pack(self, pack_id: str) -> None:
+        """Hide a pack from new assignments while preserving its history."""
+        pack = self._require_pack(pack_id)
+        if pack not in self._archived_pack_ids:
+            self._save(self._pack_ids, self._associations, [*self._archived_pack_ids, pack])
+
+    def restore_pack(self, pack_id: str) -> None:
+        """Make an archived pack eligible for new assignments again."""
+        pack = self._require_pack(pack_id)
+        if pack in self._archived_pack_ids:
+            self._save(self._pack_ids, self._associations,
+                       [item for item in self._archived_pack_ids if item != pack])
+
+    def delete_pack(self, pack_id: str, history_store: object) -> None:
+        """Delete an unused pack only when no saved evidence refers to it."""
+        pack = self._require_pack(pack_id)
+        blocker = self._deletion_blocker(pack, history_store)
+        if blocker is not None:
+            raise BatteryPackStoreError(blocker)
+        self._save([item for item in self._pack_ids if item != pack], self._associations,
+                   [item for item in self._archived_pack_ids if item != pack])
+
+    def _deletion_blocker(self, pack_id: str, history_store: object) -> str | None:
+        if any(a.pack_id == pack_id for a in self._associations.values()):
+            return "Pack ID has log associations and cannot be deleted."
+        if any(
+            observation.pack_id_at_ingest == pack_id
+            or self._associations.get(
+                observation.source_sha256,
+                LogPackAssociation(LogPackState.UNSEEN),
+            ).pack_id == pack_id
+            for observation in history_store.observations
+        ):
+            return "Pack ID has historical observations and cannot be deleted."
+        return None
+
+    def _require_pack(self, pack_id: str) -> str:
+        pack = self._normalize_pack_id(pack_id)
+        if pack not in self._pack_ids:
+            raise BatteryPackStoreError(f"Unknown Pack ID: {pack}")
+        return pack
 
     def _load(self) -> None:
         if not self.path.exists():
@@ -146,16 +207,19 @@ class BatteryPackStore:
             raise BatteryPackStoreFormatError(
                 f"Unable to read {self.path}: {exc}"
             ) from exc
-        self._pack_ids, self._associations = self._validate_data(data)
+        self._pack_ids, self._associations, self._archived_pack_ids = self._validate_data(data)
 
     def _save(
         self,
         pack_ids: list[str],
         associations: dict[str, LogPackAssociation],
+        archived_pack_ids: list[str] | None = None,
     ) -> None:
+        archived_pack_ids = list(self._archived_pack_ids if archived_pack_ids is None else archived_pack_ids)
         data = {
             "version": SCHEMA_VERSION,
             "pack_ids": pack_ids,
+            "archived_pack_ids": archived_pack_ids,
             "log_associations": {
                 fingerprint: (
                     {"state": association.state.value, "pack_id": association.pack_id}
@@ -185,24 +249,28 @@ class BatteryPackStore:
                 temporary_path.unlink()
         self._pack_ids = list(pack_ids)
         self._associations = associations
+        self._archived_pack_ids = archived_pack_ids
 
     @classmethod
     def _validate_data(
         cls,
         data: object,
-    ) -> tuple[list[str], dict[str, LogPackAssociation]]:
+    ) -> tuple[list[str], dict[str, LogPackAssociation], list[str]]:
         if not isinstance(data, dict):
             raise BatteryPackStoreFormatError("Battery-pack store must be an object.")
-        if set(data) != {"version", "pack_ids", "log_associations"}:
+        version = data.get("version")
+        expected = {"version", "pack_ids", "log_associations"}
+        if version == SCHEMA_VERSION:
+            expected.add("archived_pack_ids")
+        if set(data) != expected:
             raise BatteryPackStoreFormatError(
                 "Battery-pack store contains unexpected or missing fields."
             )
-        version = data["version"]
         if isinstance(version, bool) or not isinstance(version, int):
             raise BatteryPackStoreFormatError(
                 "Battery-pack version must be an integer."
             )
-        if version != SCHEMA_VERSION:
+        if version not in (1, SCHEMA_VERSION):
             raise BatteryPackStoreFormatError(
                 f"Unsupported battery-pack store version: {version}"
             )
@@ -233,7 +301,12 @@ class BatteryPackStore:
                 raw_association,
                 pack_ids,
             )
-        return pack_ids, associations
+        raw_archived = data.get("archived_pack_ids", [])
+        if (not isinstance(raw_archived, list) or
+                any(not isinstance(pack, str) or pack not in pack_ids for pack in raw_archived) or
+                len(set(raw_archived)) != len(raw_archived)):
+            raise BatteryPackStoreFormatError("Invalid archived_pack_ids.")
+        return pack_ids, associations, raw_archived
 
     @staticmethod
     def _validate_association(

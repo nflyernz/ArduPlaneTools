@@ -1,6 +1,8 @@
 """Focused tests for persistent physical battery Pack ID metadata."""
 
 from pathlib import Path
+from types import SimpleNamespace
+import json
 
 import pytest
 from analyses.battery import (
@@ -57,6 +59,44 @@ def test_tracked_associations_and_known_pack_ids_round_trip(tmp_path):
     assert reloaded.association_for(first_fingerprint).state is LogPackState.TRACKED
     assert reloaded.association_for(first_fingerprint).pack_id == "Pack 1"
     assert reloaded.association_for(second_fingerprint).pack_id == "Pack 1"
+
+
+def test_version_one_store_loads_and_archiving_retains_associations(tmp_path):
+    path = tmp_path / "packs.json"
+    fingerprint = "a" * 64
+    path.write_text(json.dumps({"version": 1, "pack_ids": ["Pack 1"],
+                                "log_associations": {fingerprint: {
+                                    "state": "tracked", "pack_id": "Pack 1"}}}))
+    store = BatteryPackStore(path)
+    assert store.active_pack_ids == ("Pack 1",)
+    store.archive_pack("Pack 1")
+    reloaded = BatteryPackStore(path)
+    assert reloaded.pack_ids == ("Pack 1",)
+    assert reloaded.active_pack_ids == ()
+    assert reloaded.archived_pack_ids == ("Pack 1",)
+    assert reloaded.association_for(fingerprint).pack_id == "Pack 1"
+    with pytest.raises(BatteryPackStoreError, match="Unknown Pack ID"):
+        reloaded.associate("b" * 64, "Pack 1")
+    reloaded.restore_pack("Pack 1")
+    assert BatteryPackStore(path).active_pack_ids == ("Pack 1",)
+
+
+def test_delete_requires_no_associations_or_historical_observations(tmp_path):
+    path = tmp_path / "packs.json"
+    fingerprint = "a" * 64
+    store = BatteryPackStore(path)
+    store.create_and_associate(fingerprint, "Pack 1")
+    history = SimpleNamespace(observations=())
+    with pytest.raises(BatteryPackStoreError, match="log associations"):
+        store.delete_pack("Pack 1", history)
+    store.mark_not_tracked(fingerprint)
+    history.observations = (SimpleNamespace(pack_id_at_ingest="Pack 1",
+                                            source_sha256=fingerprint),)
+    with pytest.raises(BatteryPackStoreError, match="historical observations"):
+        store.delete_pack("Pack 1", history)
+    assert BatteryPackStore(path).pack_ids == ("Pack 1",)
+    store.delete_pack("Pack 1", SimpleNamespace(observations=()))
+    assert BatteryPackStore(path).pack_ids == ()
 
 
 def test_explicit_not_tracked_state_round_trips_without_synthetic_pack(tmp_path):

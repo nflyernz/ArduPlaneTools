@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,7 +12,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QPoint, QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
 
 from core.battery_pack_store import (
@@ -21,6 +22,7 @@ from core.battery_pack_store import (
     LogPackState,
     fingerprint_log,
 )
+from core.battery_pack_history import BatteryPackHistoryStore
 import core.battery_pack_store as pack_store_module
 from gui import MainWindow
 from gui.pack_management_adapter import (
@@ -28,6 +30,7 @@ from gui.pack_management_adapter import (
     PackManagementState,
     StalePackManagementStateError,
 )
+from test_battery_pack_history import _observation
 
 
 def _service(tmp_path, **kwargs):
@@ -42,6 +45,86 @@ def _bin(tmp_path, name, content=b"BIN evidence"):
     path = tmp_path / name
     path.write_bytes(content)
     return path.resolve()
+
+
+def test_service_archive_restore_and_delete_survive_restart(tmp_path):
+    log = _bin(tmp_path, "flight.bin")
+    service = _service(tmp_path)
+    initial = service.lookup(log)
+    assigned = service.create_and_assign(initial, "Pack 1").state
+    archived = service.archive(assigned, "Pack 1").state
+    assert archived.pack_ids == ()
+    assert archived.archived_pack_ids == ("Pack 1",)
+    assert _service(tmp_path).lookup(log).association.pack_id == "Pack 1"
+    with pytest.raises(BatteryPackStoreError, match="log associations"):
+        service.delete(archived, "Pack 1")
+    restored = _service(tmp_path).restore(archived, "Pack 1").state
+    assert restored.pack_ids == ("Pack 1",)
+    assert restored.archived_pack_ids == ()
+
+
+def _deletion_cases(tmp_path):
+    """Seed packs with associations, history, and both unused states."""
+    store = BatteryPackStore(tmp_path / "packs.json")
+    logs = {
+        name: _bin(tmp_path, f"{name}.bin", name.encode())
+        for name in ("associated", "historical", "unused", "archived")
+    }
+    for name, log in logs.items():
+        store.create_and_associate(fingerprint_log(log), name)
+    for name in ("historical", "unused", "archived"):
+        store.mark_not_tracked(fingerprint_log(logs[name]))
+    store.archive_pack("archived")
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([
+        _observation(
+            source_sha256=fingerprint_log(logs["historical"]),
+            pack_id="historical",
+        )
+    ])
+    return _service(tmp_path), _bin(tmp_path, "selected.bin", b"selected")
+
+
+def test_unused_pack_state_excludes_associations_and_history(tmp_path):
+    service, selected = _deletion_cases(tmp_path)
+    state = service.lookup(selected)
+    assert state.pack_ids == ("associated", "historical", "unused")
+    assert state.archived_pack_ids == ("archived",)
+    assert state.unused_pack_ids == ("unused", "archived")
+
+    pack_path = tmp_path / "packs.json"
+    history_path = tmp_path / "history.json"
+    before = pack_path.read_bytes(), history_path.read_bytes()
+    for protected in ("associated", "historical"):
+        with pytest.raises(BatteryPackStoreError, match="cannot be deleted"):
+            service.delete(state, protected)
+        assert (pack_path.read_bytes(), history_path.read_bytes()) == before
+
+    service.delete(state, "unused")
+    service.delete(state, "archived")
+    reloaded = _service(tmp_path).lookup(selected)
+    assert reloaded.unused_pack_ids == ()
+    assert reloaded.pack_ids == ("associated", "historical")
+    assert reloaded.archived_pack_ids == ()
+    assert history_path.read_bytes() == before[1]
+
+
+def test_delete_dropdown_only_offers_eligible_packs(tmp_path, qt_app, make_window):
+    service, selected = _deletion_cases(tmp_path)
+    window = make_window(service)
+    window.show_analysis_tab("Battery Pack Management")
+    window.set_selected_log(selected)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+
+    combo = window.pack_delete_combo
+    assert [combo.itemText(index) for index in range(1, combo.count())] == [
+        "unused", "archived"
+    ]
+    assert not window.pack_delete_button.isEnabled()
+    combo.setCurrentText("archived")
+    assert window.pack_delete_button.isEnabled()
+    combo.setCurrentIndex(0)
+    assert not window.pack_delete_button.isEnabled()
 
 
 def _wait_until(qt_app, predicate, timeout=3.0):
@@ -130,6 +213,69 @@ def test_management_starts_read_only_without_packs_or_selected_bin(
     )
     assert not (tmp_path / "packs.json").exists()
     assert not (tmp_path / "history.json").exists()
+
+
+def test_pack_management_action_controls_remain_compact_and_ordered(
+    tmp_path,
+    qt_app,
+    make_window,
+):
+    window = make_window(_service(tmp_path))
+    window.show_analysis_tab("Battery Pack Management")
+    qt_app.processEvents()
+
+    assign_combo = window.pack_assign_combo
+    assign_button = window.pack_assign_button
+    rename_edit = window.pack_rename_edit
+    rename_button = window.pack_rename_button
+    rename_group = rename_button.parentWidget()
+    history_button = window.pack_record_history_button
+
+    assert assign_combo.maximumWidth() == 250
+    assert assign_combo.width() <= 250
+    assert assign_button.x() > assign_combo.x()
+    assert rename_edit.minimumWidth() == 320
+    assert rename_edit.width() >= 320
+    assert rename_edit.isVisibleTo(window)
+    assert rename_button.isVisibleTo(window)
+    assert rename_button.height() >= rename_button.sizeHint().height()
+    assert rename_button.width() < rename_group.width() / 2
+    # Both the button and its bottom edge must remain inside the group,
+    # rather than being painted off-screen by a compressed form row.
+    assert rename_button.geometry().right() >= rename_group.contentsRect().right() - 30
+    assert rename_button.geometry().bottom() <= rename_group.contentsRect().bottom()
+    assert rename_button.mapToGlobal(rename_button.rect().topLeft()).y() < (
+        history_button.mapToGlobal(history_button.rect().topLeft()).y()
+    )
+
+
+def test_lifecycle_controls_visible_by_default_and_scroll_on_small_window(
+    tmp_path, qt_app, make_window
+):
+    window = make_window(_service(tmp_path))
+    window.show_analysis_tab("Battery Pack Management")
+    qt_app.processEvents()
+    scroll = window.pack_controls_scroll
+    viewport = scroll.viewport()
+    for button in (
+        window.pack_archive_button,
+        window.pack_restore_button,
+        window.pack_delete_button,
+    ):
+        top = button.mapTo(viewport, QPoint(0, 0)).y()
+        assert 0 <= top
+        assert top + button.height() <= viewport.height()
+
+    window.resize(window.width(), 600)
+    qt_app.processEvents()
+    assert scroll.verticalScrollBar().maximum() > 0
+    assert scroll.verticalScrollBar().isVisible()
+    scroll.ensureWidgetVisible(window.pack_rename_button)
+    qt_app.processEvents()
+    rename = window.pack_rename_button
+    assert rename.height() >= rename.sizeHint().height()
+    assert rename.mapTo(viewport, QPoint(0, 0)).y() >= 0
+    assert rename.mapTo(viewport, QPoint(0, rename.height())).y() <= viewport.height()
 
 
 def test_management_has_no_analyse_button_and_cannot_dispatch_stall(
@@ -340,7 +486,7 @@ def test_history_recording_is_explicit_and_repeat_run_reports_zero(tmp_path):
     calls = []
     additions = iter((2, 0))
     flight_log = object()
-    history_store = object()
+    history_store = SimpleNamespace(observations=())
 
     class Reader:
         def __init__(self, path, config=None):

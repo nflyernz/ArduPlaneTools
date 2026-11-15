@@ -31,6 +31,8 @@ class PackManagementState:
     fingerprint: str
     association: LogPackAssociation
     pack_ids: tuple[str, ...]
+    archived_pack_ids: tuple[str, ...] = ()
+    unused_pack_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -172,6 +174,28 @@ class BatteryPackManagementService:
             observations_added=added,
         )
 
+    def archive(self, expected: PackManagementState, pack_id: str) -> PackManagementResult:
+        """Retire a pack from new assignments without changing its evidence."""
+        path, fingerprint, store = self._validated_context(expected)
+        store.archive_pack(pack_id)
+        return PackManagementResult(self._state(path, fingerprint, self._pack_store()),
+                                    f"Archived Pack ID {pack_id}.", True)
+
+    def restore(self, expected: PackManagementState, pack_id: str) -> PackManagementResult:
+        """Return an archived pack to normal selection."""
+        path, fingerprint, store = self._validated_context(expected)
+        store.restore_pack(pack_id)
+        return PackManagementResult(self._state(path, fingerprint, self._pack_store()),
+                                    f"Restored Pack ID {pack_id}.", True)
+
+    def delete(self, expected: PackManagementState, pack_id: str) -> PackManagementResult:
+        """Permanently remove a pack only after checking retained history."""
+        path, fingerprint, store = self._validated_context(expected)
+        history = self._history_store_factory(self._history_store_path)
+        store.delete_pack(pack_id, history)
+        return PackManagementResult(self._state(path, fingerprint, self._pack_store()),
+                                    f"Deleted unused Pack ID {pack_id}.", True)
+
     def _validated_context(
         self,
         expected: PackManagementState,
@@ -192,15 +216,18 @@ class BatteryPackManagementService:
     def _pack_store(self) -> BatteryPackStore:
         return self._pack_store_factory(self._pack_store_path)
 
-    @staticmethod
     def _state(
+        self,
         path: Path,
         fingerprint: str,
         store: BatteryPackStore,
     ) -> PackManagementState:
+        history_store = self._history_store_factory(self._history_store_path)
         return PackManagementState(
             log_path=path,
             fingerprint=fingerprint,
             association=store.association_for(fingerprint),
-            pack_ids=store.pack_ids,
+            pack_ids=store.active_pack_ids,
+            archived_pack_ids=store.archived_pack_ids,
+            unused_pack_ids=store.unused_pack_ids(history_store),
         )

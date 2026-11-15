@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -32,6 +33,22 @@ def _isolated_application_data():
             os.environ.pop(name, None)
         else:
             os.environ[name] = value
+
+
+@pytest.fixture(autouse=True)
+def _isolated_window_preferences(monkeypatch, tmp_path):
+    """Keep GUI sizing tests out of the user's native Qt settings."""
+    main_window = sys.modules.get("gui.main_window")
+    if main_window is None:
+        return
+    from PySide6.QtCore import QSettings
+
+    settings_path = tmp_path / "window-settings.ini"
+    monkeypatch.setattr(
+        main_window,
+        "QSettings",
+        lambda *_args: QSettings(str(settings_path), QSettings.Format.IniFormat),
+    )
 
 
 @pytest.fixture(scope="session")

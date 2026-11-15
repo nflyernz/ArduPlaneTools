@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import json
 from pathlib import Path
 
 import pytest
@@ -240,6 +241,35 @@ def test_successful_migration_preserves_bytes_and_reconstructs_records(tmp_path)
     assert walks[0].parent_baseline_id == baseline_id
     assert fingerprint_csv(records[0].stored_csv_path) == records[0].csv_sha256
     assert fingerprint_csv(walks[0].stored_csv_path) == walks[0].csv_sha256
+
+
+@pytest.mark.parametrize("version", (1, 2))
+def test_migration_preserves_pack_schema_and_archive_state(tmp_path, version):
+    """Legacy and archived pack files move byte-for-byte to application data."""
+    source = tmp_path / "legacy" / "Data"
+    source.mkdir(parents=True)
+    fingerprint = "a" * 64
+    payload = {
+        "version": version,
+        "pack_ids": ["Pack A"],
+        "log_associations": {
+            fingerprint: {"state": "tracked", "pack_id": "Pack A"}
+        },
+    }
+    if version == 2:
+        payload["archived_pack_ids"] = ["Pack A"]
+    pack_path = source / "battery_packs.json"
+    pack_path.write_text(json.dumps(payload), encoding="utf-8")
+    original = pack_path.read_bytes()
+
+    destination = tmp_path / "app-data" / "ArduPlaneTools"
+    migrate_persistent_data(source, destination, apply=True)
+
+    migrated_path = destination / "battery_packs.json"
+    migrated = BatteryPackStore(migrated_path)
+    assert pack_path.read_bytes() == migrated_path.read_bytes() == original
+    assert migrated.association_for(fingerprint).pack_id == "Pack A"
+    assert migrated.archived_pack_ids == (("Pack A",) if version == 2 else ())
 
 
 def test_dry_run_uses_default_destination_without_writing(tmp_path, monkeypatch):
