@@ -2,8 +2,9 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Slot
+from PySide6.QtCore import QSettings, QSize, Qt, QThread, Slot
 from PySide6.QtWidgets import (
+    QApplication,
     QCommandLinkButton,
     QComboBox,
     QFileDialog,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QLayout,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
@@ -66,6 +68,8 @@ ANALYSIS_TABS = (
     "Radio Link",
     "Range-Walk Comparison",
 )
+
+WINDOW_SIZE_KEY = "main_window/size"
 
 
 class MainWindow(QMainWindow):
@@ -156,10 +160,10 @@ class MainWindow(QMainWindow):
         self.pack_restore_button: QPushButton | None = None
         self.pack_delete_button: QPushButton | None = None
         self.pack_record_history_button: QPushButton | None = None
+        self.pack_controls_scroll: QScrollArea | None = None
 
         self.setWindowTitle("ArduPlaneTools")
-        self.setMinimumSize(900, 600)
-        self.resize(1200, 780)
+        self._restore_window_size()
 
         central = QWidget(self)
         layout = QVBoxLayout(central)
@@ -200,6 +204,23 @@ class MainWindow(QMainWindow):
         self.statusBar().setSizeGripEnabled(True)
         self._update_analysis_controls()
         self._update_status()
+
+    @staticmethod
+    def _screen_available_size() -> QSize:
+        """Return the primary screen's usable size before the window is shown."""
+        screen = QApplication.primaryScreen()
+        return screen.availableGeometry().size() if screen else QSize(1200, 930)
+
+    def _restore_window_size(self) -> None:
+        """Use a taller first-run size and keep saved dimensions on screen."""
+        available = self._screen_available_size()
+        self.setMinimumSize(min(900, available.width()), min(600, available.height()))
+        saved = QSettings("ArduPlaneTools", "ArduPlaneTools").value(WINDOW_SIZE_KEY)
+        preferred = saved if isinstance(saved, QSize) and saved.isValid() else QSize(1200, 930)
+        self.resize(
+            min(preferred.width(), available.width()),
+            min(preferred.height(), available.height()),
+        )
 
     @property
     def _autotune_thread(self) -> QThread | None:
@@ -433,13 +454,18 @@ class MainWindow(QMainWindow):
         if name == "Battery Pack Management":
             controls_scroll = QScrollArea(page)
             controls_scroll.setWidgetResizable(True)
-            controls_scroll.setMinimumHeight(360)
+            controls_scroll.setVerticalScrollBarPolicy(
+                Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
+            controls_scroll.setMinimumHeight(280)
             controls_content = QWidget()
             controls_layout = QVBoxLayout(controls_content)
             controls_layout.setContentsMargins(0, 0, 0, 0)
+            controls_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
             self._create_pack_management_controls(controls_layout)
             controls_scroll.setWidget(controls_content)
-            layout.addWidget(controls_scroll, 3)
+            self.pack_controls_scroll = controls_scroll
+            layout.addWidget(controls_scroll, 1)
 
         if name == "Pack Performance":
             widget = self._pack_performance.create_widget(page)
@@ -469,7 +495,11 @@ class MainWindow(QMainWindow):
             else "No analysis run yet."
         )
         report.setToolTip("Analysis report area")
-        layout.addWidget(report, 1)
+        if name == "Battery Pack Management":
+            report.setMaximumHeight(125)
+            layout.addWidget(report)
+        else:
+            layout.addWidget(report, 1)
         self._reports[name] = report
         return page
 
@@ -555,6 +585,25 @@ class MainWindow(QMainWindow):
         create_layout.addWidget(self.pack_create_button)
         layout.addWidget(create_group)
 
+        lifecycle_group = QGroupBox("Archive, restore, or delete Pack ID")
+        lifecycle_layout = QGridLayout(lifecycle_group)
+        for row, (label, combo_name, button_name, caption, handler) in enumerate((
+            ("Active:", "pack_archive_combo", "pack_archive_button", "Archive", self.archive_pack),
+            ("Archived:", "pack_restore_combo", "pack_restore_button", "Restore", self.restore_pack),
+            ("Unused:", "pack_delete_combo", "pack_delete_button", "Delete permanently", self.delete_pack),
+        )):
+            combo = QComboBox()
+            combo.addItem(_PACK_ID_PLACEHOLDER, None)
+            combo.currentIndexChanged.connect(self._update_analysis_controls)
+            button = QPushButton(caption)
+            button.clicked.connect(handler)
+            setattr(self, combo_name, combo)
+            setattr(self, button_name, button)
+            lifecycle_layout.addWidget(QLabel(label), row, 0)
+            lifecycle_layout.addWidget(combo, row, 1)
+            lifecycle_layout.addWidget(button, row, 2)
+        layout.addWidget(lifecycle_group)
+
         rename_group = QGroupBox("Rename existing Pack ID")
         # A compact three-row grid avoids an expanding action-layout row
         # squeezing the form fields and clipping the Rename button.
@@ -586,25 +635,6 @@ class MainWindow(QMainWindow):
         rename_layout.addWidget(rename_effect, 2, 1)
         rename_layout.addWidget(self.pack_rename_button, 2, 2)
         layout.addWidget(rename_group)
-
-        lifecycle_group = QGroupBox("Archive, restore, or delete Pack ID")
-        lifecycle_layout = QGridLayout(lifecycle_group)
-        for row, (label, combo_name, button_name, caption, handler) in enumerate((
-            ("Active:", "pack_archive_combo", "pack_archive_button", "Archive", self.archive_pack),
-            ("Archived:", "pack_restore_combo", "pack_restore_button", "Restore", self.restore_pack),
-            ("Unused:", "pack_delete_combo", "pack_delete_button", "Delete permanently", self.delete_pack),
-        )):
-            combo = QComboBox()
-            combo.addItem(_PACK_ID_PLACEHOLDER, None)
-            combo.currentIndexChanged.connect(self._update_analysis_controls)
-            button = QPushButton(caption)
-            button.clicked.connect(handler)
-            setattr(self, combo_name, combo)
-            setattr(self, button_name, button)
-            lifecycle_layout.addWidget(QLabel(label), row, 0)
-            lifecycle_layout.addWidget(combo, row, 1)
-            lifecycle_layout.addWidget(button, row, 2)
-        layout.addWidget(lifecycle_group)
 
         history_group = QGroupBox("Record AUTO takeoff history")
         history_layout = QHBoxLayout(history_group)
@@ -758,6 +788,8 @@ class MainWindow(QMainWindow):
         pack_id = combo.currentData()
         if state is None or not isinstance(pack_id, str):
             return
+        if action == "delete" and pack_id not in state.unused_pack_ids:
+            return
         detail = (
             "This permanently removes only a pack with no saved log associations "
             "or historical observations."
@@ -821,6 +853,7 @@ class MainWindow(QMainWindow):
             self.pack_association_value.setText("Unseen")
             pack_ids = ()
             archived_ids = ()
+            unused_ids = ()
         else:
             self.pack_selected_bin_value.setText(self._selected_log.name)
             state = self._pack_management_state
@@ -828,10 +861,12 @@ class MainWindow(QMainWindow):
                 self.pack_association_value.setText(self._association_text(state))
                 pack_ids = state.pack_ids
                 archived_ids = state.archived_pack_ids
+                unused_ids = state.unused_pack_ids
             else:
                 self.pack_association_value.setText("Pending lookup")
                 pack_ids = ()
                 archived_ids = ()
+                unused_ids = ()
 
         for combo in (self.pack_assign_combo, self.pack_rename_combo):
             if combo is not None:
@@ -846,7 +881,7 @@ class MainWindow(QMainWindow):
         for combo, ids in (
             (self.pack_archive_combo, pack_ids),
             (self.pack_restore_combo, archived_ids),
-            (self.pack_delete_combo, (*pack_ids, *archived_ids)),
+            (self.pack_delete_combo, unused_ids),
         ):
             if combo is None:
                 continue
@@ -927,6 +962,11 @@ class MainWindow(QMainWindow):
             if self._pack_management_state is not None
             else ()
         )
+        unused_ids = (
+            self._pack_management_state.unused_pack_ids
+            if self._pack_management_state is not None
+            else ()
+        )
         if self.pack_assign_button is not None:
             selected = (
                 self.pack_assign_combo.currentData()
@@ -967,8 +1007,7 @@ class MainWindow(QMainWindow):
             (self.pack_archive_combo, self.pack_archive_button, pack_ids),
             (self.pack_restore_combo, self.pack_restore_button,
              self._pack_management_state.archived_pack_ids if self._pack_management_state else ()),
-            (self.pack_delete_combo, self.pack_delete_button,
-             (*pack_ids, *(self._pack_management_state.archived_pack_ids if self._pack_management_state else ()))),
+            (self.pack_delete_combo, self.pack_delete_button, unused_ids),
         ):
             if button is not None:
                 button.setEnabled(pack_ready and combo.currentData() in ids)
@@ -1125,4 +1164,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self._documentation.close_all()
+        QSettings("ArduPlaneTools", "ArduPlaneTools").setValue(
+            WINDOW_SIZE_KEY, self.size()
+        )
         event.accept()

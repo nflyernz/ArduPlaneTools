@@ -32,6 +32,7 @@ class PackManagementState:
     association: LogPackAssociation
     pack_ids: tuple[str, ...]
     archived_pack_ids: tuple[str, ...] = ()
+    unused_pack_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -215,16 +216,18 @@ class BatteryPackManagementService:
     def _pack_store(self) -> BatteryPackStore:
         return self._pack_store_factory(self._pack_store_path)
 
-    @staticmethod
     def _state(
+        self,
         path: Path,
         fingerprint: str,
         store: BatteryPackStore,
     ) -> PackManagementState:
+        history_store = self._history_store_factory(self._history_store_path)
         return PackManagementState(
             log_path=path,
             fingerprint=fingerprint,
             association=store.association_for(fingerprint),
             pack_ids=store.active_pack_ids,
             archived_pack_ids=store.archived_pack_ids,
+            unused_pack_ids=store.unused_pack_ids(history_store),
         )

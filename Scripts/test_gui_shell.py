@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QFileDialog
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, QSize
 
 import gui_app
 from gui import ANALYSIS_TABS, MainWindow
@@ -54,13 +54,47 @@ def window(qt_app):
 
 def test_window_constructs_with_expected_native_shell(window):
     assert window.windowTitle() == "ArduPlaneTools"
-    assert window.minimumWidth() >= 900
-    assert window.minimumHeight() >= 600
+    available = window._screen_available_size()
+    assert window.minimumWidth() == min(900, available.width())
+    assert window.minimumHeight() == min(600, available.height())
+    assert window.width() <= available.width()
+    assert window.height() <= available.height()
     assert window.analysis_tabs.usesScrollButtons()
     assert window.source_path_edit.isReadOnly()
     assert all(window.report_for(name).isReadOnly() for name in ANALYSIS_TABS)
     assert window.current_analysis == "Overview"
     assert "choose a module" in window.statusBar().currentMessage()
+
+
+def test_window_size_is_taller_persisted_and_clamped_to_smaller_screen(
+    monkeypatch, qt_app
+):
+    monkeypatch.setattr(
+        MainWindow, "_screen_available_size", staticmethod(lambda: QSize(1400, 1080))
+    )
+    first = MainWindow()
+    first.show()
+    qt_app.processEvents()
+    assert first.height() == 930
+    first.resize(1100, 845)
+    qt_app.processEvents()
+    first.close()
+
+    second = MainWindow()
+    second.show()
+    qt_app.processEvents()
+    assert second.size() == QSize(1100, 845)
+    second.close()
+
+    monkeypatch.setattr(
+        MainWindow, "_screen_available_size", staticmethod(lambda: QSize(800, 680))
+    )
+    smaller = MainWindow()
+    smaller.show()
+    qt_app.processEvents()
+    assert smaller.height() <= 680
+    assert smaller.width() <= 800
+    smaller.close()
 
 
 def test_qt_application_identity_is_arduplane_tools(monkeypatch):

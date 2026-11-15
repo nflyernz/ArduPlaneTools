@@ -72,6 +72,13 @@ class BatteryPackStore:
         """Return archived Pack IDs in creation order."""
         return tuple(pack for pack in self._pack_ids if pack in self._archived_pack_ids)
 
+    def unused_pack_ids(self, history_store: object) -> tuple[str, ...]:
+        """Return active and archived packs with no saved evidence."""
+        return tuple(
+            pack for pack in self._pack_ids
+            if self._deletion_blocker(pack, history_store) is None
+        )
+
     def association_for(self, fingerprint: str) -> LogPackAssociation:
         """Return the stored decision, or explicit unseen state."""
         self._validate_fingerprint(fingerprint)
@@ -165,14 +172,25 @@ class BatteryPackStore:
     def delete_pack(self, pack_id: str, history_store: object) -> None:
         """Delete an unused pack only when no saved evidence refers to it."""
         pack = self._require_pack(pack_id)
-        if any(a.pack_id == pack for a in self._associations.values()):
-            raise BatteryPackStoreError("Pack ID has log associations and cannot be deleted.")
-        if any(o.pack_id_at_ingest == pack or
-               self._associations.get(o.source_sha256, LogPackAssociation(LogPackState.UNSEEN)).pack_id == pack
-               for o in history_store.observations):
-            raise BatteryPackStoreError("Pack ID has historical observations and cannot be deleted.")
+        blocker = self._deletion_blocker(pack, history_store)
+        if blocker is not None:
+            raise BatteryPackStoreError(blocker)
         self._save([item for item in self._pack_ids if item != pack], self._associations,
                    [item for item in self._archived_pack_ids if item != pack])
+
+    def _deletion_blocker(self, pack_id: str, history_store: object) -> str | None:
+        if any(a.pack_id == pack_id for a in self._associations.values()):
+            return "Pack ID has log associations and cannot be deleted."
+        if any(
+            observation.pack_id_at_ingest == pack_id
+            or self._associations.get(
+                observation.source_sha256,
+                LogPackAssociation(LogPackState.UNSEEN),
+            ).pack_id == pack_id
+            for observation in history_store.observations
+        ):
+            return "Pack ID has historical observations and cannot be deleted."
+        return None
 
     def _require_pack(self, pack_id: str) -> str:
         pack = self._normalize_pack_id(pack_id)
