@@ -282,13 +282,15 @@ def test_evidence_changes_invalidate_saved_baseline_but_navigation_does_not(qt_a
 
 def test_range_walk_help_describes_baseline_scope_and_invalidation():
     root = Path(__file__).parents[1]
-    readme = (root / "Docs/gui_help/range_walk_comparison/README.md").read_text()
+    readme = (
+        root / "Docs/gui_help/range_walk_comparison/README.md"
+    ).read_text(encoding="utf-8")
     glossary = (
         root / "Docs/gui_help/range_walk_comparison/glossary.md"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     procedure = (
         root / "Docs/gui_help/range_walk_comparison/procedure.md"
-    ).read_text()
+    ).read_text(encoding="utf-8")
 
     assert "Walk 1 establishes the baseline" in readme
     assert "Walk 1 establishes the baseline for every subsequent comparison" in procedure

@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.resources import resource_path
+
 
 MODULE_SLUGS = {
     "Landing": "landing",
@@ -26,7 +28,7 @@ MODULE_SLUGS = {
     "Stall": "stall",
 }
 
-DOCS_ROOT = Path(__file__).resolve().parents[2] / "Docs" / "gui_help"
+DOCS_ROOT = resource_path("Docs/gui_help")
 PROCEDURE_MODULES = frozenset(("Radio Link", "Range-Walk Comparison", "Stall"))
 
 
@@ -61,7 +63,11 @@ class ModuleDocsWindow(QWidget):
     def __init__(self, module: str, parent=None, docs_root: Path | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.module = module
-        self.docs_root = Path(docs_root) if docs_root is not None else DOCS_ROOT
+        self.docs_root = (
+            Path(docs_root)
+            if docs_root is not None
+            else resource_path("Docs/gui_help")
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowTitle(f"{module} Documentation — ArduPlaneTools")
         self.setMinimumSize(620, 460)
@@ -91,7 +97,11 @@ class ProcedureWindow(QWidget):
     def __init__(self, module: str, parent=None, docs_root: Path | None = None):
         super().__init__(parent, Qt.WindowType.Window)
         self.module = module
-        root = Path(docs_root) if docs_root is not None else DOCS_ROOT
+        root = (
+            Path(docs_root)
+            if docs_root is not None
+            else resource_path("Docs/gui_help")
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setWindowTitle(f"{module} Test Procedure — ArduPlaneTools")
         self.setMinimumSize(620, 460)

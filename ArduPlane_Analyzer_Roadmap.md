@@ -4,6 +4,23 @@
 > **Current AMC target:** Step 66 — Everyday use / RTL correctness
 > **APT role:** Plane log-analysis R&D and validation
 
+## Desktop release checkpoint — 2026-10-21
+
+APT's first native desktop prerelease,
+[v1.1.0-beta.1](https://github.com/nflyernz/ArduPlaneTools/releases/tag/v1.1.0-beta.1),
+has been published for macOS ARM64 and Windows x64. GitHub Actions now
+builds and validates both packages, assembles checksums and source provenance,
+and creates gated draft prereleases that require manual publication.
+Local macOS installation and real-log checks passed. Interactive Windows
+desktop validation, Developer ID signing and macOS notarization remain
+deferred. Persistent pack and Range-Walk history are implemented; migration
+of older repository-local records into existing user data remains deliberately
+manual and unresolved.
+
+This checkpoint supersedes earlier prospective packaging and pack-history
+milestones as statements of *current* status; preserve their historical
+engineering rationale below.
+
 ## Vision
 
 Build a modular engineering tool for objectively analysing ArduPilot
