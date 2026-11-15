@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from analyses.landing import (
     LandingAnalysis,
+    format_landing_attempt,
     format_landing_flight_result,
     format_landing_log_report,
 )
@@ -93,3 +94,51 @@ def test_no_attempt_and_no_flight_reports_remain_distinct(tmp_path):
     assert "Loaded: 1 flight(s)" in one_flight
     assert "No landing attempts detected." in one_flight
     assert "Flight results              1" in one_flight
+
+
+def test_aborted_approach_without_flare_has_compact_status():
+    analysis = _attempt_analysis(unavailable=True, end_reason="abort")
+    report = format_landing_attempt(1, 1, analysis)
+    flare_section = report.split("\nFLARE\n", 1)[1].split(
+        "\nLANDING / ROLLOUT COMPLETION", 1
+    )[0]
+
+    assert "Status                      Not reached — landing aborted" in flare_section
+    assert "Flare-timing height" not in flare_section
+    assert "GPS groundspeed" not in flare_section
+    assert "Unavailable" not in flare_section
+
+
+def test_aborted_after_flare_keeps_recorded_measurements():
+    report = format_landing_attempt(1, 1, _attempt_analysis(end_reason="abort"))
+
+    assert "Flare-timing height         1.2 m" in report
+    assert "Flare distance to target    7.9 m" in report
+    assert "Not reached — landing aborted" not in report
+
+
+def test_rangefinder_without_qualified_continuity_explains_missing_event():
+    analysis = _attempt_analysis(rangefinder=True)
+    analysis.rangefinder_continuous_time_us = None
+    report = format_landing_attempt(1, 1, analysis)
+
+    assert "First non-zero              00:02.000" in report
+    assert "Continuous from             Not established (1 s required)" in report
+
+
+def test_missing_rangefinder_sensor_does_not_get_continuity_status():
+    report = format_landing_attempt(1, 1, _attempt_analysis())
+
+    assert "RANGEFINDER" not in report
+    assert "Not established" not in report
+
+
+def test_no_flare_without_abort_does_not_claim_flare_was_not_reached():
+    analysis = _attempt_analysis(unavailable=True, end_reason="flight_window_end")
+    report = format_landing_attempt(1, 1, analysis)
+    flare_section = report.split("\nFLARE\n", 1)[1].split(
+        "\nLANDING / ROLLOUT COMPLETION", 1
+    )[0]
+
+    assert "Time                        Unavailable" in flare_section
+    assert "Not reached — landing aborted" not in flare_section

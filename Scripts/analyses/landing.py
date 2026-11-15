@@ -96,22 +96,34 @@ def format_landing_attempt(landing_index, attempt_index, analysis) -> str:
         _format_row(
             "Sink rate", _format_value(analysis.preflare_sink_rate, 1, " m/s")
         ),
-        "",
-        "FLARE",
-        _format_row("Time", _format_time(analysis.flare_time_us)),
-        _format_row(
-            "Flare-timing height", _format_value(analysis.flare_altitude, 1, " m")
-        ),
-        _format_row("Sink rate", _format_value(analysis.flare_sink_rate, 1, " m/s")),
-        _format_row("Airspeed", _format_value(analysis.flare_airspeed, 1, " m/s")),
-        _format_row(
-            "GPS groundspeed", _format_value(analysis.flare_gps_speed, 1, " m/s")
-        ),
-        _format_row(
-            "Flare distance to target",
-            _format_value(analysis.flare_distance, 1, " m"),
-        ),
     ]
+
+    # An aborted approach without a recorded flare is not missing six
+    # measurements; the flare stage was not observed before the abort.
+    if analysis.flare_time_us is None and analysis.end_reason == "abort":
+        lines.extend(
+            ("", "FLARE", _format_row("Status", "Not reached — landing aborted"))
+        )
+    else:
+        lines.extend(
+            (
+                "",
+                "FLARE",
+                _format_row("Time", _format_time(analysis.flare_time_us)),
+                _format_row(
+                    "Flare-timing height", _format_value(analysis.flare_altitude, 1, " m")
+                ),
+                _format_row("Sink rate", _format_value(analysis.flare_sink_rate, 1, " m/s")),
+                _format_row("Airspeed", _format_value(analysis.flare_airspeed, 1, " m/s")),
+                _format_row(
+                    "GPS groundspeed", _format_value(analysis.flare_gps_speed, 1, " m/s")
+                ),
+                _format_row(
+                    "Flare distance to target",
+                    _format_value(analysis.flare_distance, 1, " m"),
+                ),
+            )
+        )
 
     if _has_rangefinder_evidence(analysis):
         lines.extend(
@@ -140,7 +152,11 @@ def format_landing_attempt(landing_index, attempt_index, analysis) -> str:
                 ),
                 _format_row(
                     "Continuous from",
-                    _format_time(analysis.rangefinder_continuous_time_us),
+                    (
+                        _format_time(analysis.rangefinder_continuous_time_us)
+                        if analysis.rangefinder_continuous_time_us is not None
+                        else "Not established (1 s required)"
+                    ),
                 ),
             )
         )
