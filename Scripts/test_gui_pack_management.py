@@ -159,16 +159,24 @@ def test_pack_management_action_controls_remain_compact_and_ordered(
 
     assign_combo = window.pack_assign_combo
     assign_button = window.pack_assign_button
+    rename_edit = window.pack_rename_edit
     rename_button = window.pack_rename_button
+    rename_group = rename_button.parentWidget()
     history_button = window.pack_record_history_button
 
     assert assign_combo.maximumWidth() == 250
     assert assign_combo.width() <= 250
     assert assign_button.x() > assign_combo.x()
-    assert rename_button.width() < rename_button.parentWidget().width() / 2
-    assert rename_button.geometry().right() > (
-        rename_button.parentWidget().width() - 50
-    )
+    assert rename_edit.minimumWidth() == 320
+    assert rename_edit.width() >= 320
+    assert rename_edit.isVisibleTo(window)
+    assert rename_button.isVisibleTo(window)
+    assert rename_button.height() >= rename_button.sizeHint().height()
+    assert rename_button.width() < rename_group.width() / 2
+    # Both the button and its bottom edge must remain inside the group,
+    # rather than being painted off-screen by a compressed form row.
+    assert rename_button.geometry().right() >= rename_group.contentsRect().right() - 30
+    assert rename_button.geometry().bottom() <= rename_group.contentsRect().bottom()
     assert rename_button.mapToGlobal(rename_button.rect().topLeft()).y() < (
         history_button.mapToGlobal(history_button.rect().topLeft()).y()
     )

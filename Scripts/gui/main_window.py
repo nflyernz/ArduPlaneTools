@@ -556,29 +556,35 @@ class MainWindow(QMainWindow):
         layout.addWidget(create_group)
 
         rename_group = QGroupBox("Rename existing Pack ID")
-        rename_form = QFormLayout(rename_group)
+        # A compact three-row grid avoids an expanding action-layout row
+        # squeezing the form fields and clipping the Rename button.
+        rename_layout = QGridLayout(rename_group)
+        rename_layout.setColumnStretch(1, 1)
         self.pack_rename_combo = QComboBox()
+        self.pack_rename_combo.setMinimumWidth(250)
+        self.pack_rename_combo.setMaximumWidth(350)
         self.pack_rename_combo.addItem(_PACK_ID_PLACEHOLDER, None)
         self.pack_rename_combo.currentIndexChanged.connect(
             self._update_analysis_controls
         )
         self.pack_rename_edit = QLineEdit()
+        self.pack_rename_edit.setMinimumWidth(320)
+        self.pack_rename_edit.setMaximumWidth(420)
         self.pack_rename_edit.setPlaceholderText("Replacement Pack ID")
         self.pack_rename_edit.textChanged.connect(self._update_analysis_controls)
         self.pack_rename_button = QPushButton("Rename globally")
         self.pack_rename_button.clicked.connect(self.rename_pack)
-        rename_form.addRow("Existing:", self.pack_rename_combo)
-        rename_form.addRow("Replacement:", self.pack_rename_edit)
-        rename_form.addRow(
-            "Effect:",
-            QLabel(
-                "Updates the Pack ID in every saved BIN association that uses it."
-            ),
+        rename_layout.addWidget(QLabel("Existing:"), 0, 0)
+        rename_layout.addWidget(self.pack_rename_combo, 0, 1)
+        rename_layout.addWidget(QLabel("Replacement:"), 1, 0)
+        rename_layout.addWidget(self.pack_rename_edit, 1, 1)
+        rename_layout.addWidget(QLabel("Effect:"), 2, 0)
+        rename_effect = QLabel(
+            "Updates the Pack ID in every saved BIN association that uses it."
         )
-        rename_actions = QHBoxLayout()
-        rename_actions.addStretch(1)
-        rename_actions.addWidget(self.pack_rename_button)
-        rename_form.addRow(rename_actions)
+        rename_effect.setWordWrap(True)
+        rename_layout.addWidget(rename_effect, 2, 1)
+        rename_layout.addWidget(self.pack_rename_button, 2, 2)
         layout.addWidget(rename_group)
 
         lifecycle_group = QGroupBox("Archive, restore, or delete Pack ID")
