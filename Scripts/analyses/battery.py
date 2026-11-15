@@ -229,6 +229,9 @@ class BatteryPackManagementPresentation:
             print()
             print("1. Rename Pack ID")
             print("2. Change log pack assignment")
+            print("3. Archive Pack ID")
+            print("4. Restore Pack ID")
+            print("5. Delete unused Pack ID")
             print("0. Back")
 
             choice = input("\nSelection: ").strip()
@@ -242,6 +245,29 @@ class BatteryPackManagementPresentation:
 
             if choice == "2":
                 self._change_log_pack_assignment(store)
+                continue
+
+            if choice in ("3", "4", "5"):
+                choices = (store.active_pack_ids if choice == "3" else
+                           store.archived_pack_ids if choice == "4" else store.pack_ids)
+                if not choices:
+                    print("No eligible Battery Pack IDs.")
+                    continue
+                pack_id = self._select_pack(choices)
+                if pack_id is None:
+                    continue
+                try:
+                    if choice == "3":
+                        store.archive_pack(pack_id)
+                    elif choice == "4":
+                        store.restore_pack(pack_id)
+                    else:
+                        confirmation = input(f"Permanently delete unused Pack ID {pack_id}? (yes/no): ").strip()
+                        if confirmation != "yes":
+                            continue
+                        store.delete_pack(pack_id, BatteryPackHistoryStore())
+                except (BatteryPackStoreError, BatteryPackHistoryError, OSError) as exc:
+                    print(exc)
                 continue
 
             print("Invalid selection.")
@@ -308,7 +334,7 @@ class BatteryPackManagementPresentation:
 
         while True:
             print()
-            if store.pack_ids:
+            if store.active_pack_ids:
                 print("1. Select existing pack")
                 print("2. Create new pack")
             else:
@@ -320,8 +346,8 @@ class BatteryPackManagementPresentation:
             if choice == "0":
                 return
 
-            if store.pack_ids and choice == "1":
-                pack_id = self._select_pack(store.pack_ids)
+            if store.active_pack_ids and choice == "1":
+                pack_id = self._select_pack(store.active_pack_ids)
                 if pack_id is None:
                     continue
 
@@ -349,7 +375,7 @@ class BatteryPackManagementPresentation:
                 print(f"Pack assignment changed to: {pack_id}")
                 return
 
-            if choice == ("2" if store.pack_ids else "1"):
+            if choice == ("2" if store.active_pack_ids else "1"):
                 pack_id = input("\nNew Pack ID: ").strip()
 
                 try:
@@ -751,7 +777,7 @@ class BatteryAnalysisPresentation:
             print("Battery Pack")
             print("============")
             print()
-            if store.pack_ids:
+            if store.active_pack_ids:
                 print("1. Select existing pack")
                 print("2. Create new pack")
                 print("3. Continue without pack tracking")
@@ -764,8 +790,8 @@ class BatteryAnalysisPresentation:
             choice = input("\nSelection: ").strip()
             if choice == "0":
                 return False, None
-            if store.pack_ids and choice == "1":
-                pack_id = self._select_existing_pack(store.pack_ids)
+            if store.active_pack_ids and choice == "1":
+                pack_id = self._select_existing_pack(store.active_pack_ids)
                 if pack_id is None:
                     continue
                 if self._save_pack_decision(
@@ -776,7 +802,7 @@ class BatteryAnalysisPresentation:
                 ):
                     return True, pack_id
                 return True, None
-            if choice == ("2" if store.pack_ids else "1"):
+            if choice == ("2" if store.active_pack_ids else "1"):
                 pack_id = input("\nNew Pack ID: ").strip()
                 try:
                     store.create_and_associate(fingerprint, pack_id)
@@ -787,7 +813,7 @@ class BatteryAnalysisPresentation:
                     self._print_save_error(exc)
                     return True, None
                 return True, pack_id
-            if choice == ("3" if store.pack_ids else "2"):
+            if choice == ("3" if store.active_pack_ids else "2"):
                 if self._save_pack_decision(
                     lambda: store.mark_not_tracked(fingerprint)
                 ):

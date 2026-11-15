@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -148,6 +149,12 @@ class MainWindow(QMainWindow):
         self.pack_rename_combo: QComboBox | None = None
         self.pack_rename_edit: QLineEdit | None = None
         self.pack_rename_button: QPushButton | None = None
+        self.pack_archive_combo: QComboBox | None = None
+        self.pack_restore_combo: QComboBox | None = None
+        self.pack_delete_combo: QComboBox | None = None
+        self.pack_archive_button: QPushButton | None = None
+        self.pack_restore_button: QPushButton | None = None
+        self.pack_delete_button: QPushButton | None = None
         self.pack_record_history_button: QPushButton | None = None
 
         self.setWindowTitle("ArduPlaneTools")
@@ -424,7 +431,15 @@ class MainWindow(QMainWindow):
         layout.addLayout(action_layout)
 
         if name == "Battery Pack Management":
-            self._create_pack_management_controls(layout)
+            controls_scroll = QScrollArea(page)
+            controls_scroll.setWidgetResizable(True)
+            controls_scroll.setMinimumHeight(360)
+            controls_content = QWidget()
+            controls_layout = QVBoxLayout(controls_content)
+            controls_layout.setContentsMargins(0, 0, 0, 0)
+            self._create_pack_management_controls(controls_layout)
+            controls_scroll.setWidget(controls_content)
+            layout.addWidget(controls_scroll, 3)
 
         if name == "Pack Performance":
             widget = self._pack_performance.create_widget(page)
@@ -565,6 +580,25 @@ class MainWindow(QMainWindow):
         rename_actions.addWidget(self.pack_rename_button)
         rename_form.addRow(rename_actions)
         layout.addWidget(rename_group)
+
+        lifecycle_group = QGroupBox("Archive, restore, or delete Pack ID")
+        lifecycle_layout = QGridLayout(lifecycle_group)
+        for row, (label, combo_name, button_name, caption, handler) in enumerate((
+            ("Active:", "pack_archive_combo", "pack_archive_button", "Archive", self.archive_pack),
+            ("Archived:", "pack_restore_combo", "pack_restore_button", "Restore", self.restore_pack),
+            ("Unused:", "pack_delete_combo", "pack_delete_button", "Delete permanently", self.delete_pack),
+        )):
+            combo = QComboBox()
+            combo.addItem(_PACK_ID_PLACEHOLDER, None)
+            combo.currentIndexChanged.connect(self._update_analysis_controls)
+            button = QPushButton(caption)
+            button.clicked.connect(handler)
+            setattr(self, combo_name, combo)
+            setattr(self, button_name, button)
+            lifecycle_layout.addWidget(QLabel(label), row, 0)
+            lifecycle_layout.addWidget(combo, row, 1)
+            lifecycle_layout.addWidget(button, row, 2)
+        layout.addWidget(lifecycle_group)
 
         history_group = QGroupBox("Record AUTO takeoff history")
         history_layout = QHBoxLayout(history_group)
@@ -713,6 +747,35 @@ class MainWindow(QMainWindow):
             lambda _path: self._pack_management_service.record_history(state),
         )
 
+    def _change_pack_lifecycle(self, action: str, combo: QComboBox) -> None:
+        state = self._current_pack_state()
+        pack_id = combo.currentData()
+        if state is None or not isinstance(pack_id, str):
+            return
+        detail = (
+            "This permanently removes only a pack with no saved log associations "
+            "or historical observations."
+            if action == "delete" else
+            "Saved associations and historical observations are retained."
+        )
+        if not self._confirm_pack_action(
+            f"{action.title()} Battery Pack", f"{action.title()} Pack ID {pack_id}?\n\n{detail}"
+        ):
+            return
+        self._start_pack_mutation(
+            action, state,
+            lambda _path: getattr(self._pack_management_service, action)(state, pack_id),
+        )
+
+    def archive_pack(self) -> None:
+        self._change_pack_lifecycle("archive", self.pack_archive_combo)
+
+    def restore_pack(self) -> None:
+        self._change_pack_lifecycle("restore", self.pack_restore_combo)
+
+    def delete_pack(self) -> None:
+        self._change_pack_lifecycle("delete", self.pack_delete_combo)
+
     def _start_pack_mutation(self, task: str, state, adapter) -> None:
         if self._analysis_thread is not None:
             return
@@ -751,15 +814,18 @@ class MainWindow(QMainWindow):
             self.pack_selected_bin_value.setText("No BIN selected")
             self.pack_association_value.setText("Unseen")
             pack_ids = ()
+            archived_ids = ()
         else:
             self.pack_selected_bin_value.setText(self._selected_log.name)
             state = self._pack_management_state
             if state is not None and state.log_path == self._selected_log:
                 self.pack_association_value.setText(self._association_text(state))
                 pack_ids = state.pack_ids
+                archived_ids = state.archived_pack_ids
             else:
                 self.pack_association_value.setText("Pending lookup")
                 pack_ids = ()
+                archived_ids = ()
 
         for combo in (self.pack_assign_combo, self.pack_rename_combo):
             if combo is not None:
@@ -771,6 +837,21 @@ class MainWindow(QMainWindow):
                 index = combo.findData(current)
                 if index >= 0:
                     combo.setCurrentIndex(index)
+        for combo, ids in (
+            (self.pack_archive_combo, pack_ids),
+            (self.pack_restore_combo, archived_ids),
+            (self.pack_delete_combo, (*pack_ids, *archived_ids)),
+        ):
+            if combo is None:
+                continue
+            current = combo.currentData()
+            combo.clear()
+            combo.addItem(_PACK_ID_PLACEHOLDER, None)
+            for pack_id in ids:
+                combo.addItem(pack_id, pack_id)
+            index = combo.findData(current)
+            if index >= 0:
+                combo.setCurrentIndex(index)
         if message is not None:
             self.report_for("Battery Pack Management").setPlainText(message)
         self._update_analysis_controls()
@@ -876,6 +957,15 @@ class MainWindow(QMainWindow):
                 and association is not None
                 and association.state is LogPackState.TRACKED
             )
+        for combo, button, ids in (
+            (self.pack_archive_combo, self.pack_archive_button, pack_ids),
+            (self.pack_restore_combo, self.pack_restore_button,
+             self._pack_management_state.archived_pack_ids if self._pack_management_state else ()),
+            (self.pack_delete_combo, self.pack_delete_button,
+             (*pack_ids, *(self._pack_management_state.archived_pack_ids if self._pack_management_state else ()))),
+        ):
+            if button is not None:
+                button.setEnabled(pack_ready and combo.currentData() in ids)
         self.choose_log_button.setEnabled(not busy and not self._close_after_worker)
         self._pack_performance.set_busy(busy or self._close_after_worker)
         self._radio_link.set_busy(busy or self._close_after_worker)

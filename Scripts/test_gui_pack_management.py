@@ -44,6 +44,22 @@ def _bin(tmp_path, name, content=b"BIN evidence"):
     return path.resolve()
 
 
+def test_service_archive_restore_and_delete_survive_restart(tmp_path):
+    log = _bin(tmp_path, "flight.bin")
+    service = _service(tmp_path)
+    initial = service.lookup(log)
+    assigned = service.create_and_assign(initial, "Pack 1").state
+    archived = service.archive(assigned, "Pack 1").state
+    assert archived.pack_ids == ()
+    assert archived.archived_pack_ids == ("Pack 1",)
+    assert _service(tmp_path).lookup(log).association.pack_id == "Pack 1"
+    with pytest.raises(BatteryPackStoreError, match="log associations"):
+        service.delete(archived, "Pack 1")
+    restored = _service(tmp_path).restore(archived, "Pack 1").state
+    assert restored.pack_ids == ("Pack 1",)
+    assert restored.archived_pack_ids == ()
+
+
 def _wait_until(qt_app, predicate, timeout=3.0):
     deadline = time.monotonic() + timeout
     while not predicate() and time.monotonic() < deadline:
