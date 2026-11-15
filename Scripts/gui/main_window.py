@@ -31,6 +31,7 @@ from .battery_adapter import analyse_battery_log
 from .docs_viewer import DocumentationController
 from .events_adapter import analyse_events_log
 from .landing_adapter import analyse_landing_log
+from .log_dialog_settings import remember_directory, starting_directory
 from .module_catalog import (
     EXECUTABLE_ANALYSES as _EXECUTABLE_ANALYSES,
     MODULE_DESCRIPTIONS as _MODULE_DESCRIPTIONS,
@@ -235,7 +236,7 @@ class MainWindow(QMainWindow):
         file_name, _selected_filter = QFileDialog.getOpenFileName(
             self,
             "Select ArduPilot BIN log",
-            str(self._selected_log.parent) if self._selected_log else "",
+            str(starting_directory()),
             "ArduPilot BIN logs (*.bin *.BIN)",
         )
         if not file_name:
@@ -250,6 +251,7 @@ class MainWindow(QMainWindow):
             self._update_status("Selection rejected: file must have a .bin extension")
             return
 
+        remember_directory(selected_log)
         self.set_selected_log(selected_log)
 
     def set_selected_log(self, path: Path) -> None:

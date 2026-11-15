@@ -10,9 +10,21 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QFileDialog
+from PySide6.QtCore import QSettings
 
 import gui_app
 from gui import ANALYSIS_TABS, MainWindow
+from gui import log_dialog_settings
+
+
+@pytest.fixture(autouse=True)
+def isolate_log_dialog_settings(monkeypatch, tmp_path):
+    """Keep dialog tests out of the user's real Qt preferences."""
+    ini = tmp_path / "dialog.ini"
+    monkeypatch.setattr(
+        log_dialog_settings, "QSettings",
+        lambda *_args: QSettings(str(ini), QSettings.Format.IniFormat),
+    )
 
 
 VISIBLE_TAB_LABELS = (
