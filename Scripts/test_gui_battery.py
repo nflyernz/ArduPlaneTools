@@ -15,7 +15,9 @@ from PySide6.QtWidgets import QLabel
 
 import analyses.battery as battery_analysis_module
 from core.flight_window import FlightWindow
+from core.flight_data import FlightLog
 from core.log_reader import UnsupportedFirmwareError
+from core.params import ParameterHistory
 from gui import MainWindow
 import gui.battery_adapter as adapter_module
 
@@ -78,8 +80,8 @@ def test_adapter_reads_once_and_processes_each_flight_and_instance(
             )
 
         def get(self, name):
-            assert name == "BAT"
-            return self.battery
+            assert name in ("BAT", "MSG")
+            return self.battery if name == "BAT" else pd.DataFrame()
 
     flight_log = _FlightLog()
     analyses = {}
@@ -154,8 +156,8 @@ def test_adapter_distinguishes_no_flights_no_telemetry_and_invalid_analysis(
             return self
 
         def get(self, name):
-            assert name == "BAT"
-            return self.battery
+            assert name in ("BAT", "MSG")
+            return self.battery if name == "BAT" else pd.DataFrame()
 
     monkeypatch.setattr(adapter_module, "FlightReader", _Reader)
     no_flights = adapter_module.analyse_battery_log(selected)
@@ -191,6 +193,47 @@ def test_adapter_distinguishes_no_flights_no_telemetry_and_invalid_analysis(
     assert "FLIGHT 1 — BATTERY INSTANCE 4" in unavailable
     assert "No valid battery analysis is available." in unavailable
     assert "No battery telemetry is available" not in unavailable
+
+
+@pytest.mark.parametrize("with_message", [False, True])
+def test_adapter_reports_failsafe_message_without_bat_telemetry(
+    monkeypatch, tmp_path, with_message
+):
+    flight = FlightWindow(1_000_000, 2_000_000)
+    messages = [
+        {"TimeUS": 1_200_000, "Message": "Battery 2 is low 14.0V"},
+    ] if with_message else []
+    log = FlightLog(
+        messages={
+            "BAT": pd.DataFrame(),
+            "MSG": pd.DataFrame(messages),
+            "MODE": pd.DataFrame([
+                {"TimeUS": 1_210_000, "ModeNum": 11, "Rsn": 4},
+            ]),
+        },
+        parameter_history=ParameterHistory({}),
+        flights=[flight],
+    )
+
+    class _Reader:
+        def __init__(self, _path, config=None):
+            assert config is not None
+
+        def read(self):
+            return log
+
+    monkeypatch.setattr(adapter_module, "FlightReader", _Reader)
+    report = adapter_module.analyse_battery_log(tmp_path / "no-bat.bin")
+    if with_message:
+        assert "FLIGHT 1 — BATTERY INSTANCE 1" in report
+        assert "BAT voltage evidence unavailable" in report
+        assert "Battery-low message with correlated RTL (MODE reason 4)" in report
+        assert "nearby MODE 11 reason 4" in report
+        assert "Raw low:" not in report
+        assert "BATTERY INSTANCE 0" not in report
+    else:
+        assert "No battery telemetry is available for this flight." in report
+        assert "BATTERY INSTANCE" not in report
 
 
 def test_adapter_never_uses_pack_persistence_and_leaves_data_unchanged(
