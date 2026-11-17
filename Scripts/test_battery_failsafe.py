@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from analyses.battery import format_battery_report
+from analyses.battery import format_battery_report, format_voltage_failsafe_assessment
 from core.battery import BatteryProcessor
 from core.battery_failsafe import assess_voltage_failsafe
 from core.config import Config
@@ -259,6 +259,38 @@ def test_missing_compensation_or_sampling_gap_never_means_zero_safe_triggers():
     assert "qualification indeterminate" in report
     assert "unknown across gaps" in report
     assert "Capacity failsafe thresholds: low disabled, critical disabled" in report
+
+
+def test_invalid_bat_timestamp_splits_excursion_and_marks_coverage_incomplete():
+    rows = [_row(0), _row(0.1), _row(0.2)]
+    rows[1]["TimeUS"] = float("nan")
+    assessment = assess_voltage_failsafe(_log(rows), 0)
+    raw_low = [
+        event for event in assessment.excursions
+        if event.source == "raw" and event.stage == "low"
+    ]
+    assert assessment.sampling_gaps
+    assert len(raw_low) == 2
+    assert raw_low[0].gap_after
+    assert all(event.first_qualification_us is None for event in raw_low)
+    report = format_voltage_failsafe_assessment(assessment)
+    assert "qualification indeterminate (0 observed)" in report
+    assert "qualification is unknown across gaps" in report
+
+
+def test_observed_message_without_bat_samples_remains_in_report():
+    log = _log(
+        [],
+        messages=[{"TimeUS": 210_000, "Message": "Battery 1 is low 14.0V"}],
+        modes=[{"TimeUS": 220_000, "ModeNum": 11, "Rsn": 4}],
+    )
+    assessment = assess_voltage_failsafe(log, 0, WINDOW)
+    assert assessment.sample_count == 0
+    report = format_voltage_failsafe_assessment(assessment)
+    assert "BAT voltage evidence unavailable" in report
+    assert "Battery-low message with correlated RTL (MODE reason 4)" in report
+    assert "nearby MODE 11 reason 4" in report
+    assert "Raw low:" not in report
 
 
 

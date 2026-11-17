@@ -111,7 +111,10 @@ def format_voltage_failsafe_assessment(
     """Present observed battery events separately from offline voltage replay."""
     lines = ["VOLTAGE FAILSAFE ASSESSMENT"]
     if assessment is None or assessment.sample_count == 0:
-        return "\n".join(lines + ["", "BAT voltage evidence unavailable."])
+        lines.extend(("", "BAT voltage evidence unavailable."))
+        if assessment is not None:
+            lines.extend(_format_observed_battery_failsafes(assessment))
+        return "\n".join(lines)
     lines.append("")
     lines.append(
         "Offline replay of the recorded trajectory; "
@@ -215,6 +218,12 @@ def format_voltage_failsafe_assessment(
                     f"action {action}, armed session {session}"
                     f"{'; gap follows' if event.gap_after else ''}"
                 )
+    lines.extend(_format_observed_battery_failsafes(assessment))
+    return "\n".join(lines)
+
+
+def _format_observed_battery_failsafes(assessment: VoltageFailsafeAssessment) -> list[str]:
+    lines = []
     if not assessment.observed:
         lines.append("Observed battery failsafe messages: none in this flight window.")
     for observed in assessment.observed:
@@ -233,7 +242,7 @@ def format_voltage_failsafe_assessment(
                 "(temporal association, not proof of causation)"
             )
         lines.append(line)
-    return "\n".join(lines)
+    return lines
 
 
 def format_battery_report(

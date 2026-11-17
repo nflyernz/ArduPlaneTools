@@ -280,6 +280,7 @@ def assess_voltage_failsafe(
             continue
         time_us = _time(row.TimeUS)
         if time_us is None:
+            sampling_gaps = True
             for key in list(active):
                 finish(key, gap=True)
             continue
