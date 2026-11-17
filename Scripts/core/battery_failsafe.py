@@ -117,7 +117,8 @@ def _configuration(
     flight_log: FlightLog, instance: int, time_us: int
 ) -> FailsafeConfiguration:
     prefix = "BATT" if instance == 0 else f"BATT{instance + 1}"
-    value = lambda suffix: _parameter(flight_log, f"{prefix}_{suffix}", time_us)
+    def value(suffix):
+        return _parameter(flight_log, f"{prefix}_{suffix}", time_us)
     source = value("FS_VOLTSRC")
     low_action = value("FS_LOW_ACT")
     critical_action = value("FS_CRT_ACT")
