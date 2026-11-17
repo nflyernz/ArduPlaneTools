@@ -4,6 +4,7 @@ from core.battery import (
     BatteryLoadEventType,
     BatteryProcessor,
 )
+from core.battery_failsafe import VoltageFailsafeAssessment
 from core.battery_pack_history import (
     BatteryPackHistoryError,
     BatteryPackHistoryStore,
@@ -104,6 +105,137 @@ def format_bounded_load_events(events) -> str:
     return "\n".join(lines)
 
 
+def format_voltage_failsafe_assessment(
+    assessment: VoltageFailsafeAssessment | None,
+) -> str:
+    """Present observed battery events separately from offline voltage replay."""
+    lines = ["VOLTAGE FAILSAFE ASSESSMENT"]
+    if assessment is None or assessment.sample_count == 0:
+        return "\n".join(lines + ["", "BAT voltage evidence unavailable."])
+    lines.append("")
+    lines.append(
+        "Offline replay of the recorded trajectory; "
+        "timing is limited to BAT samples."
+    )
+    config = assessment.starting_configuration
+    if config is not None:
+        low = _format_threshold(config.low_v)
+        critical = _format_threshold(config.critical_v)
+        timer = "Unavailable" if config.timer_s is None else f"{config.timer_s:g} s"
+        lines.append(
+            f"Recorded settings at first BAT: source {config.source}, low {low}, "
+            f"critical {critical}, timer {timer}, actions low/critical "
+            f"{config.low_action}/{config.critical_action}."
+        )
+    if config is not None:
+        def capacity_threshold(value):
+            if value is None:
+                return "unavailable"
+            return "disabled" if value <= 0 else f"{value:g} mAh"
+
+        low_mah = capacity_threshold(config.low_mah)
+        critical_mah = capacity_threshold(config.critical_mah)
+        lines.append(
+            f"Capacity failsafe thresholds: low {low_mah}, "
+            f"critical {critical_mah}."
+        )
+    if assessment.compensation_unavailable:
+        lines.append(
+            "Compensated voltage partly unavailable: "
+            + (assessment.compensation_reason or "invalid telemetry")
+        )
+    if assessment.raw_unavailable:
+        lines.append("Raw voltage partly unavailable: missing or invalid BAT.Volt.")
+    if assessment.sampling_gaps:
+        lines.append("BAT sample gaps: qualification is unknown across gaps.")
+    for source in ("raw", "compensated"):
+        incomplete = (
+            assessment.sampling_gaps
+            or (source == "raw" and assessment.raw_unavailable)
+            or (source == "compensated" and assessment.compensation_unavailable)
+        )
+        for stage in ("low", "critical"):
+            events = [
+                event for event in assessment.excursions
+                if event.source == source and event.stage == stage
+            ]
+            qualifying = [
+                event for event in events if event.first_qualification_us is not None
+            ]
+            outside = [
+                event for event in events if event.qualification_outside_window
+            ]
+            longest = max(events, key=lambda event: event.duration_s, default=None)
+            if incomplete and not qualifying:
+                qualification_text = "qualification indeterminate (0 observed)"
+            elif incomplete:
+                qualification_text = (
+                    f"at least {len(qualifying)} qualifying; "
+                    "unknown over missing data"
+                )
+            else:
+                qualification_text = f"{len(qualifying)} qualifying"
+            summary = (
+                f"{source.title()} {stage}: {len(events)} excursions, "
+                f"{qualification_text}"
+            )
+            if outside:
+                summary += (
+                    f"; {len(outside)} qualification(s) outside selected flight"
+                )
+            if longest is not None:
+                summary += (
+                    f"; longest {longest.duration_s:.1f} s "
+                    f"({format_time_us(longest.start_us)}-"
+                    f"{format_time_us(longest.end_us)})"
+                )
+            lines.append(summary)
+            for event in qualifying:
+                config = event.configuration
+                role = (
+                    "recorded source" if event.selected_source
+                    else "alternative source"
+                )
+                threshold = config.low_v if stage == "low" else config.critical_v
+                action = config.low_action if stage == "low" else config.critical_action
+                current = _format_value(event.maximum_current_a, " A")
+                consumed = _format_value(event.consumed_mah_at_end, " mAh", 0)
+                session = (
+                    event.armed_session
+                    if event.armed_session is not None
+                    else "unknown/disarmed"
+                )
+                lines.append(
+                    f"  Replay ({role}): {format_time_us(event.start_us)}-"
+                    f"{format_time_us(event.end_us)}, first qualifies "
+                    f"{format_time_us(event.first_qualification_us)}; "
+                    f"min {event.minimum_v:.3f} V, max {current}, "
+                    f"consumed at end {consumed}; threshold {threshold:.2f} V / "
+                    f"{config.timer_s:g} s, source setting {config.source}, "
+                    f"action {action}, armed session {session}"
+                    f"{'; gap follows' if event.gap_after else ''}"
+                )
+    if not assessment.observed:
+        lines.append("Observed battery failsafe messages: none in this flight window.")
+    for observed in assessment.observed:
+        label = (
+            "Battery-low message with correlated RTL (MODE reason 4)"
+            if observed.stage == "low" and observed.mode_number == 11
+            and observed.mode_reason == 4
+            else "Observed battery message"
+        )
+        line = f"{label} at {format_time_us(observed.time_us)}: {observed.message}"
+        if observed.mode_time_us is not None:
+            line += (
+                f"; nearby MODE {observed.mode_number} reason "
+                f"{observed.mode_reason} at "
+                f"{format_time_us(observed.mode_time_us)} "
+                "(temporal association, not proof of causation)"
+            )
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def format_battery_report(
     log_path,
     flight_window,
@@ -201,6 +333,11 @@ def format_battery_report(
             lines.extend(("", f"- {warning}"))
 
     lines.extend(("", format_bounded_load_events(analysis.bounded_load_events)))
+    lines.extend((
+        "", format_voltage_failsafe_assessment(
+            getattr(analysis, "voltage_failsafe", None)
+        ),
+    ))
     if configuration is not None and configuration.warnings:
         lines.extend(("", "CONFIGURATION WARNINGS"))
         for warning in configuration.warnings:
