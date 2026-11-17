@@ -21,4 +21,5 @@ messages:
   - MODE
   - CTUN
   - MSG
+  - ARM
   - VER

@@ -7,11 +7,8 @@ import time
 
 import pytest
 
-
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
-
-from PySide6.QtWidgets import QPushButton
 
 from analyses.battery import BatteryPackPerformancePresentation
 from core import battery_pack_history
@@ -22,6 +19,7 @@ from gui.pack_performance_adapter import (
     BatteryPackPerformanceService,
     PackPerformanceIndex,
 )
+from PySide6.QtWidgets import QPushButton
 from test_battery_pack_history import _observation
 from test_battery_pack_performance import _event, _inputs
 
@@ -173,9 +171,12 @@ def test_service_uses_current_ownership_and_newest_supported_history(
         [
             old,
             new,
-            _observation(source_sha256=other, source_filename="other.bin"),
-            _observation(source_sha256=omitted, source_filename="omitted.bin"),
-            _observation(source_sha256=unseen, source_filename="unseen.bin"),
+            _observation(source_sha256=other, source_filename="other.bin",
+                         pack_id="Pack B"),
+            _observation(source_sha256=omitted, source_filename="omitted.bin",
+                         pack_id="Missing"),
+            _observation(source_sha256=unseen, source_filename="unseen.bin",
+                         pack_id="Missing"),
         ]
     )
 
@@ -191,7 +192,8 @@ def test_service_uses_current_ownership_and_newest_supported_history(
         for name in ("other.bin", "omitted.bin", "unseen.bin")
     )
     assert "Pack ID: Pack Renamed" in renamed
-    assert "other.bin" in renamed
+    assert "other.bin" not in renamed
+    assert "other.bin" in _service(tmp_path).report("Pack B").text
     assert "omitted.bin" not in renamed
     assert "unseen.bin" not in renamed
 

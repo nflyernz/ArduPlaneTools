@@ -12,6 +12,7 @@ from typing import Optional
 
 import pandas as pd
 
+from .battery_failsafe import VoltageFailsafeAssessment, assess_voltage_failsafe
 from .config import Config
 from .flight_data import FlightLog
 from .flight_window import FlightWindow
@@ -122,6 +123,7 @@ class BatteryAnalysis:
     bounded_load_events: list[BatteryLoadInterval] = field(
         default_factory=list
     )
+    voltage_failsafe: VoltageFailsafeAssessment | None = None
 
 
 class BatteryProcessor:
@@ -237,6 +239,9 @@ class BatteryProcessor:
             bounded_load_events=self._bounded_load_events(
                 all_instance,
                 session_configuration,
+            ),
+            voltage_failsafe=assess_voltage_failsafe(
+                self.flight_log, self.instance, self.flight_window,
             ),
         )
 

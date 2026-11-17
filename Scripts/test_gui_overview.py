@@ -6,16 +6,13 @@ import time
 
 import pytest
 
-
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
-
-from PySide6.QtWidgets import QGroupBox, QLabel
 
 from gui import ANALYSIS_TABS, MainWindow
 from gui.module_catalog import MODULE_DESCRIPTIONS, display_label
 from gui.pack_performance_adapter import BatteryPackPerformanceService
-
+from PySide6.QtWidgets import QGroupBox, QLabel
 
 VISIBLE_TAB_LABELS = (
     "Overview",
@@ -170,7 +167,7 @@ def test_module_headers_separate_context_from_empty_reports(window, name):
     expected_empty_state = "No analysis run yet."
     if name == "Battery Pack Management":
         expected_instruction = (
-            "Select a BIN log above to view or manage its pack association."
+            "Manage Pack IDs without a BIN. Select a BIN above to assign a pack or record history."
         )
         expected_empty_state = "No management operation run yet."
     elif name == "Pack Performance":

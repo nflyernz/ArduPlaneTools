@@ -2,19 +2,21 @@
 
 from pathlib import Path
 
+from core.battery_pack_store import LogPackState
+from core.log_reader import UnsupportedFirmwareError
 from PySide6.QtCore import QSettings, QSize, Qt, QThread, Slot
 from PySide6.QtWidgets import (
     QApplication,
-    QCommandLinkButton,
     QComboBox,
+    QCommandLinkButton,
     QFileDialog,
     QFormLayout,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QLayout,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
@@ -25,9 +27,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.log_reader import UnsupportedFirmwareError
-from core.battery_pack_store import LogPackState
-
 from .analysis_worker import AnalysisWorker
 from .autotune_adapter import analyse_autotune_log
 from .battery_adapter import analyse_battery_log
@@ -37,9 +36,17 @@ from .landing_adapter import analyse_landing_log
 from .log_dialog_settings import remember_directory, starting_directory
 from .module_catalog import (
     EXECUTABLE_ANALYSES as _EXECUTABLE_ANALYSES,
+)
+from .module_catalog import (
     MODULE_DESCRIPTIONS as _MODULE_DESCRIPTIONS,
+)
+from .module_catalog import (
     OVERVIEW_SECTIONS as _OVERVIEW_SECTIONS,
+)
+from .module_catalog import (
     PACK_ID_PLACEHOLDER as _PACK_ID_PLACEHOLDER,
+)
+from .module_catalog import (
     connection_status,
     display_label,
 )
@@ -54,7 +61,6 @@ from .radio_link_widget import RadioLinkController
 from .range_walk_controller import RangeWalkPreviewController
 from .stall_adapter import analyse_stall_log
 from .takeoff_adapter import analyse_takeoff_log
-
 
 ANALYSIS_TABS = (
     "Battery",
@@ -134,6 +140,8 @@ class MainWindow(QMainWindow):
         self._pack_management_state: PackManagementState | None = None
         self._pack_management_task: str | None = None
         self._pending_pack_lookup: Path | None = None
+        self._pending_pack_lookup_requested = False
+        self._pack_delete_preview = None
         self._analysis_thread: QThread | None = None
         self._analysis_worker: AnalysisWorker | None = None
         self._active_analysis: str | None = None
@@ -159,6 +167,7 @@ class MainWindow(QMainWindow):
         self.pack_archive_button: QPushButton | None = None
         self.pack_restore_button: QPushButton | None = None
         self.pack_delete_button: QPushButton | None = None
+        self.pack_delete_preview_text: QPlainTextEdit | None = None
         self.pack_record_history_button: QPushButton | None = None
         self.pack_controls_scroll: QScrollArea | None = None
 
@@ -288,6 +297,7 @@ class MainWindow(QMainWindow):
         self._selected_log = selected
         self._pack_management_state = None
         self._pending_pack_lookup = None
+        self._pending_pack_lookup_requested = False
         displayed = str(selected)
         self.source_path_edit.setText(displayed)
         self.source_path_edit.setToolTip(displayed)
@@ -336,7 +346,7 @@ class MainWindow(QMainWindow):
         path = self._selected_log
         self._start_worker(analysis, path, adapter)
 
-    def _start_worker(self, analysis: str, path: Path, adapter) -> None:
+    def _start_worker(self, analysis: str, path: Path | None, adapter) -> None:
         """Start one adapter using the shared GUI worker lifecycle."""
         thread = QThread(self)
         worker = AnalysisWorker(path, adapter)
@@ -534,7 +544,10 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _module_instruction(name: str) -> str:
         if name == "Battery Pack Management":
-            return "Select a BIN log above to view or manage its pack association."
+            return (
+                "Manage Pack IDs without a BIN. Select a BIN above to assign "
+                "a pack or record history."
+            )
         if name == "Pack Performance":
             return (
                 "Select a Pack ID, then choose View report. "
@@ -567,6 +580,9 @@ class MainWindow(QMainWindow):
         self.pack_assign_combo.currentIndexChanged.connect(
             self._update_analysis_controls
         )
+        self.pack_assign_combo.currentIndexChanged.connect(
+            self._clear_pack_selection_error
+        )
         self.pack_assign_button = QPushButton("Assign selected BIN")
         self.pack_assign_button.clicked.connect(self.assign_existing_pack)
         assignment_layout.addWidget(self.pack_assign_combo)
@@ -590,11 +606,17 @@ class MainWindow(QMainWindow):
         for row, (label, combo_name, button_name, caption, handler) in enumerate((
             ("Active:", "pack_archive_combo", "pack_archive_button", "Archive", self.archive_pack),
             ("Archived:", "pack_restore_combo", "pack_restore_button", "Restore", self.restore_pack),
-            ("Unused:", "pack_delete_combo", "pack_delete_button", "Delete permanently", self.delete_pack),
+            ("Delete Pack ID:", "pack_delete_combo", "pack_delete_button", "Delete permanently", self.delete_pack),
         )):
             combo = QComboBox()
             combo.addItem(_PACK_ID_PLACEHOLDER, None)
             combo.currentIndexChanged.connect(self._update_analysis_controls)
+            if combo_name == "pack_delete_combo":
+                combo.currentIndexChanged.connect(
+                    lambda _index: self._update_delete_preview(selection_changed=True)
+                )
+            else:
+                combo.currentIndexChanged.connect(self._clear_pack_selection_error)
             button = QPushButton(caption)
             button.clicked.connect(handler)
             setattr(self, combo_name, combo)
@@ -602,6 +624,13 @@ class MainWindow(QMainWindow):
             lifecycle_layout.addWidget(QLabel(label), row, 0)
             lifecycle_layout.addWidget(combo, row, 1)
             lifecycle_layout.addWidget(button, row, 2)
+        self.pack_delete_preview_text = QPlainTextEdit()
+        self.pack_delete_preview_text.setReadOnly(True)
+        self.pack_delete_preview_text.setMaximumHeight(130)
+        self.pack_delete_preview_text.setPlainText(
+            "Select a Pack ID to preview associated BIN logs and history."
+        )
+        lifecycle_layout.addWidget(self.pack_delete_preview_text, 3, 0, 1, 3)
         layout.addWidget(lifecycle_group)
 
         rename_group = QGroupBox("Rename existing Pack ID")
@@ -615,6 +644,9 @@ class MainWindow(QMainWindow):
         self.pack_rename_combo.addItem(_PACK_ID_PLACEHOLDER, None)
         self.pack_rename_combo.currentIndexChanged.connect(
             self._update_analysis_controls
+        )
+        self.pack_rename_combo.currentIndexChanged.connect(
+            self._clear_pack_selection_error
         )
         self.pack_rename_edit = QLineEdit()
         self.pack_rename_edit.setMinimumWidth(320)
@@ -651,22 +683,32 @@ class MainWindow(QMainWindow):
         layout.addWidget(history_group)
 
     def _request_pack_lookup(self) -> None:
-        """Resolve the current BIN association without writing persistence."""
-        if self._selected_log is None:
-            self._pack_management_state = None
-            self._refresh_pack_management_view("Select a BIN log to begin.")
-            return
+        """Load pack state and optionally resolve the selected BIN."""
         if self._analysis_thread is not None:
             self._pending_pack_lookup = self._selected_log
+            self._pending_pack_lookup_requested = True
             self._refresh_pack_management_view("Association lookup pending.")
+            return
+        if self._selected_log is None:
+            if not hasattr(self._pack_management_service, "lookup_packs"):
+                return
+            try:
+                state = self._pack_management_service.lookup_packs()
+            except (OSError, ValueError, RuntimeError) as exc:
+                self._show_pack_message(str(exc), error=True)
+            else:
+                self._pack_management_succeeded(state)
             return
         path = self._selected_log
         self._pack_management_task = "lookup"
-        self._refresh_pack_management_view("Identifying source BIN…")
+        self._refresh_pack_management_view(
+            "Identifying source BIN…" if path is not None else "Loading Pack IDs…"
+        )
         self._start_worker(
             "Battery Pack Management",
             path,
-            self._pack_management_service.lookup,
+            self._pack_management_service.lookup if path is not None
+            else lambda _unused: self._pack_management_service.lookup_packs(),
         )
 
     def assign_existing_pack(self) -> None:
@@ -748,8 +790,13 @@ class MainWindow(QMainWindow):
         if not self._confirm_pack_action(
             "Rename Battery Pack",
             f"Rename Pack ID {old_id} to {new_id}?\n\n"
-            "This updates every associated BIN identity, not only the selected BIN.",
+            "This updates every saved BIN association using this Pack ID.",
         ):
+            return
+        if (self._current_pack_state() != state
+                or self.pack_rename_combo.currentData() != old_id
+                or self.pack_rename_edit.text().strip() != new_id):
+            self._show_pack_message("Pack selection changed; refresh and try again.", error=True)
             return
         self._start_pack_mutation(
             "rename",
@@ -788,17 +835,13 @@ class MainWindow(QMainWindow):
         pack_id = combo.currentData()
         if state is None or not isinstance(pack_id, str):
             return
-        if action == "delete" and pack_id not in state.unused_pack_ids:
-            return
-        detail = (
-            "This permanently removes only a pack with no saved log associations "
-            "or historical observations."
-            if action == "delete" else
-            "Saved associations and historical observations are retained."
-        )
+        detail = "Saved associations and historical observations are retained."
         if not self._confirm_pack_action(
             f"{action.title()} Battery Pack", f"{action.title()} Pack ID {pack_id}?\n\n{detail}"
         ):
+            return
+        if self._current_pack_state() != state or combo.currentData() != pack_id:
+            self._show_pack_message("Pack selection changed; refresh and try again.", error=True)
             return
         self._start_pack_mutation(
             action, state,
@@ -812,7 +855,114 @@ class MainWindow(QMainWindow):
         self._change_pack_lifecycle("restore", self.pack_restore_combo)
 
     def delete_pack(self) -> None:
-        self._change_pack_lifecycle("delete", self.pack_delete_combo)
+        state = self._current_pack_state()
+        pack_id = self.pack_delete_combo.currentData()
+        if state is None or not isinstance(pack_id, str):
+            return
+        try:
+            preview = self._pack_management_service.preview_delete(state, pack_id)
+        except (OSError, ValueError, RuntimeError) as exc:
+            self._show_pack_delete_error(str(exc))
+            return
+        if not self._confirm_pack_deletion(preview):
+            return
+        if self.pack_delete_combo.currentData() != pack_id or self._current_pack_state() != state:
+            self._show_pack_delete_error("Pack selection changed; refresh and try again.")
+            return
+        self._start_pack_mutation(
+            "delete", state,
+            lambda _path: self._pack_management_service.delete(state, pack_id, preview),
+        )
+
+    def _confirm_pack_deletion(self, preview) -> bool:
+        plan = preview.plan
+        log_count = len(plan.log_fingerprints)
+        history_count = len(plan.observation_ids)
+        retained_count = len(plan.retained_history_owners)
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle(f"Delete Pack ID — {plan.pack_id}?")
+        dialog.setText(
+            f"Delete Pack ID — {plan.pack_id}?\n\n"
+            "This Pack ID has:\n\n"
+            f"• {log_count} associated BIN {'log' if log_count == 1 else 'logs'}\n"
+            f"• {history_count} battery history "
+            f"{'observation' if history_count == 1 else 'observations'}\n\n"
+            "Associated BIN logs:\n"
+            f"{self._associated_log_lines(preview)}\n\n"
+            "Deleting this Pack ID will:\n\n"
+            "• Remove the Pack ID.\n"
+            "• Change its associated BIN logs to Not tracked.\n"
+            "• Permanently delete only its owned battery history observations.\n"
+            f"• Retain {retained_count} history "
+            f"{'observation' if retained_count == 1 else 'observations'} "
+            "owned by other Pack IDs.\n"
+            "• Leave the original BIN files untouched.\n\n"
+            "You can subsequently assign those BIN files to another Pack ID "
+            "and record their battery history again."
+        )
+        cancel_button = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        delete_button = dialog.addButton("Delete Pack ID", QMessageBox.ButtonRole.DestructiveRole)
+        dialog.setDefaultButton(cancel_button)
+        dialog.exec()
+        return dialog.clickedButton() is delete_button
+
+    @staticmethod
+    def _associated_log_lines(preview) -> str:
+        if not preview.associated_logs:
+            return "• None"
+        lines = []
+        for log in preview.associated_logs:
+            short_id = f"SHA-256 {log.fingerprint[:16]}…"
+            names = ", ".join(log.filenames) if log.filenames else (
+                f"Unknown filename — {short_id}"
+            )
+            suffix = "observation" if log.observation_count == 1 else "observations"
+            lines.append(
+                f"• {names} ({short_id}; {log.observation_count} "
+                f"owned {suffix} to delete)"
+            )
+        return "\n".join(lines)
+
+    def _clear_pack_selection_error(self, *_args) -> None:
+        report = self.report_for("Battery Pack Management")
+        if report.toPlainText().startswith("Battery Pack Management Error"):
+            report.setPlainText("Pack selection changed. Choose an action.")
+            self.statusBar().clearMessage()
+
+    def _update_delete_preview(self, *, selection_changed: bool = False) -> None:
+        if self.pack_delete_preview_text is None or self.pack_delete_combo is None:
+            return
+        if selection_changed:
+            self._clear_pack_selection_error()
+        self._pack_delete_preview = None
+        pack_id = self.pack_delete_combo.currentData()
+        state = self._current_pack_state()
+        if not isinstance(pack_id, str):
+            message = "Select a Pack ID to preview associated BIN logs and history."
+        elif state is None:
+            message = "Loading Pack IDs…"
+        else:
+            try:
+                preview = self._pack_management_service.preview_delete(state, pack_id)
+            except (OSError, ValueError, RuntimeError) as exc:
+                message = f"Deletion blocked for {pack_id}: {exc}"
+            else:
+                self._pack_delete_preview = preview
+                count = len(preview.plan.observation_ids)
+                message = (
+                    f"Pack ID: {pack_id}\n"
+                    f"Associated BIN logs: {len(preview.associated_logs)}\n"
+                    f"{self._associated_log_lines(preview)}\n"
+                    f"Battery history observations to delete: {count}\n"
+                    "Other Pack ID observations retained: "
+                    f"{len(preview.plan.retained_history_owners)}"
+                )
+        self.pack_delete_preview_text.setPlainText(message)
+
+    def _show_pack_delete_error(self, message: str) -> None:
+        """Keep the report diagnostic and make a failed deletion visible."""
+        self._show_pack_message(message, error=True)
+        QMessageBox.warning(self, "Delete Pack ID failed", message)
 
     def _start_pack_mutation(self, task: str, state, adapter) -> None:
         if self._analysis_thread is not None:
@@ -825,7 +975,6 @@ class MainWindow(QMainWindow):
         state = self._pack_management_state
         if (
             state is None
-            or self._selected_log is None
             or state.log_path != self._selected_log
             or self._analysis_thread is not None
         ):
@@ -851,9 +1000,10 @@ class MainWindow(QMainWindow):
         if self._selected_log is None:
             self.pack_selected_bin_value.setText("No BIN selected")
             self.pack_association_value.setText("Unseen")
-            pack_ids = ()
-            archived_ids = ()
-            unused_ids = ()
+            state = self._pack_management_state
+            pack_ids = state.pack_ids if state is not None else ()
+            archived_ids = state.archived_pack_ids if state is not None else ()
+            delete_ids = (*pack_ids, *archived_ids)
         else:
             self.pack_selected_bin_value.setText(self._selected_log.name)
             state = self._pack_management_state
@@ -861,16 +1011,17 @@ class MainWindow(QMainWindow):
                 self.pack_association_value.setText(self._association_text(state))
                 pack_ids = state.pack_ids
                 archived_ids = state.archived_pack_ids
-                unused_ids = state.unused_pack_ids
+                delete_ids = (*state.pack_ids, *state.archived_pack_ids)
             else:
                 self.pack_association_value.setText("Pending lookup")
                 pack_ids = ()
                 archived_ids = ()
-                unused_ids = ()
+                delete_ids = ()
 
         for combo in (self.pack_assign_combo, self.pack_rename_combo):
             if combo is not None:
                 current = selected_pack_id or combo.currentData()
+                combo.blockSignals(True)
                 combo.clear()
                 combo.addItem(_PACK_ID_PLACEHOLDER, None)
                 for pack_id in pack_ids:
@@ -878,14 +1029,16 @@ class MainWindow(QMainWindow):
                 index = combo.findData(current)
                 if index >= 0:
                     combo.setCurrentIndex(index)
+                combo.blockSignals(False)
         for combo, ids in (
             (self.pack_archive_combo, pack_ids),
             (self.pack_restore_combo, archived_ids),
-            (self.pack_delete_combo, unused_ids),
+            (self.pack_delete_combo, delete_ids),
         ):
             if combo is None:
                 continue
             current = combo.currentData()
+            combo.blockSignals(True)
             combo.clear()
             combo.addItem(_PACK_ID_PLACEHOLDER, None)
             for pack_id in ids:
@@ -893,9 +1046,11 @@ class MainWindow(QMainWindow):
             index = combo.findData(current)
             if index >= 0:
                 combo.setCurrentIndex(index)
+            combo.blockSignals(False)
         if message is not None:
             self.report_for("Battery Pack Management").setPlainText(message)
         self._update_analysis_controls()
+        self._update_delete_preview()
 
     def _show_pack_message(self, message: str, *, error: bool = False) -> None:
         heading = "Battery Pack Management Error" if error else "Battery Pack Management"
@@ -920,10 +1075,7 @@ class MainWindow(QMainWindow):
         self._update_status()
         if self.current_analysis == "Battery Pack Management":
             state = self._pack_management_state
-            if (
-                self._selected_log is not None
-                and (state is None or state.log_path != self._selected_log)
-            ):
+            if state is None or state.log_path != self._selected_log:
                 self._request_pack_lookup()
         elif self.current_analysis == "Pack Performance":
             self._pack_performance.request_refresh()
@@ -957,13 +1109,15 @@ class MainWindow(QMainWindow):
             and not self._close_after_worker
             and self._current_pack_state() is not None
         )
+        source_ready = pack_ready and self._selected_log is not None
         pack_ids = (
             self._pack_management_state.pack_ids
             if self._pack_management_state is not None
             else ()
         )
-        unused_ids = (
-            self._pack_management_state.unused_pack_ids
+        delete_ids = (
+            (*self._pack_management_state.pack_ids,
+             *self._pack_management_state.archived_pack_ids)
             if self._pack_management_state is not None
             else ()
         )
@@ -973,10 +1127,10 @@ class MainWindow(QMainWindow):
                 if self.pack_assign_combo is not None
                 else None
             )
-            self.pack_assign_button.setEnabled(pack_ready and selected in pack_ids)
+            self.pack_assign_button.setEnabled(source_ready and selected in pack_ids)
         if self.pack_create_button is not None:
             self.pack_create_button.setEnabled(
-                pack_ready
+                source_ready
                 and self.pack_create_edit is not None
                 and bool(self.pack_create_edit.text().strip())
             )
@@ -999,7 +1153,7 @@ class MainWindow(QMainWindow):
                 else None
             )
             self.pack_record_history_button.setEnabled(
-                pack_ready
+                source_ready
                 and association is not None
                 and association.state is LogPackState.TRACKED
             )
@@ -1007,7 +1161,7 @@ class MainWindow(QMainWindow):
             (self.pack_archive_combo, self.pack_archive_button, pack_ids),
             (self.pack_restore_combo, self.pack_restore_button,
              self._pack_management_state.archived_pack_ids if self._pack_management_state else ()),
-            (self.pack_delete_combo, self.pack_delete_button, unused_ids),
+            (self.pack_delete_combo, self.pack_delete_button, delete_ids),
         ):
             if button is not None:
                 button.setEnabled(pack_ready and combo.currentData() in ids)
@@ -1053,7 +1207,10 @@ class MainWindow(QMainWindow):
     def _analysis_failed(self, exc: Exception) -> None:
         assert self._active_analysis is not None
         if self._active_analysis == "Battery Pack Management":
-            self._show_pack_message(str(exc), error=True)
+            if self._pack_management_task == "delete":
+                self._show_pack_delete_error(str(exc))
+            else:
+                self._show_pack_message(str(exc), error=True)
             return
         if self._active_analysis == "Pack Performance":
             self._pack_performance.handle_failure(exc)
@@ -1104,8 +1261,12 @@ class MainWindow(QMainWindow):
         if finished_analysis == "Battery Pack Management":
             pending = self._pending_pack_lookup
             self._pending_pack_lookup = None
-            if pending is not None and pending == self._selected_log:
+            requested = self._pending_pack_lookup_requested
+            self._pending_pack_lookup_requested = False
+            if requested and pending == self._selected_log:
                 self._request_pack_lookup()
+            else:
+                self._update_delete_preview()
 
     def _pack_management_succeeded(self, result: object) -> None:
         if isinstance(result, PackManagementResult):
@@ -1131,6 +1292,8 @@ class MainWindow(QMainWindow):
             self._pack_management_state = state
             self._refresh_pack_management_view(message, selected_pack_id)
             self.statusBar().showMessage(message)
+            if isinstance(result, PackManagementResult) and result.changed:
+                self._pack_performance.request_refresh()
         elif self._selected_log is not None:
             self._pending_pack_lookup = self._selected_log
 
