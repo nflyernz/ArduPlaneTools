@@ -1,8 +1,7 @@
 """Focused tests for persistent physical battery Pack ID metadata."""
 
-from pathlib import Path
-from types import SimpleNamespace
 import json
+from pathlib import Path
 
 import pytest
 from analyses.battery import (
@@ -61,6 +60,51 @@ def test_tracked_associations_and_known_pack_ids_round_trip(tmp_path):
     assert reloaded.association_for(second_fingerprint).pack_id == "Pack 1"
 
 
+def test_filename_metadata_is_display_only_and_keyed_by_fingerprint(tmp_path):
+    path = tmp_path / "packs.json"
+    first = "a" * 64
+    second = "b" * 64
+    store = BatteryPackStore(path)
+    store.create_and_associate(first, "Pack A", "flight.bin")
+    store.associate(first, "Pack A", "renamed.bin")
+    store.associate(second, "Pack A", "flight.bin")
+    reloaded = BatteryPackStore(path)
+    assert reloaded.associated_fingerprints("Pack A") == (first, second)
+    assert reloaded.known_filenames_for(first) == ("flight.bin", "renamed.bin")
+    assert reloaded.known_filenames_for(second) == ("flight.bin",)
+    assert reloaded.association_for(first).pack_id == "Pack A"
+    assert reloaded.association_for(second).pack_id == "Pack A"
+    before = path.read_bytes()
+    with pytest.raises(BatteryPackStoreError, match="basename"):
+        reloaded.associate(first, "Pack A", "../invented.bin")
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("version", (1, 2, 3))
+def test_legacy_store_keeps_unknown_filenames_unknown(tmp_path, version):
+    path = tmp_path / "packs.json"
+    fingerprint = "c" * 64
+    payload = {
+        "version": version,
+        "pack_ids": ["Legacy"],
+        "log_associations": {
+            fingerprint: {"state": "tracked", "pack_id": "Legacy"},
+        },
+    }
+    if version >= 2:
+        payload["archived_pack_ids"] = []
+    if version >= 3:
+        payload["retained_history_owners"] = {}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    store = BatteryPackStore(path)
+    assert store.known_filenames_for(fingerprint) == ()
+    assert store.associated_fingerprints("Legacy") == (fingerprint,)
+    store.archive_pack("Legacy")
+    reloaded = BatteryPackStore(path)
+    assert reloaded.known_filenames_for(fingerprint) == ()
+    assert reloaded.association_for(fingerprint).pack_id == "Legacy"
+
+
 def test_version_one_store_loads_and_archiving_retains_associations(tmp_path):
     path = tmp_path / "packs.json"
     fingerprint = "a" * 64
@@ -81,22 +125,22 @@ def test_version_one_store_loads_and_archiving_retains_associations(tmp_path):
     assert BatteryPackStore(path).active_pack_ids == ("Pack 1",)
 
 
-def test_delete_requires_no_associations_or_historical_observations(tmp_path):
+def test_delete_clears_associations_and_historical_observations(tmp_path):
     path = tmp_path / "packs.json"
     fingerprint = "a" * 64
     store = BatteryPackStore(path)
     store.create_and_associate(fingerprint, "Pack 1")
-    history = SimpleNamespace(observations=())
-    with pytest.raises(BatteryPackStoreError, match="log associations"):
-        store.delete_pack("Pack 1", history)
-    store.mark_not_tracked(fingerprint)
-    history.observations = (SimpleNamespace(pack_id_at_ingest="Pack 1",
-                                            source_sha256=fingerprint),)
-    with pytest.raises(BatteryPackStoreError, match="historical observations"):
-        store.delete_pack("Pack 1", history)
-    assert BatteryPackStore(path).pack_ids == ("Pack 1",)
-    store.delete_pack("Pack 1", SimpleNamespace(observations=()))
+    from core.battery_pack_history import BatteryPackHistoryStore
+    from test_battery_pack_history import _observation
+
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([_observation(source_sha256=fingerprint, pack_id="Pack 1")])
+    plan = store.delete_pack("Pack 1", history)
+    assert plan.log_fingerprints == (fingerprint,)
+    assert len(plan.observation_ids) == 1
     assert BatteryPackStore(path).pack_ids == ()
+    assert BatteryPackStore(path).association_for(fingerprint).state is LogPackState.NOT_TRACKED
+    assert BatteryPackHistoryStore(history.path).observations == ()
 
 
 def test_explicit_not_tracked_state_round_trips_without_synthetic_pack(tmp_path):

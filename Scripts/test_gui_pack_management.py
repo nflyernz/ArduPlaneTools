@@ -1,20 +1,19 @@
 """Focused tests for GUI Battery Pack Management workflows."""
 
+import json
 import os
-from pathlib import Path
 import threading
 import time
 from types import SimpleNamespace
 
 import pytest
 
-
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QPoint, QTimer
-from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
-
+import core.battery_pack_store as pack_store_module
+from analyses.battery import pack_performance_observations
+from core.battery_pack_history import BatteryPackHistoryStore
 from core.battery_pack_store import (
     BatteryPackStore,
     BatteryPackStoreError,
@@ -22,14 +21,15 @@ from core.battery_pack_store import (
     LogPackState,
     fingerprint_log,
 )
-from core.battery_pack_history import BatteryPackHistoryStore
-import core.battery_pack_store as pack_store_module
 from gui import MainWindow
 from gui.pack_management_adapter import (
     BatteryPackManagementService,
     PackManagementState,
     StalePackManagementStateError,
 )
+from gui.pack_performance_adapter import BatteryPackPerformanceService
+from PySide6.QtCore import QPoint, QTimer
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
 from test_battery_pack_history import _observation
 
 
@@ -56,11 +56,11 @@ def test_service_archive_restore_and_delete_survive_restart(tmp_path):
     assert archived.pack_ids == ()
     assert archived.archived_pack_ids == ("Pack 1",)
     assert _service(tmp_path).lookup(log).association.pack_id == "Pack 1"
-    with pytest.raises(BatteryPackStoreError, match="log associations"):
-        service.delete(archived, "Pack 1")
-    restored = _service(tmp_path).restore(archived, "Pack 1").state
-    assert restored.pack_ids == ("Pack 1",)
-    assert restored.archived_pack_ids == ()
+    preview = service.preview_delete(archived, "Pack 1")
+    assert len(preview.plan.log_fingerprints) == 1
+    deleted = service.delete(archived, "Pack 1", preview).state
+    assert deleted.pack_ids == deleted.archived_pack_ids == ()
+    assert _service(tmp_path).lookup(log).association.state is LogPackState.NOT_TRACKED
 
 
 def _deletion_cases(tmp_path):
@@ -85,7 +85,7 @@ def _deletion_cases(tmp_path):
     return _service(tmp_path), _bin(tmp_path, "selected.bin", b"selected")
 
 
-def test_unused_pack_state_excludes_associations_and_history(tmp_path):
+def test_delete_preserves_unrelated_packs_and_history(tmp_path):
     service, selected = _deletion_cases(tmp_path)
     state = service.lookup(selected)
     assert state.pack_ids == ("associated", "historical", "unused")
@@ -95,21 +95,22 @@ def test_unused_pack_state_excludes_associations_and_history(tmp_path):
     pack_path = tmp_path / "packs.json"
     history_path = tmp_path / "history.json"
     before = pack_path.read_bytes(), history_path.read_bytes()
-    for protected in ("associated", "historical"):
-        with pytest.raises(BatteryPackStoreError, match="cannot be deleted"):
-            service.delete(state, protected)
-        assert (pack_path.read_bytes(), history_path.read_bytes()) == before
-
-    service.delete(state, "unused")
-    service.delete(state, "archived")
+    preview = service.preview_delete(state, "associated")
+    assert len(preview.plan.log_fingerprints) == 1
+    assert preview.plan.observation_ids == ()
+    service.delete(state, "associated", preview)
+    service.delete(service.lookup(selected), "historical")
+    service.delete(service.lookup(selected), "unused")
+    service.delete(service.lookup(selected), "archived")
     reloaded = _service(tmp_path).lookup(selected)
     assert reloaded.unused_pack_ids == ()
-    assert reloaded.pack_ids == ("associated", "historical")
+    assert reloaded.pack_ids == ()
     assert reloaded.archived_pack_ids == ()
-    assert history_path.read_bytes() == before[1]
+    assert BatteryPackHistoryStore(history_path).observations == ()
+    assert pack_path.read_bytes() != before[0]
 
 
-def test_delete_dropdown_only_offers_eligible_packs(tmp_path, qt_app, make_window):
+def test_delete_dropdown_offers_all_packs(tmp_path, qt_app, make_window):
     service, selected = _deletion_cases(tmp_path)
     window = make_window(service)
     window.show_analysis_tab("Battery Pack Management")
@@ -118,13 +119,521 @@ def test_delete_dropdown_only_offers_eligible_packs(tmp_path, qt_app, make_windo
 
     combo = window.pack_delete_combo
     assert [combo.itemText(index) for index in range(1, combo.count())] == [
-        "unused", "archived"
+        "associated", "historical", "unused", "archived"
     ]
     assert not window.pack_delete_button.isEnabled()
     combo.setCurrentText("archived")
     assert window.pack_delete_button.isEnabled()
     combo.setCurrentIndex(0)
     assert not window.pack_delete_button.isEnabled()
+
+
+def test_pack_lifecycle_actions_work_without_selected_bin(
+    tmp_path, qt_app, make_window, monkeypatch,
+):
+    seed = _bin(tmp_path, "seed.bin")
+    service = _service(tmp_path)
+    service.create_and_assign(service.lookup(seed), "Pack A")
+    window = make_window(service)
+    monkeypatch.setattr(window, "_confirm_pack_action", lambda *_args: True)
+    monkeypatch.setattr(window, "_confirm_pack_deletion", lambda _preview: True)
+    window.show_analysis_tab("Battery Pack Management")
+    assert window.selected_log is None
+    assert window.pack_rename_combo.findText("Pack A") >= 0
+    assert not window.pack_assign_button.isEnabled()
+    assert not window.pack_record_history_button.isEnabled()
+
+    window.pack_archive_combo.setCurrentText("Pack A")
+    window.pack_archive_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None
+                and window.pack_restore_combo.findText("Pack A") >= 0)
+    window.pack_restore_combo.setCurrentText("Pack A")
+    window.pack_restore_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None
+                and window.pack_archive_combo.findText("Pack A") >= 0)
+    window.pack_rename_combo.setCurrentText("Pack A")
+    window.pack_rename_edit.setText("Pack B")
+    window.pack_rename_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None
+                and window.pack_delete_combo.findText("Pack B") >= 0)
+    window.pack_delete_combo.setCurrentText("Pack B")
+    assert "seed.bin" in window.pack_delete_preview_text.toPlainText()
+    window.pack_delete_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None
+                and window.pack_delete_combo.findText("Pack B") == -1)
+    assert BatteryPackStore(tmp_path / "packs.json").association_for(
+        fingerprint_log(seed)
+    ).state is LogPackState.NOT_TRACKED
+    assert window.selected_log is None
+    assert not window.pack_assign_button.isEnabled()
+    assert not window.pack_record_history_button.isEnabled()
+
+
+def test_delete_preview_lists_multiple_logs_and_confirmation_names(
+    tmp_path, qt_app, make_window,
+):
+    first = _bin(tmp_path, "first.bin", b"first")
+    second = _bin(tmp_path, "second.bin", b"second")
+    service = _service(tmp_path)
+    service.create_and_assign(service.lookup(first), "Pack A")
+    service.assign_existing(service.lookup(second), "Pack A")
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([
+        _observation(source_sha256=fingerprint_log(first), pack_id="Pack A"),
+        _observation(source_sha256=fingerprint_log(second), pack_id="Pack A",
+                     battery_instance=1),
+    ])
+    window = make_window(service)
+    window.show_analysis_tab("Battery Pack Management")
+    window.pack_delete_combo.setCurrentText("Pack A")
+    preview_text = window.pack_delete_preview_text.toPlainText()
+    assert "Associated BIN logs: 2" in preview_text
+    assert "first.bin" in preview_text
+    assert "second.bin" in preview_text
+    assert "Battery history observations to delete: 2" in preview_text
+    seen = []
+
+    def cancel():
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, QMessageBox)
+        seen.append(dialog.text())
+        next(button for button in dialog.buttons() if button.text() == "Cancel").click()
+
+    QTimer.singleShot(25, cancel)
+    window.pack_delete_button.click()
+    assert "first.bin" in seen[0]
+    assert "second.bin" in seen[0]
+    assert "2 battery history observations" in seen[0]
+    assert BatteryPackStore(tmp_path / "packs.json").pack_ids == ("Pack A",)
+
+
+def test_legacy_delete_preview_labels_unknown_filename(tmp_path, make_window):
+    fingerprint = "d" * 64
+    path = tmp_path / "packs.json"
+    path.write_text(json.dumps({
+        "version": 3, "pack_ids": ["Legacy"], "archived_pack_ids": [],
+        "retained_history_owners": {},
+        "log_associations": {
+            fingerprint: {"state": "tracked", "pack_id": "Legacy"},
+        },
+    }), encoding="utf-8")
+    BatteryPackHistoryStore(tmp_path / "history.json").add_observations([
+        _observation(source_sha256="e" * 64, source_filename="lookalike.bin",
+                     pack_id="Different"),
+    ])
+    window = make_window(_service(tmp_path))
+    window.show_analysis_tab("Battery Pack Management")
+    window.pack_delete_combo.setCurrentText("Legacy")
+    preview_text = window.pack_delete_preview_text.toPlainText()
+    assert "Unknown filename — SHA-256 dddddddddddddddd…" in preview_text
+    assert "Associated BIN logs: 1" in preview_text
+    assert "Battery history observations to delete: 0" in preview_text
+    assert "lookalike.bin" not in preview_text
+
+
+def test_stale_pack_selection_blocks_delete_and_selection_clears_error(
+    tmp_path, make_window, monkeypatch,
+):
+    first = _bin(tmp_path, "first.bin", b"first")
+    second = _bin(tmp_path, "second.bin", b"second")
+    service = _service(tmp_path)
+    service.create_and_assign(service.lookup(first), "Pack A")
+    service.create_and_assign(service.lookup(second), "Pack B")
+    window = make_window(service)
+    window.show_analysis_tab("Battery Pack Management")
+    window.pack_delete_combo.setCurrentText("Pack A")
+    store = BatteryPackStore(tmp_path / "packs.json")
+    store.associate(fingerprint_log(second), "Pack A", second.name)
+    before = store.path.read_bytes()
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning",
+                        lambda _parent, _title, message: warnings.append(message))
+    window.pack_delete_button.click()
+    assert "refresh and try again" in warnings[0]
+    assert store.path.read_bytes() == before
+    window.pack_delete_combo.setCurrentText("Pack B")
+    assert not window.report_for("Battery Pack Management").toPlainText().startswith(
+        "Battery Pack Management Error"
+    )
+    assert "refresh and try again" in window.pack_delete_preview_text.toPlainText()
+
+
+def test_delete_preview_and_cancel_leave_both_stores_unchanged(
+    tmp_path, qt_app, make_window, monkeypatch,
+):
+    selected = _bin(tmp_path, "flight.bin")
+    service = _service(tmp_path)
+    assigned = service.create_and_assign(service.lookup(selected), "Mistake").state
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([
+        _observation(source_sha256=assigned.fingerprint, pack_id="Mistake"),
+        _observation(source_sha256=assigned.fingerprint, pack_id="Mistake", battery_instance=1),
+    ])
+    before = ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes(),
+              selected.read_bytes())
+    window = make_window(service)
+    window.show_analysis_tab("Battery Pack Management")
+    window.set_selected_log(selected)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    window.pack_delete_combo.setCurrentText("Mistake")
+    observed = []
+
+    def cancel(preview):
+        observed.append(preview)
+        return False
+
+    monkeypatch.setattr(window, "_confirm_pack_deletion", cancel)
+    window.pack_delete_button.click()
+    assert len(observed[0].plan.log_fingerprints) == 1
+    assert len(observed[0].plan.observation_ids) == 2
+    assert window._analysis_thread is None
+    assert ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes(),
+            selected.read_bytes()) == before
+
+
+def test_delete_rejects_stale_preview_and_keeps_persistence(tmp_path):
+    selected = _bin(tmp_path, "selected.bin")
+    service = _service(tmp_path)
+    state = service.create_and_assign(service.lookup(selected), "Mistake").state
+    preview = service.preview_delete(state, "Mistake")
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([_observation(source_sha256=state.fingerprint, pack_id="Mistake")])
+    before = ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes())
+    with pytest.raises(StalePackManagementStateError, match="changed after confirmation"):
+        service.delete(state, "Mistake", preview)
+    assert ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes()) == before
+
+
+def test_delete_rolls_history_back_if_pack_write_fails(tmp_path, monkeypatch):
+    selected = _bin(tmp_path, "selected.bin")
+    service = _service(tmp_path)
+    state = service.create_and_assign(service.lookup(selected), "Mistake").state
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([_observation(source_sha256=state.fingerprint, pack_id="Mistake")])
+    before = ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes())
+    original_save = BatteryPackStore._save
+
+    def fail_deletion(self, pack_ids, associations, archived_pack_ids=None,
+                      history_owners=None):
+        if "Mistake" not in pack_ids:
+            raise OSError("simulated pack write failure")
+        return original_save(self, pack_ids, associations, archived_pack_ids,
+                             history_owners)
+
+    monkeypatch.setattr(BatteryPackStore, "_save", fail_deletion)
+    with pytest.raises(OSError, match="simulated pack write failure"):
+        service.delete(state, "Mistake", service.preview_delete(state, "Mistake"))
+    assert ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes()) == before
+
+
+def test_delete_rolls_both_files_back_after_late_pack_failure(tmp_path, monkeypatch):
+    selected = _bin(tmp_path, "selected.bin")
+    service = _service(tmp_path)
+    state = service.create_and_assign(service.lookup(selected), "Mistake").state
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([_observation(source_sha256=state.fingerprint, pack_id="Mistake")])
+    before = ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes())
+    original_save = BatteryPackStore._save
+
+    def fail_after_write(self, pack_ids, associations, archived_pack_ids=None,
+                         history_owners=None):
+        original_save(self, pack_ids, associations, archived_pack_ids,
+                      history_owners)
+        if "Mistake" not in pack_ids:
+            raise OSError("simulated failure after pack replace")
+
+    monkeypatch.setattr(BatteryPackStore, "_save", fail_after_write)
+    with pytest.raises(OSError, match="after pack replace"):
+        service.delete(state, "Mistake", service.preview_delete(state, "Mistake"))
+    assert ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes()) == before
+
+
+def test_reassigned_log_history_deletes_only_original_owner(tmp_path):
+    selected = _bin(tmp_path, "selected.bin")
+    other = _bin(tmp_path, "other.bin")
+    service = _service(tmp_path)
+    state = service.create_and_assign(service.lookup(selected), "Old").state
+    service.create_and_assign(service.lookup(other), "New")
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([_observation(source_sha256=state.fingerprint, pack_id="Old")])
+    BatteryPackStore(tmp_path / "packs.json").associate(state.fingerprint, "New")
+    state = service.lookup(selected)
+    preview = service.preview_delete(state, "Old")
+    assert len(preview.plan.observation_ids) == 1
+    service.delete(state, "Old", preview)
+    assert BatteryPackHistoryStore(history.path).observations == ()
+    assert BatteryPackStore(tmp_path / "packs.json").association_for(
+        state.fingerprint
+    ).pack_id == "New"
+
+
+def test_delete_preserves_history_recorded_after_log_reassignment(tmp_path):
+    old_log = _bin(tmp_path, "old.bin", b"old")
+    new_log = _bin(tmp_path, "new.bin", b"new")
+    service = _service(tmp_path)
+    service.create_and_assign(service.lookup(old_log), "Old")
+    service.create_and_assign(service.lookup(new_log), "New")
+    store = BatteryPackStore(tmp_path / "packs.json")
+    store.associate(fingerprint_log(old_log), "New")
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    observation = _observation(source_sha256=fingerprint_log(old_log), pack_id="New")
+    history.add_observations([observation])
+    state = service.lookup(old_log)
+    preview = service.preview_delete(state, "Old")
+    assert preview.plan.log_fingerprints == preview.plan.observation_ids == ()
+    service.delete(state, "Old", preview)
+    assert BatteryPackHistoryStore(history.path).observations == (observation,)
+    assert BatteryPackStore(store.path).association_for(fingerprint_log(old_log)).pack_id == "New"
+
+
+def test_mixed_history_delete_retains_other_owner_and_report(tmp_path):
+    selected = _bin(tmp_path, "packaging.bin", b"packaging")
+    unrelated = _bin(tmp_path, "unrelated.bin", b"unrelated")
+    service = _service(tmp_path)
+    state = service.create_and_assign(service.lookup(selected), "Packaging Test").state
+    service.create_and_assign(service.lookup(unrelated), "Original")
+    state = service.lookup(selected)
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    selected_observation = _observation(
+        source_sha256=state.fingerprint, source_filename="packaging.bin",
+        pack_id="Packaging Test",
+    )
+    retained_observation = _observation(
+        source_sha256=state.fingerprint, source_filename="packaging.bin",
+        pack_id="Original", battery_instance=1,
+    )
+    unrelated_observation = _observation(
+        source_sha256=fingerprint_log(unrelated), source_filename="unrelated.bin",
+        pack_id="Original",
+    )
+    history.add_observations([
+        selected_observation, retained_observation, unrelated_observation,
+    ])
+    preview = service.preview_delete(state, "Packaging Test")
+    assert preview.plan.log_fingerprints == (state.fingerprint,)
+    assert preview.plan.observation_ids == (selected_observation.observation_id,)
+    assert preview.plan.retained_history_owners == (
+        (retained_observation.observation_id, "Original"),
+    )
+    service.delete(state, "Packaging Test", preview)
+
+    store = BatteryPackStore(tmp_path / "packs.json")
+    reloaded_history = BatteryPackHistoryStore(history.path)
+    assert store.association_for(state.fingerprint).state is LogPackState.NOT_TRACKED
+    assert store.association_for(fingerprint_log(unrelated)).pack_id == "Original"
+    assert set(reloaded_history.observations) == {
+        retained_observation, unrelated_observation,
+    }
+    assert set(pack_performance_observations(store, reloaded_history, "Original")) == {
+        retained_observation, unrelated_observation,
+    }
+    report = BatteryPackPerformanceService(
+        pack_store_path=store.path, history_store_path=history.path,
+    ).report("Original").text
+    assert "packaging.bin" in report
+    assert "unrelated.bin" in report
+    store.rename_pack("Original", "Renamed")
+    renamed_store = BatteryPackStore(store.path)
+    assert renamed_store.retained_history_owner_for(
+        retained_observation.observation_id
+    ) == "Renamed"
+    assert "packaging.bin" in BatteryPackPerformanceService(
+        pack_store_path=store.path, history_store_path=history.path,
+    ).report("Renamed").text
+    assert selected.read_bytes() == b"packaging"
+    assert unrelated.read_bytes() == b"unrelated"
+
+
+def test_mixed_history_rollback_restores_both_files(tmp_path, monkeypatch):
+    selected = _bin(tmp_path, "selected.bin")
+    other = _bin(tmp_path, "other.bin", b"other")
+    service = _service(tmp_path)
+    state = service.create_and_assign(service.lookup(selected), "Packaging Test").state
+    service.create_and_assign(service.lookup(other), "Original")
+    state = service.lookup(selected)
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([
+        _observation(source_sha256=state.fingerprint, pack_id="Packaging Test"),
+        _observation(source_sha256=state.fingerprint, pack_id="Original", battery_instance=1),
+    ])
+    preview = service.preview_delete(state, "Packaging Test")
+    before = ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes())
+    original_save = BatteryPackStore._save
+
+    def fail_after_write(self, *args):
+        original_save(self, *args)
+        if "Packaging Test" not in args[0]:
+            raise OSError("late persistence failure")
+
+    monkeypatch.setattr(BatteryPackStore, "_save", fail_after_write)
+    with pytest.raises(OSError, match="late persistence failure"):
+        service.delete(state, "Packaging Test", preview)
+    assert ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes()) == before
+
+
+def test_history_write_failure_leaves_pack_and_history_unchanged(
+    tmp_path, monkeypatch,
+):
+    selected = _bin(tmp_path, "selected.bin")
+    service = _service(tmp_path)
+    state = service.create_and_assign(service.lookup(selected), "Packaging Test").state
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([
+        _observation(source_sha256=state.fingerprint, pack_id="Packaging Test"),
+    ])
+    before = ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes())
+    original_save = BatteryPackHistoryStore._save
+
+    def fail_after_write(self, observations):
+        original_save(self, observations)
+        raise OSError("late history persistence failure")
+
+    monkeypatch.setattr(BatteryPackHistoryStore, "_save", fail_after_write)
+    with pytest.raises(OSError, match="late history persistence failure"):
+        service.delete(state, "Packaging Test", service.preview_delete(state, "Packaging Test"))
+    assert ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes()) == before
+
+
+def test_missing_historical_owner_blocks_with_actionable_reason(tmp_path):
+    selected = _bin(tmp_path, "selected.bin")
+    service = _service(tmp_path)
+    state = service.create_and_assign(service.lookup(selected), "Packaging Test").state
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([
+        _observation(source_sha256=state.fingerprint, pack_id="Vanished"),
+    ])
+    before = ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes())
+    with pytest.raises(BatteryPackStoreError, match="Restore that Pack ID or resolve"):
+        service.preview_delete(state, "Packaging Test")
+    assert ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes()) == before
+
+
+def test_delete_preview_error_is_shown_in_message_box(
+    tmp_path, qt_app, make_window, monkeypatch,
+):
+    selected = _bin(tmp_path, "selected.bin")
+    service = _service(tmp_path)
+    state = service.create_and_assign(service.lookup(selected), "Packaging Test").state
+    BatteryPackHistoryStore(tmp_path / "history.json").add_observations([
+        _observation(source_sha256=state.fingerprint, pack_id="Vanished"),
+    ])
+    window = make_window(service)
+    window.show_analysis_tab("Battery Pack Management")
+    window.set_selected_log(selected)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    window.pack_delete_combo.setCurrentText("Packaging Test")
+    assert "Vanished" in window.pack_delete_preview_text.toPlainText()
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "warning",
+        lambda _parent, title, message: warnings.append((title, message)),
+    )
+    window.pack_delete_button.click()
+    assert warnings[0][0] == "Delete Pack ID failed"
+    assert "Restore that Pack ID" in warnings[0][1]
+
+
+def test_delete_worker_error_is_shown_in_message_box(
+    tmp_path, qt_app, make_window, monkeypatch,
+):
+    selected = _bin(tmp_path, "selected.bin")
+    service = _service(tmp_path)
+    service.create_and_assign(service.lookup(selected), "Packaging Test")
+    before = (tmp_path / "packs.json").read_bytes()
+    window = make_window(service)
+    window.show_analysis_tab("Battery Pack Management")
+    window.set_selected_log(selected)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    window.pack_delete_combo.setCurrentText("Packaging Test")
+    monkeypatch.setattr(window, "_confirm_pack_deletion", lambda _preview: True)
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox, "warning",
+        lambda _parent, title, message: warnings.append((title, message)),
+    )
+
+    def fail_delete(_state, _pack_id, _preview):
+        raise OSError("simulated deletion write failure")
+
+    monkeypatch.setattr(service, "delete", fail_delete)
+    window.pack_delete_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert warnings == [
+        ("Delete Pack ID failed", "simulated deletion write failure"),
+    ]
+    assert "simulated deletion write failure" in window.report_for(
+        "Battery Pack Management"
+    ).toPlainText()
+    assert (tmp_path / "packs.json").read_bytes() == before
+
+
+def test_deleted_log_can_be_reassigned_and_history_recorded_again(tmp_path):
+    selected = _bin(tmp_path, "selected.bin")
+    service = _service(tmp_path)
+    state = service.create_and_assign(service.lookup(selected), "Mistake").state
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([_observation(source_sha256=state.fingerprint, pack_id="Mistake")])
+    service.delete(state, "Mistake", service.preview_delete(state, "Mistake"))
+    state = service.create_and_assign(service.lookup(selected), "Correct").state
+    history = BatteryPackHistoryStore(history.path)
+    assert history.add_observations([
+        _observation(source_sha256=state.fingerprint, pack_id="Correct")
+    ]) == 1
+    assert history.observations[0].pack_id_at_ingest == "Correct"
+    assert selected.read_bytes() == b"BIN evidence"
+
+
+def test_real_delete_dialog_shows_impact_and_refreshes_gui(
+    tmp_path, qt_app, make_window,
+):
+    selected = _bin(tmp_path, "selected.bin")
+    service = _service(tmp_path)
+    state = service.create_and_assign(service.lookup(selected), "Mistake").state
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    history.add_observations([_observation(source_sha256=state.fingerprint, pack_id="Mistake")])
+    window = make_window(service)
+    window.show_analysis_tab("Battery Pack Management")
+    window.set_selected_log(selected)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    window.pack_delete_combo.setCurrentText("Mistake")
+    seen = []
+
+    def answer():
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, QMessageBox)
+        seen.append((dialog.windowTitle(), dialog.text()))
+        next(button for button in dialog.buttons() if button.text() == "Delete Pack ID").click()
+
+    QTimer.singleShot(25, answer)
+    window.pack_delete_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert "1 associated BIN log" in seen[0][1]
+    assert "1 battery history observation" in seen[0][1]
+    assert "original BIN files untouched" in seen[0][1]
+    assert window.pack_association_value.text() == "Not tracked"
+    assert window.pack_delete_combo.findText("Mistake") == -1
+    assert "Deleted Pack ID Mistake" in window.report_for(
+        "Battery Pack Management"
+    ).toPlainText()
+    assert BatteryPackHistoryStore(history.path).observations == ()
+
+
+def test_deleting_empty_archived_pack_preserves_other_pack(tmp_path):
+    first = _bin(tmp_path, "first.bin", b"first")
+    second = _bin(tmp_path, "second.bin", b"second")
+    service = _service(tmp_path)
+    service.create_and_assign(service.lookup(first), "Archived")
+    service.create_and_assign(service.lookup(second), "Keep")
+    store = BatteryPackStore(tmp_path / "packs.json")
+    store.mark_not_tracked(fingerprint_log(first))
+    store.archive_pack("Archived")
+    state = service.lookup(second)
+    preview = service.preview_delete(state, "Archived")
+    assert preview.plan.log_fingerprints == preview.plan.observation_ids == ()
+    service.delete(state, "Archived", preview)
+    reloaded = BatteryPackStore(tmp_path / "packs.json")
+    assert reloaded.pack_ids == ("Keep",)
+    assert reloaded.association_for(fingerprint_log(second)).pack_id == "Keep"
 
 
 def _wait_until(qt_app, predicate, timeout=3.0):
@@ -194,7 +703,7 @@ def test_management_starts_read_only_without_packs_or_selected_bin(
     assert not window.pack_record_history_button.isEnabled()
     assert "Manage pack identities and log associations." in page_text
     assert (
-        "Select a BIN log above to view or manage its pack association."
+        "Manage Pack IDs without a BIN. Select a BIN above to assign a pack or record history."
         in page_text
     )
     assert "Pack associations apply to the entire BIN log." in page_text
@@ -209,7 +718,7 @@ def test_management_starts_read_only_without_packs_or_selected_bin(
     )
     assert "Explicitly record supported AUTO takeoff evidence" not in page_text
     assert window.report_for("Battery Pack Management").toPlainText() == (
-        "No management operation run yet."
+        "Persistent association loaded."
     )
     assert not (tmp_path / "packs.json").exists()
     assert not (tmp_path / "history.json").exists()
@@ -420,7 +929,7 @@ def test_confirmation_cancellation_leaves_persistent_bytes_unchanged(
     assert "Current association: Unseen" in confirmation_text
     assert "Proposed Pack ID: Pack A" in confirmation_text
     assert "New Pack ID: Pack B" in confirmation_text
-    assert "every associated BIN identity" in confirmation_text
+    assert "every saved BIN association" in confirmation_text
     assert "Source BIN: seed.bin" in confirmation_text
     assert "Tracked Pack ID: Pack A" in confirmation_text
 
@@ -548,7 +1057,7 @@ def test_stale_association_is_rejected_before_mutation(tmp_path):
     store.associate(state.fingerprint, "Pack B")
     before = (tmp_path / "packs.json").read_bytes()
 
-    with pytest.raises(StalePackManagementStateError, match="association changed"):
+    with pytest.raises(StalePackManagementStateError, match="associations changed"):
         service.rename(state, "Pack A", "Pack C")
 
     assert (tmp_path / "packs.json").read_bytes() == before

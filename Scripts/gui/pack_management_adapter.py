@@ -1,5 +1,6 @@
 """Qt-independent Battery Pack Management operations."""
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from core.battery_pack_store import (
     BatteryPackStore,
     LogPackAssociation,
     LogPackState,
+    PackDeletionPlan,
     fingerprint_log,
 )
 from core.config import Config
@@ -25,14 +27,15 @@ class StalePackManagementStateError(RuntimeError):
 
 @dataclass(frozen=True)
 class PackManagementState:
-    """Read-only persistent identity state for one selected BIN."""
+    """Read-only pack state, optionally including one selected BIN."""
 
-    log_path: Path
-    fingerprint: str
+    log_path: Path | None
+    fingerprint: str | None
     association: LogPackAssociation
     pack_ids: tuple[str, ...]
     archived_pack_ids: tuple[str, ...] = ()
     unused_pack_ids: tuple[str, ...] = ()
+    pack_revision: str = ""
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,25 @@ class PackManagementResult:
     changed: bool
     observations_added: int | None = None
     selected_pack_id: str | None = None
+
+
+@dataclass(frozen=True)
+class PackDeletionPreview:
+    """Confirmed deletion scope and exact backing-store revisions."""
+
+    plan: PackDeletionPlan
+    pack_revision: str
+    history_revision: str
+    associated_logs: tuple["AssociatedLogDisplay", ...] = ()
+
+
+@dataclass(frozen=True)
+class AssociatedLogDisplay:
+    """Display evidence for one authoritative log fingerprint."""
+
+    fingerprint: str
+    filenames: tuple[str, ...]
+    observation_count: int
 
 
 class BatteryPackManagementService:
@@ -75,6 +97,10 @@ class BatteryPackManagementService:
         store = self._pack_store()
         return self._state(path, fingerprint, store)
 
+    def lookup_packs(self) -> PackManagementState:
+        """Load Pack IDs without selecting or hashing a BIN."""
+        return self._state(None, None, self._pack_store())
+
     def assign_existing(
         self,
         expected: PackManagementState,
@@ -91,7 +117,7 @@ class BatteryPackManagementService:
                 f"Pack assignment is already {pack_id.strip()}.",
                 False,
             )
-        store.associate(fingerprint, pack_id)
+        store.associate(fingerprint, pack_id, path.name)
         reloaded = self._pack_store()
         return PackManagementResult(
             self._state(path, fingerprint, reloaded),
@@ -106,7 +132,7 @@ class BatteryPackManagementService:
     ) -> PackManagementResult:
         """Atomically create a Pack ID and assign the confirmed BIN."""
         path, fingerprint, store = self._validated_context(expected)
-        store.create_and_associate(fingerprint, pack_id)
+        store.create_and_associate(fingerprint, pack_id, path.name)
         normalized = pack_id.strip()
         reloaded = self._pack_store()
         return PackManagementResult(
@@ -122,10 +148,10 @@ class BatteryPackManagementService:
         new_pack_id: str,
     ) -> PackManagementResult:
         """Rename a Pack ID globally after validating the confirmed BIN state."""
-        path, fingerprint, store = self._validated_context(expected)
+        store = self._validated_pack_context(expected)
         if old_pack_id.strip() == new_pack_id.strip():
             return PackManagementResult(
-                self._state(path, fingerprint, store),
+                self._state(expected.log_path, expected.fingerprint, store),
                 "Pack ID is unchanged.",
                 False,
             )
@@ -134,7 +160,7 @@ class BatteryPackManagementService:
         new_id = new_pack_id.strip()
         reloaded = self._pack_store()
         return PackManagementResult(
-            self._state(path, fingerprint, reloaded),
+            self._state(expected.log_path, expected.fingerprint, reloaded),
             f"Renamed Pack ID {old_id} to {new_id} for all associated BINs.",
             True,
             selected_pack_id=new_id,
@@ -176,31 +202,76 @@ class BatteryPackManagementService:
 
     def archive(self, expected: PackManagementState, pack_id: str) -> PackManagementResult:
         """Retire a pack from new assignments without changing its evidence."""
-        path, fingerprint, store = self._validated_context(expected)
+        store = self._validated_pack_context(expected)
         store.archive_pack(pack_id)
-        return PackManagementResult(self._state(path, fingerprint, self._pack_store()),
+        return PackManagementResult(self._state(expected.log_path, expected.fingerprint, self._pack_store()),
                                     f"Archived Pack ID {pack_id}.", True)
 
     def restore(self, expected: PackManagementState, pack_id: str) -> PackManagementResult:
         """Return an archived pack to normal selection."""
-        path, fingerprint, store = self._validated_context(expected)
+        store = self._validated_pack_context(expected)
         store.restore_pack(pack_id)
-        return PackManagementResult(self._state(path, fingerprint, self._pack_store()),
+        return PackManagementResult(self._state(expected.log_path, expected.fingerprint, self._pack_store()),
                                     f"Restored Pack ID {pack_id}.", True)
 
-    def delete(self, expected: PackManagementState, pack_id: str) -> PackManagementResult:
-        """Permanently remove a pack only after checking retained history."""
-        path, fingerprint, store = self._validated_context(expected)
+    def preview_delete(self, expected: PackManagementState, pack_id: str) -> PackDeletionPreview:
+        """Read the impact of deletion without changing either store."""
+        store = self._validated_pack_context(expected)
         history = self._history_store_factory(self._history_store_path)
-        store.delete_pack(pack_id, history)
-        return PackManagementResult(self._state(path, fingerprint, self._pack_store()),
-                                    f"Deleted unused Pack ID {pack_id}.", True)
+        plan = store.deletion_plan(pack_id, history)
+        associated_logs = []
+        for fingerprint in plan.log_fingerprints:
+            names = list(store.known_filenames_for(fingerprint))
+            for observation in history.observations:
+                name = observation.source_filename
+                if (observation.source_sha256 == fingerprint and name
+                        and name == Path(name).name and "\\" not in name
+                        and name not in names):
+                    names.append(name)
+            associated_logs.append(AssociatedLogDisplay(
+                fingerprint, tuple(names),
+                sum(observation.source_sha256 == fingerprint
+                    and observation.observation_id in plan.observation_ids
+                    for observation in history.observations),
+            ))
+        return PackDeletionPreview(
+            plan,
+            self._revision(self._pack_store_path),
+            self._revision(self._history_store_path),
+            tuple(associated_logs),
+        )
+
+    def delete(
+        self, expected: PackManagementState, pack_id: str,
+        preview: PackDeletionPreview | None = None,
+    ) -> PackManagementResult:
+        """Permanently remove exactly the confirmed pack and history."""
+        current = self.preview_delete(expected, pack_id)
+        if preview is not None and current != preview:
+            raise StalePackManagementStateError(
+                "Pack associations or history changed after confirmation; refresh and try again."
+            )
+        store = self._validated_pack_context(expected)
+        history = self._history_store_factory(self._history_store_path)
+        plan = store.delete_pack(pack_id, history, current.plan)
+        return PackManagementResult(self._state(expected.log_path, expected.fingerprint, self._pack_store()),
+                                    f"Deleted Pack ID {pack_id}; marked {len(plan.log_fingerprints)} "
+                                    f"BIN logs Not tracked and removed {len(plan.observation_ids)} "
+                                    "history observations.", True)
+
+    @staticmethod
+    def _revision(path: Path) -> str:
+        if not path.exists():
+            return "missing"
+        return hashlib.sha256(path.read_bytes()).hexdigest()
 
     def _validated_context(
         self,
         expected: PackManagementState,
     ) -> tuple[Path, str, BatteryPackStore]:
-        path = Path(expected.log_path).resolve()
+        if expected.log_path is None or expected.fingerprint is None:
+            raise StalePackManagementStateError("Select a BIN log for this action.")
+        path = expected.log_path.resolve()
         fingerprint = fingerprint_log(path)
         if fingerprint != expected.fingerprint:
             raise StalePackManagementStateError(
@@ -213,21 +284,33 @@ class BatteryPackManagementService:
             )
         return path, fingerprint, store
 
+    def _validated_pack_context(self, expected: PackManagementState) -> BatteryPackStore:
+        store = self._pack_store()
+        if (store.active_pack_ids != expected.pack_ids
+                or store.archived_pack_ids != expected.archived_pack_ids
+                or self._revision(self._pack_store_path) != expected.pack_revision):
+            raise StalePackManagementStateError(
+                "Pack IDs or associations changed; refresh and try again."
+            )
+        return store
+
     def _pack_store(self) -> BatteryPackStore:
         return self._pack_store_factory(self._pack_store_path)
 
     def _state(
         self,
-        path: Path,
-        fingerprint: str,
+        path: Path | None,
+        fingerprint: str | None,
         store: BatteryPackStore,
     ) -> PackManagementState:
         history_store = self._history_store_factory(self._history_store_path)
         return PackManagementState(
             log_path=path,
             fingerprint=fingerprint,
-            association=store.association_for(fingerprint),
+            association=(store.association_for(fingerprint) if fingerprint is not None
+                         else LogPackAssociation(LogPackState.UNSEEN)),
             pack_ids=store.active_pack_ids,
             archived_pack_ids=store.archived_pack_ids,
             unused_pack_ids=store.unused_pack_ids(history_store),
+            pack_revision=self._revision(self._pack_store_path),
         )

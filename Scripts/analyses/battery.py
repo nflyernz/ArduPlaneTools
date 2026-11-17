@@ -231,7 +231,7 @@ class BatteryPackManagementPresentation:
             print("2. Change log pack assignment")
             print("3. Archive Pack ID")
             print("4. Restore Pack ID")
-            print("5. Delete unused Pack ID")
+            print("5. Delete Pack ID")
             print("0. Back")
 
             choice = input("\nSelection: ").strip()
@@ -262,10 +262,18 @@ class BatteryPackManagementPresentation:
                     elif choice == "4":
                         store.restore_pack(pack_id)
                     else:
-                        confirmation = input(f"Permanently delete unused Pack ID {pack_id}? (yes/no): ").strip()
+                        history = BatteryPackHistoryStore()
+                        plan = store.deletion_plan(pack_id, history)
+                        confirmation = input(
+                            f"Permanently delete Pack ID {pack_id}, change "
+                            f"{len(plan.log_fingerprints)} associated BIN logs to "
+                            "Not tracked, and delete "
+                            f"{len(plan.observation_ids)} history observations? "
+                            "Original BIN files remain untouched. (yes/no): "
+                        ).strip()
                         if confirmation != "yes":
                             continue
-                        store.delete_pack(pack_id, BatteryPackHistoryStore())
+                        store.delete_pack(pack_id, history, plan)
                 except (BatteryPackStoreError, BatteryPackHistoryError, OSError) as exc:
                     print(exc)
                 continue
@@ -360,7 +368,7 @@ class BatteryPackManagementPresentation:
                     return
 
                 try:
-                    store.associate(fingerprint, pack_id)
+                    store.associate(fingerprint, pack_id, log_path.name)
                 except BatteryPackStoreError as exc:
                     print()
                     print(exc)
@@ -379,7 +387,7 @@ class BatteryPackManagementPresentation:
                 pack_id = input("\nNew Pack ID: ").strip()
 
                 try:
-                    store.create_and_associate(fingerprint, pack_id)
+                    store.create_and_associate(fingerprint, pack_id, log_path.name)
                 except BatteryPackStoreError as exc:
                     print()
                     print(exc)
@@ -432,6 +440,10 @@ def pack_performance_observations(pack_store, history_store, pack_id):
         if (
             association.state is LogPackState.TRACKED
             and association.pack_id == pack_id
+        ) or (
+            association.state is LogPackState.NOT_TRACKED
+            and pack_store.retained_history_owner_for(observation.observation_id)
+            == pack_id
         ):
             observations.append(observation)
     return sorted(observations, key=pack_performance_observation_sort_key)
@@ -743,7 +755,7 @@ class BatteryAnalysisPresentation:
             return True, association.pack_id
         if association.state is LogPackState.NOT_TRACKED:
             return True, None
-        result = self._select_pack_decision(store, fingerprint)
+        result = self._select_pack_decision(store, fingerprint, log_path)
         if result[0] and result[1] is not None:
             self._resolved_history_context = (fingerprint, result[1])
         return result
@@ -770,7 +782,7 @@ class BatteryAnalysisPresentation:
             print(f"Battery Pack history unavailable: {exc}")
             print("Normal Battery Analysis will continue.")
 
-    def _select_pack_decision(self, store, fingerprint):
+    def _select_pack_decision(self, store, fingerprint, log_path):
         """Prompt once for an unseen source-log fingerprint."""
         while True:
             print()
@@ -798,6 +810,7 @@ class BatteryAnalysisPresentation:
                     lambda selected_pack_id=pack_id: store.associate(
                         fingerprint,
                         selected_pack_id,
+                        log_path.name,
                     )
                 ):
                     return True, pack_id
@@ -805,7 +818,7 @@ class BatteryAnalysisPresentation:
             if choice == ("2" if store.active_pack_ids else "1"):
                 pack_id = input("\nNew Pack ID: ").strip()
                 try:
-                    store.create_and_associate(fingerprint, pack_id)
+                    store.create_and_associate(fingerprint, pack_id, log_path.name)
                 except BatteryPackStoreError as exc:
                     print(exc)
                     continue
@@ -815,7 +828,7 @@ class BatteryAnalysisPresentation:
                 return True, pack_id
             if choice == ("3" if store.active_pack_ids else "2"):
                 if self._save_pack_decision(
-                    lambda: store.mark_not_tracked(fingerprint)
+                    lambda: store.mark_not_tracked(fingerprint, log_path.name)
                 ):
                     return True, None
                 return True, None
