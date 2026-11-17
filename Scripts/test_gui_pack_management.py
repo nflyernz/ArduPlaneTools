@@ -314,11 +314,11 @@ def test_delete_rolls_history_back_if_pack_write_fails(tmp_path, monkeypatch):
     original_save = BatteryPackStore._save
 
     def fail_deletion(self, pack_ids, associations, archived_pack_ids=None,
-                      history_owners=None):
+                      history_owners=None, **kwargs):
         if "Mistake" not in pack_ids:
             raise OSError("simulated pack write failure")
         return original_save(self, pack_ids, associations, archived_pack_ids,
-                             history_owners)
+                             history_owners, **kwargs)
 
     monkeypatch.setattr(BatteryPackStore, "_save", fail_deletion)
     with pytest.raises(OSError, match="simulated pack write failure"):
@@ -336,9 +336,9 @@ def test_delete_rolls_both_files_back_after_late_pack_failure(tmp_path, monkeypa
     original_save = BatteryPackStore._save
 
     def fail_after_write(self, pack_ids, associations, archived_pack_ids=None,
-                         history_owners=None):
+                         history_owners=None, **kwargs):
         original_save(self, pack_ids, associations, archived_pack_ids,
-                      history_owners)
+                      history_owners, **kwargs)
         if "Mistake" not in pack_ids:
             raise OSError("simulated failure after pack replace")
 
@@ -460,8 +460,8 @@ def test_mixed_history_rollback_restores_both_files(tmp_path, monkeypatch):
     before = ((tmp_path / "packs.json").read_bytes(), history.path.read_bytes())
     original_save = BatteryPackStore._save
 
-    def fail_after_write(self, *args):
-        original_save(self, *args)
+    def fail_after_write(self, *args, **kwargs):
+        original_save(self, *args, **kwargs)
         if "Packaging Test" not in args[0]:
             raise OSError("late persistence failure")
 

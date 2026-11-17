@@ -60,6 +60,50 @@ def test_tracked_associations_and_known_pack_ids_round_trip(tmp_path):
     assert reloaded.association_for(second_fingerprint).pack_id == "Pack 1"
 
 
+def test_renamed_pack_inherits_history_through_restart_and_repeated_rename(tmp_path):
+    """Rename lineage changes ownership without rewriting immutable ingest data."""
+    from analyses.battery import pack_performance_observations
+    from core.battery_pack_history import BatteryPackHistoryStore
+    from test_battery_pack_history import _observation
+
+    path = tmp_path / "packs.json"
+    history = BatteryPackHistoryStore(tmp_path / "history.json")
+    source = "a" * 64
+    other = "b" * 64
+    store = BatteryPackStore(path)
+    store.create_and_associate(source, "Pack A")
+    observation = _observation(source_sha256=source, pack_id="Pack A")
+    history.add_observations([observation])
+    original_history = history.path.read_bytes()
+
+    store.rename_pack("Pack A", "Pack B")
+    reloaded = BatteryPackStore(path)
+    assert reloaded.history_owner_for(observation) == "Pack B"
+    assert reloaded.deletion_plan("Pack B", history).observation_ids == (
+        observation.observation_id,
+    )
+    assert pack_performance_observations(reloaded, history, "Pack B") == [observation]
+    assert history.path.read_bytes() == original_history
+    with pytest.raises(BatteryPackStoreError, match="reserved by retained history"):
+        reloaded.create_and_associate(other, "Pack A")
+
+    reloaded.rename_pack("Pack B", "Pack C")
+    restarted = BatteryPackStore(path)
+    assert restarted.history_owner_for(observation) == "Pack C"
+    assert restarted.deletion_plan("Pack C", history).observation_ids == (
+        observation.observation_id,
+    )
+    assert history.path.read_bytes() == original_history
+    assert BatteryPackHistoryStore(history.path).observations[0].pack_id_at_ingest == "Pack A"
+
+    restarted.delete_pack("Pack C", history)
+    assert BatteryPackHistoryStore(history.path).observations == ()
+    final = BatteryPackStore(path)
+    assert final.association_for(source).state is LogPackState.NOT_TRACKED
+    final.create_and_associate(other, "Pack A")
+    assert BatteryPackStore(path).pack_ids == ("Pack A",)
+
+
 def test_filename_metadata_is_display_only_and_keyed_by_fingerprint(tmp_path):
     path = tmp_path / "packs.json"
     first = "a" * 64
@@ -80,7 +124,7 @@ def test_filename_metadata_is_display_only_and_keyed_by_fingerprint(tmp_path):
     assert path.read_bytes() == before
 
 
-@pytest.mark.parametrize("version", (1, 2, 3))
+@pytest.mark.parametrize("version", (1, 2, 3, 4))
 def test_legacy_store_keeps_unknown_filenames_unknown(tmp_path, version):
     path = tmp_path / "packs.json"
     fingerprint = "c" * 64
@@ -95,6 +139,8 @@ def test_legacy_store_keeps_unknown_filenames_unknown(tmp_path, version):
         payload["archived_pack_ids"] = []
     if version >= 3:
         payload["retained_history_owners"] = {}
+    if version >= 4:
+        payload["log_filenames"] = {}
     path.write_text(json.dumps(payload), encoding="utf-8")
     store = BatteryPackStore(path)
     assert store.known_filenames_for(fingerprint) == ()

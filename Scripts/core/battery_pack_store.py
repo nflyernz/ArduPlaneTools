@@ -10,8 +10,9 @@ from enum import Enum
 from pathlib import Path
 
 from .application_data import application_data_directory
+from .battery_pack_history import BatteryPackObservation
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DEFAULT_STORE_PATH = application_data_directory() / "battery_packs.json"
 
 
@@ -67,6 +68,7 @@ class BatteryPackStore:
         self._archived_pack_ids: list[str] = []
         self._associations: dict[str, LogPackAssociation] = {}
         self._history_owners: dict[str, str] = {}
+        self._pack_aliases: dict[str, str] = {}
         self._log_filenames: dict[str, tuple[str, ...]] = {}
         self._load()
 
@@ -103,6 +105,14 @@ class BatteryPackStore:
     def retained_history_owner_for(self, observation_id: str) -> str | None:
         """Return a preserved owner for history after its log became untracked."""
         return self._history_owners.get(observation_id)
+
+    def history_owner_for(self, observation: BatteryPackObservation) -> str | None:
+        """Resolve immutable ingest provenance through explicit retained owners and renames."""
+        ingest = observation.pack_id_at_ingest
+        owner = self._history_owners.get(
+            observation.observation_id, self._pack_aliases.get(ingest, ingest),
+        )
+        return owner if owner in self._pack_ids else None
 
     def known_filenames_for(self, fingerprint: str) -> tuple[str, ...]:
         """Return display-only names recorded for this exact SHA-256 identity."""
@@ -141,6 +151,10 @@ class BatteryPackStore:
         """Create one Pack ID and associate the source log atomically."""
         self._validate_fingerprint(fingerprint)
         normalized_id = self._normalize_pack_id(pack_id)
+        if normalized_id in self._pack_aliases:
+            raise BatteryPackStoreError(
+                f"Pack ID {normalized_id} is reserved by retained history."
+            )
         if normalized_id in self._pack_ids:
             raise BatteryPackStoreError(f"Pack ID already exists: {normalized_id}")
         pack_ids = [*self._pack_ids, normalized_id]
@@ -185,6 +199,10 @@ class BatteryPackStore:
 
         if new_id in self._pack_ids:
             raise BatteryPackStoreError(f"Pack ID already exists: {new_id}")
+        if new_id in self._pack_aliases:
+            raise BatteryPackStoreError(
+                f"Pack ID {new_id} is reserved by retained history."
+            )
 
         pack_ids = [
             new_id if pack_id == old_id else pack_id
@@ -209,7 +227,13 @@ class BatteryPackStore:
             observation_id: new_id if owner == old_id else owner
             for observation_id, owner in self._history_owners.items()
         }
-        self._save(pack_ids, associations, archived, history_owners)
+        aliases = {
+            historical: new_id if owner == old_id else owner
+            for historical, owner in self._pack_aliases.items()
+        }
+        aliases[old_id] = new_id
+        self._save(pack_ids, associations, archived, history_owners,
+                   pack_aliases=aliases)
 
     def archive_pack(self, pack_id: str) -> None:
         """Hide a pack from new assignments while preserving its history."""
@@ -235,16 +259,15 @@ class BatteryPackStore:
         retained_owners = []
         for observation in history_store.observations:
             association = self.association_for(observation.source_sha256)
-            owner = self._history_owners.get(
-                observation.observation_id, observation.pack_id_at_ingest,
-            )
+            owner = self.history_owner_for(observation)
             if owner == pack:
                 observations.append(observation.observation_id)
             elif association.pack_id == pack:
                 if owner not in self._pack_ids:
                     raise BatteryPackStoreError(
                         f"Cannot delete Pack ID {pack}: observation "
-                        f"{observation.observation_id} records Pack ID {owner}, "
+                        f"{observation.observation_id} records Pack ID "
+                        f"{observation.pack_id_at_ingest}, "
                         "which no longer exists. Restore that Pack ID or resolve "
                         "the historical record, then retry."
                     )
@@ -278,6 +301,11 @@ class BatteryPackStore:
             if observation_id not in plan.observation_ids
         }
         history_owners.update(plan.retained_history_owners)
+        aliases = {
+            historical: owner
+            for historical, owner in self._pack_aliases.items()
+            if owner != plan.pack_id
+        }
         backups: dict[Path, Path] = {}
         history_existed = history_store.path.exists()
         retain_backups = False
@@ -301,6 +329,7 @@ class BatteryPackStore:
                     associations,
                     [item for item in self._archived_pack_ids if item != plan.pack_id],
                     history_owners,
+                    pack_aliases=aliases,
                 )
             except Exception:
                 try:
@@ -329,8 +358,7 @@ class BatteryPackStore:
         if any(a.pack_id == pack_id for a in self._associations.values()):
             return "Pack ID has log associations and cannot be deleted."
         if any(
-            observation.pack_id_at_ingest == pack_id
-            or self._history_owners.get(observation.observation_id) == pack_id
+            self.history_owner_for(observation) == pack_id
             or self._associations.get(
                 observation.source_sha256,
                 LogPackAssociation(LogPackState.UNSEEN),
@@ -356,7 +384,8 @@ class BatteryPackStore:
                 f"Unable to read {self.path}: {exc}"
             ) from exc
         (self._pack_ids, self._associations, self._archived_pack_ids,
-         self._history_owners, self._log_filenames) = self._validate_data(data)
+         self._history_owners, self._log_filenames,
+         self._pack_aliases) = self._validate_data(data)
 
     def _save(
         self,
@@ -365,15 +394,18 @@ class BatteryPackStore:
         archived_pack_ids: list[str] | None = None,
         history_owners: dict[str, str] | None = None,
         log_filenames: dict[str, tuple[str, ...]] | None = None,
+        pack_aliases: dict[str, str] | None = None,
     ) -> None:
         archived_pack_ids = list(self._archived_pack_ids if archived_pack_ids is None else archived_pack_ids)
         history_owners = dict(self._history_owners if history_owners is None else history_owners)
         log_filenames = dict(self._log_filenames if log_filenames is None else log_filenames)
+        pack_aliases = dict(self._pack_aliases if pack_aliases is None else pack_aliases)
         data = {
             "version": SCHEMA_VERSION,
             "pack_ids": pack_ids,
             "archived_pack_ids": archived_pack_ids,
             "retained_history_owners": dict(sorted(history_owners.items())),
+            "pack_aliases": dict(sorted(pack_aliases.items())),
             "log_filenames": {
                 fingerprint: list(names)
                 for fingerprint, names in sorted(log_filenames.items())
@@ -410,6 +442,7 @@ class BatteryPackStore:
         self._archived_pack_ids = archived_pack_ids
         self._history_owners = history_owners
         self._log_filenames = log_filenames
+        self._pack_aliases = pack_aliases
 
     @classmethod
     def _validate_data(
@@ -417,18 +450,20 @@ class BatteryPackStore:
         data: object,
     ) -> tuple[
         list[str], dict[str, LogPackAssociation], list[str], dict[str, str],
-        dict[str, tuple[str, ...]],
+        dict[str, tuple[str, ...]], dict[str, str],
     ]:
         if not isinstance(data, dict):
             raise BatteryPackStoreFormatError("Battery-pack store must be an object.")
         version = data.get("version")
         expected = {"version", "pack_ids", "log_associations"}
-        if version in (2, 3, SCHEMA_VERSION):
+        if version in (2, 3, 4, SCHEMA_VERSION):
             expected.add("archived_pack_ids")
-        if version in (3, SCHEMA_VERSION):
+        if version in (3, 4, SCHEMA_VERSION):
             expected.add("retained_history_owners")
-        if version == SCHEMA_VERSION:
+        if version in (4, SCHEMA_VERSION):
             expected.add("log_filenames")
+        if version == SCHEMA_VERSION:
+            expected.add("pack_aliases")
         if set(data) != expected:
             raise BatteryPackStoreFormatError(
                 "Battery-pack store contains unexpected or missing fields."
@@ -437,7 +472,7 @@ class BatteryPackStore:
             raise BatteryPackStoreFormatError(
                 "Battery-pack version must be an integer."
             )
-        if version not in (1, 2, 3, SCHEMA_VERSION):
+        if version not in (1, 2, 3, 4, SCHEMA_VERSION):
             raise BatteryPackStoreFormatError(
                 f"Unsupported battery-pack store version: {version}"
             )
@@ -508,7 +543,17 @@ class BatteryPackStore:
             if len(set(raw_names)) != len(raw_names):
                 raise BatteryPackStoreFormatError("Duplicate log filename.")
             log_filenames[fingerprint] = tuple(raw_names)
-        return pack_ids, associations, raw_archived, raw_owners, log_filenames
+        raw_aliases = data.get("pack_aliases", {})
+        if not isinstance(raw_aliases, dict):
+            raise BatteryPackStoreFormatError("Invalid pack_aliases.")
+        for historical, owner in raw_aliases.items():
+            try:
+                normalized = cls._normalize_pack_id(historical)
+            except BatteryPackStoreError as exc:
+                raise BatteryPackStoreFormatError(str(exc)) from exc
+            if normalized != historical or historical in pack_ids or owner not in pack_ids:
+                raise BatteryPackStoreFormatError("Invalid historical Pack ID alias.")
+        return pack_ids, associations, raw_archived, raw_owners, log_filenames, raw_aliases
 
     @staticmethod
     def _validate_association(

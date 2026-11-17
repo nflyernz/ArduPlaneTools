@@ -570,18 +570,10 @@ class BatteryPackManagementPresentation:
 
 
 def pack_performance_observations(pack_store, history_store, pack_id):
-    """Return retained observations currently owned by one physical pack."""
+    """Return retained observations owned by one physical pack at ingest or rename."""
     observations = []
     for observation in history_store.newest_supported_observations():
-        association = pack_store.association_for(observation.source_sha256)
-        if (
-            association.state is LogPackState.TRACKED
-            and association.pack_id == pack_id
-        ) or (
-            association.state is LogPackState.NOT_TRACKED
-            and pack_store.retained_history_owner_for(observation.observation_id)
-            == pack_id
-        ):
+        if pack_store.history_owner_for(observation) == pack_id:
             observations.append(observation)
     return sorted(observations, key=pack_performance_observation_sort_key)
 

@@ -2,10 +2,8 @@
 
 import dataclasses
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
-
 from analyses import battery
 from analyses.battery import (
     BatteryAnalysisPresentation,
@@ -17,7 +15,6 @@ from core.flight_data import FlightLog
 from core.flight_window import FlightWindow
 from core.gps_time import format_utc_milliseconds, gps_week_time_to_utc
 from test_battery_pack_history import _observation
-
 
 SUMMARY_HEADING = "FIRST TAKEOFF BY BATTERY SESSION"
 ALL_HEADING = "ALL AUTO TAKEOFFS"
@@ -81,6 +78,7 @@ def _event(
     battery_instance=0,
     gps_week=2000,
     capacity_used_mah=100.0,
+    pack_id="Pack A",
 ):
     observation = _observation(
         source_sha256=source_sha256,
@@ -88,6 +86,7 @@ def _event(
         battery_instance=battery_instance,
         event_start_us=event_start_us,
         event_end_us=event_start_us + 100_000,
+        pack_id=pack_id,
     )
     recorded_at_utc = format_utc_milliseconds(
         gps_week_time_to_utc(gps_week, 18_000, 18)
@@ -125,9 +124,12 @@ def test_one_session_summarizes_first_of_three_takeoffs(
     pack_store.create_and_associate(source, "50S-P1")
     history.add_observations(
         [
-            _event(source, "log_0.bin", 3_000_000, flight_number=2),
-            _event(source, "log_0.bin", 2_000_000, flight_number=1),
-            _event(source, "log_0.bin", 4_000_000, flight_number=3),
+            _event(source, "log_0.bin", 3_000_000, flight_number=2,
+                   pack_id="50S-P1"),
+            _event(source, "log_0.bin", 2_000_000, flight_number=1,
+                   pack_id="50S-P1"),
+            _event(source, "log_0.bin", 4_000_000, flight_number=3,
+                   pack_id="50S-P1"),
         ]
     )
 
@@ -171,6 +173,7 @@ def test_temporary_history_matches_real_pack_session_counts(
                     f"log_{session_index}.bin",
                     1_500_000 + (event_index * 700_000),
                     flight_number=event_index + 1,
+                    pack_id=pack_id,
                 )
             )
     _associate_sources(pack_store, pack_id, sources)
@@ -269,7 +272,7 @@ def test_same_filename_and_date_do_not_merge_distinct_source_sessions(
     assert summary_rows[0][0] == summary_rows[1][0] == "2018-05-06"
 
 
-def test_current_ownership_filters_before_summary_and_reassignment_adds_session(
+def test_reassignment_does_not_transfer_historical_performance_sessions(
     monkeypatch, capsys, tmp_path
 ):
     pack_store, history = _stores(tmp_path)
@@ -280,8 +283,8 @@ def test_current_ownership_filters_before_summary_and_reassignment_adds_session(
     history.add_observations(
         [
             _event(selected, "selected.bin", 2_000_000),
-            _event(reassigned, "reassigned.bin", 2_000_000),
-            _event(reassigned, "reassigned.bin", 3_000_000),
+            _event(reassigned, "reassigned.bin", 2_000_000, pack_id="Pack B"),
+            _event(reassigned, "reassigned.bin", 3_000_000, pack_id="Pack B"),
         ]
     )
     original_history = history.path.read_bytes()
@@ -294,13 +297,14 @@ def test_current_ownership_filters_before_summary_and_reassignment_adds_session(
     pack_store.associate(reassigned, "Pack A")
     after = _render(monkeypatch, capsys, pack_store, history)
 
-    assert len(_section_rows(after, SUMMARY_HEADING)) == 2
-    assert len(_section_rows(after, ALL_HEADING)) == 3
-    assert "reassigned.bin" in after
+    assert len(_section_rows(after, SUMMARY_HEADING)) == 1
+    assert len(_section_rows(after, ALL_HEADING)) == 1
+    assert "reassigned.bin" not in after
+    assert "reassigned.bin" in _render(monkeypatch, capsys, pack_store, history, "2")
     assert history.path.read_bytes() == original_history
 
 
-def test_report_uses_current_ownership_and_survives_without_bins(
+def test_report_uses_historical_ownership_and_survives_without_bins(
     monkeypatch, capsys, tmp_path
 ):
     pack_store, history = _stores(tmp_path)
@@ -319,20 +323,22 @@ def test_report_uses_current_ownership_and_survives_without_bins(
             _observation(
                 source_sha256=selected,
                 source_filename=full_source_name,
-                pack_id="Old ingest name",
+                pack_id="Pack A",
             ),
             _observation(
                 source_sha256=other,
                 source_filename="other.bin",
-                pack_id="Pack A",
+                pack_id="Pack B",
             ),
             _observation(
                 source_sha256=not_tracked,
                 source_filename="not-tracked.bin",
+                pack_id="Pack A",
             ),
             _observation(
                 source_sha256=unseen,
                 source_filename="unseen.bin",
+                pack_id="Missing",
             ),
         ]
     )
@@ -344,14 +350,14 @@ def test_report_uses_current_ownership_and_survives_without_bins(
 
     assert f"Source: {full_source_name}" in output
     assert "other.bin" not in output
-    assert "not-tracked.bin" not in output
+    assert "not-tracked.bin" in output
     assert "unseen.bin" not in output
-    assert len(_section_rows(output, SUMMARY_HEADING)) == 1
-    assert len(_section_rows(output, ALL_HEADING)) == 1
+    assert len(_section_rows(output, SUMMARY_HEADING)) == 2
+    assert len(_section_rows(output, ALL_HEADING)) == 2
     assert history.path.read_bytes() == original_history
 
 
-def test_reassignment_and_rename_change_membership_without_history_rewrite(
+def test_reassignment_and_rename_preserve_ingest_ownership_without_history_rewrite(
     monkeypatch, capsys, tmp_path
 ):
     pack_store, history = _stores(tmp_path)
@@ -383,10 +389,40 @@ def test_reassignment_and_rename_change_membership_without_history_rewrite(
 
     assert "Pack ID: Pack Renamed" in output
     assert "first.bin" in output
-    assert "second.bin" in output
-    assert len(_section_rows(output, SUMMARY_HEADING)) == 2
-    assert len(_section_rows(output, ALL_HEADING)) == 2
+    assert "second.bin" not in output
+    assert len(_section_rows(output, SUMMARY_HEADING)) == 1
+    assert len(_section_rows(output, ALL_HEADING)) == 1
+    assert "second.bin" in _render(monkeypatch, capsys, pack_store, history, "2")
     assert history.path.read_bytes() == original_history
+
+
+def test_reassigned_bin_requires_delete_and_reingest_to_correct_history(tmp_path):
+    """Association changes never move saved evidence between physical packs."""
+    from analyses.battery import pack_performance_observations
+
+    store, history = _stores(tmp_path)
+    source = "a" * 64
+    other = "b" * 64
+    store.create_and_associate(source, "Pack A")
+    store.create_and_associate(other, "Pack B")
+    old = _observation(source_sha256=source, pack_id="Pack A")
+    history.add_observations([old])
+    store.associate(source, "Pack B")
+    assert pack_performance_observations(store, history, "Pack A") == [old]
+    assert pack_performance_observations(store, history, "Pack B") == []
+    assert store.deletion_plan("Pack B", history).observation_ids == ()
+    assert store.deletion_plan("Pack A", history).observation_ids == (
+        old.observation_id,
+    )
+
+    store.delete_pack("Pack A", history)
+    assert store.association_for(source).pack_id == "Pack B"
+    assert BatteryPackHistoryStore(history.path).observations == ()
+    corrected = _observation(source_sha256=source, pack_id="Pack B")
+    assert corrected.observation_id == old.observation_id
+    assert history.add_observations([corrected]) == 1
+    restarted = BatteryPackStore(store.path)
+    assert pack_performance_observations(restarted, history, "Pack B") == [corrected]
 
 
 def test_report_headings_ordering_and_unavailable_rendering(
@@ -525,7 +561,6 @@ def test_optional_history_failure_does_not_block_normal_analysis(
 
     def select_flight(_flight_log):
         selected_flight_reached.append(True)
-        return None
 
     monkeypatch.setattr(presentation, "_select_flight", select_flight)
     if failure_point == "store":
