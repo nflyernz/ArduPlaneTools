@@ -100,7 +100,9 @@ def test_battery_formatter_preserves_metrics_events_warnings_and_labels():
     assert "Maximum current       31.20 A" in report
     assert "Energy consumed       5.25 Wh" in report
     assert "HIGHEST-LOAD EVENT" in report
-    assert "Voltage recovery      0.80 V" in report
+    assert "Legacy change from minimum (load unverified)  0.80 V" in report
+    assert "Legacy V/A estimate (not cell resistance)" in report
+    assert "Legacy interval voltage drop" in report
     assert "COUNTER WARNINGS" in report
     assert report.index("1. TAKEOFF") < report.index("2. SUSTAINED_HIGH_THROTTLE")
     assert "   Context              AUTO" in report

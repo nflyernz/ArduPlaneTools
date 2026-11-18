@@ -55,7 +55,7 @@ def _format_threshold(value):
 
 def format_bounded_load_events(events) -> str:
     """Return the existing bounded-load-event presentation."""
-    lines = ["BOUNDED LOAD EVENTS"]
+    lines = ["BOUNDED LOAD EVENTS (legacy interval calculations; load at +5 s unverified)"]
     if not events:
         lines.extend(("", "No bounded load events detected."))
         return "\n".join(lines)
@@ -80,11 +80,11 @@ def format_bounded_load_events(events) -> str:
                 f"{_format_value(event.maximum_throttle, ' %')}",
                 "   Average throttle     "
                 f"{_format_value(event.average_throttle, ' %')}",
-                "   Pre-load voltage     "
+                "   Legacy pre-interval voltage  "
                 f"{_format_value(event.pre_load_voltage, ' V')}",
                 "   Minimum voltage      "
                 f"{_format_value(event.minimum_voltage, ' V')}",
-                "   Voltage sag          "
+                "   Legacy interval voltage drop  "
                 f"{_format_value(event.voltage_sag, ' V')}",
                 "   Peak current         "
                 f"{_format_value(event.peak_current, ' A')}",
@@ -92,9 +92,9 @@ def format_bounded_load_events(events) -> str:
                 f"{_format_value(event.average_current, ' A')}",
                 "   Current at min V     "
                 f"{_format_value(event.current_at_minimum_voltage, ' A')}",
-                "   Voltage after 5 s    "
+                "   Voltage at first BAT ≥5 s after interval  "
                 f"{_format_value(event.voltage_after_recovery, ' V')}",
-                "   Voltage recovery     "
+                "   Legacy change from interval minimum (load unverified)  "
                 f"{_format_value(event.voltage_recovery, ' V')}",
                 "   Margin to LOW        "
                 f"{_format_value(event.low_voltage_margin, ' V')}",
@@ -245,6 +245,40 @@ def _format_observed_battery_failsafes(assessment: VoltageFailsafeAssessment) ->
     return lines
 
 
+def format_load_response_measurement(response) -> str:
+    """Present the shared Slice 1 BAT response for either takeoff context."""
+    lines = [response.status]
+    if response.t0_us is not None:
+        lines.append(f"T0 load onset: {format_time_us(response.t0_us)}")
+    if response.raw_peak_current_a is not None:
+        lines.append(f"Raw peak current: {_format_value(response.raw_peak_current_a, ' A')}")
+    if response.minimum_voltage_v is not None:
+        lines.append(
+            f"Minimum voltage: {_format_value(response.minimum_voltage_v, ' V')} "
+            f"at {_format_value(response.current_at_minimum_a, ' A')}"
+        )
+    if response.observation_end_us is not None:
+        lines.append(f"Observation through: {format_time_us(response.observation_end_us)}")
+    if response.reference_current_a is not None:
+        lines.extend((
+            f"Smoothed reference current: {response.reference_current_a:.2f} A",
+            f"80% current threshold: {response.threshold_current_a:.2f} A",
+            f"Low-current baseline: {_format_value(response.baseline_voltage_v, ' V')} "
+            f"at {_format_value(response.baseline_current_a, ' A')}",
+            f"T1 confirmed reduction: "
+            f"{format_time_us(response.t1_us) if response.t1_us is not None else 'Unavailable'}",
+            f"Confirmed reduction duration: "
+            f"{_format_value((response.t1_us - response.t0_us) / 1_000_000, ' s') if response.t1_us is not None else 'Unavailable'}",
+            f"Voltage drop from baseline: {_format_value(response.voltage_drop_v, ' V')}",
+            f"Voltage/current at first BAT sample ≥5 s after observation: "
+            f"{format_time_us(response.follow_up_time_us) if response.follow_up_time_us is not None else 'Unavailable'}; "
+            f"{_format_value(response.follow_up_voltage_v, ' V')} / "
+            f"{_format_value(response.follow_up_current_a, ' A')} "
+            "(may still be loaded; not unloaded recovery)",
+        ))
+    return "\n".join(lines)
+
+
 def format_battery_report(
     log_path,
     flight_window,
@@ -307,7 +341,7 @@ def format_battery_report(
             "Consumption rate      "
             f"{_format_value(analysis.mah_per_minute, ' mAh/min')}",
             "",
-            "HIGHEST-LOAD EVENT",
+            "HIGHEST-LOAD EVENT (legacy adjacent-sample calculation)",
         )
     )
 
@@ -321,17 +355,17 @@ def format_battery_report(
                 f"Time                  {format_time_us(event.time_us)}",
                 "Current               "
                 f"{_format_value(event.current, ' A')}",
-                "Voltage before        "
+                "Legacy preceding BAT voltage  "
                 f"{_format_value(event.voltage_before, ' V')}",
                 "Minimum voltage       "
                 f"{_format_value(event.minimum_voltage, ' V')}",
-                "Voltage sag           "
+                "Legacy adjacent-sample voltage drop  "
                 f"{_format_value(event.voltage_sag, ' V')}",
-                "Sag per ampere        "
+                "Legacy V/A estimate (not cell resistance)  "
                 f"{_format_value(event.sag_per_ampere, ' V/A')}",
-                "Voltage after 5 s     "
+                "Voltage at first BAT ≥5 s after event  "
                 f"{_format_value(event.voltage_after_recovery, ' V')}",
-                "Voltage recovery      "
+                "Legacy change from minimum (load unverified)  "
                 f"{_format_value(event.voltage_recovery, ' V')}",
             )
         )
@@ -342,6 +376,33 @@ def format_battery_report(
             lines.extend(("", f"- {warning}"))
 
     lines.extend(("", format_bounded_load_events(analysis.bounded_load_events)))
+    response = getattr(analysis, "battery_load_response", None)
+    if response is not None:
+        lines.extend(("", "BATTERY LOAD RESPONSE (read-only, AUTO context)",
+                      format_load_response_measurement(response)))
+    pilot_takeoffs = getattr(analysis, "pilot_controlled_takeoffs", ())
+    if pilot_takeoffs:
+        lines.extend(("", "PILOT-CONTROLLED TAKEOFFS (read-only; no history write)"))
+        for number, measurement in enumerate(pilot_takeoffs, start=1):
+            evidence = measurement.event
+            lines.extend((
+                "",
+                (f"{number}. PILOT_CONTROLLED / {evidence.mode_name} "
+                 f"at {format_time_us(evidence.time_us)}"),
+                (f"Ground evidence: GPS {evidence.ground_speed_m_s:.2f} m/s; "
+                 f"prior low speed at {format_time_us(evidence.ground_time_us)}; "
+                 f"POS climb {evidence.climb_m:.1f} m by "
+                 f"{format_time_us(evidence.climb_time_us)}; "
+                 f"CTUN throttle up to {evidence.throttle_pct:.1f}%."),
+                (f"STAT.isFlying before event: "
+                 f"{evidence.stat_flying_before if evidence.stat_flying_before is not None else 'Unavailable'} "
+                 "(supporting only)."),
+                "Takeoff confirmation is independent of BAT T0; "
+                "no T0-based load response is inferred when onset is unavailable."
+                if measurement.response.t0_us is None else
+                "BAT T0 established separately from takeoff confirmation.",
+                format_load_response_measurement(measurement.response),
+            ))
     lines.extend((
         "", format_voltage_failsafe_assessment(
             getattr(analysis, "voltage_failsafe", None)
