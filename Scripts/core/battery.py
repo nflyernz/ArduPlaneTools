@@ -13,6 +13,11 @@ from typing import Optional
 import pandas as pd
 
 from .battery_failsafe import VoltageFailsafeAssessment, assess_voltage_failsafe
+from .battery_load_response import (
+    BatteryLoadResponse,
+    detect_auto_load_onset,
+    evaluate_load_response,
+)
 from .config import Config
 from .flight_data import FlightLog
 from .flight_window import FlightWindow
@@ -124,6 +129,7 @@ class BatteryAnalysis:
         default_factory=list
     )
     voltage_failsafe: VoltageFailsafeAssessment | None = None
+    battery_load_response: BatteryLoadResponse | None = None
 
 
 class BatteryProcessor:
@@ -243,6 +249,29 @@ class BatteryProcessor:
             voltage_failsafe=assess_voltage_failsafe(
                 self.flight_log, self.instance, self.flight_window,
             ),
+            battery_load_response=self._load_response(all_instance),
+        )
+
+    def _load_response(self, all_instance: pd.DataFrame) -> BatteryLoadResponse | None:
+        """Evaluate only independently identified AUTO takeoffs with BAT onset."""
+        bounds = self._auto_takeoff_bounds()
+        if not bounds:
+            return None
+        messages = self._time_ordered(self.flight_log.get("MSG"))
+        triggers = messages[
+            (messages["TimeUS"] <= bounds[0].start_us)
+            & messages["Message"].astype(str).str.startswith("Triggered AUTO")
+        ]
+        if triggers.empty:
+            return evaluate_load_response(
+                all_instance, self.instance, None, self.flight_window.end_us
+            )
+        trigger_us = int(triggers.iloc[-1]["TimeUS"])
+        t0 = detect_auto_load_onset(
+            all_instance, self.instance, trigger_us, bounds[0].start_us
+        )
+        return evaluate_load_response(
+            all_instance, self.instance, t0, self.flight_window.end_us
         )
 
     def _session_configuration(self) -> BatterySessionConfiguration:

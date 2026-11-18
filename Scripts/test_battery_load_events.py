@@ -523,6 +523,9 @@ def test_auto_takeoff_bounds_and_flight_association():
     ) == (60_000_000, 70_000_000, 2)
     assert first_event.takeoff_type == TakeoffType.AUTO
     assert second_event.takeoff_type == TakeoffType.AUTO
+    assert first_result.battery_load_response is not None
+    assert first_result.battery_load_response.t0_us is None
+    assert "Load onset unavailable" in first_result.battery_load_response.status
     assert first.start_us <= first_event.start_us <= first_event.end_us <= first.end_us
     assert (
         second.start_us <= second_event.start_us <= second_event.end_us <= second.end_us

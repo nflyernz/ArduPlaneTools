@@ -86,7 +86,7 @@ def test_raw_replay_and_observed_rtl_are_distinct_in_battery_report():
     assert "VOLTAGE FAILSAFE ASSESSMENT" in report
     assert "Replay (recorded source)" in report
     assert "Battery-low message with correlated RTL (MODE reason 4)" in report
-    assert "Voltage after 5 s" in report
+    assert "Voltage at first BAT ≥5 s after" in report
 
 
 def test_gap_parameter_change_and_arm_sessions_split_low_runs():
