@@ -16,11 +16,13 @@ from .battery_failsafe import VoltageFailsafeAssessment, assess_voltage_failsafe
 from .battery_load_response import (
     BatteryLoadResponse,
     detect_auto_load_onset,
+    detect_load_onset,
     evaluate_load_response,
 )
 from .config import Config
 from .flight_data import FlightLog
 from .flight_window import FlightWindow
+from .pilot_takeoff import PilotTakeoffEvent, detect_pilot_takeoffs
 from .scope import filter_telemetry, validate_flight_window
 
 
@@ -49,6 +51,16 @@ class TakeoffType(Enum):
     """Takeoff classifications supported by validated evidence."""
 
     AUTO = "AUTO"
+    PILOT_CONTROLLED = "PILOT_CONTROLLED"
+
+
+@dataclass(frozen=True)
+class PilotTakeoffMeasurement:
+    """Read-only event proof and BAT response; never a history observation."""
+
+    event: PilotTakeoffEvent
+    response: BatteryLoadResponse
+    takeoff_type: TakeoffType = TakeoffType.PILOT_CONTROLLED
 
 
 @dataclass(frozen=True)
@@ -130,6 +142,7 @@ class BatteryAnalysis:
     )
     voltage_failsafe: VoltageFailsafeAssessment | None = None
     battery_load_response: BatteryLoadResponse | None = None
+    pilot_controlled_takeoffs: list[PilotTakeoffMeasurement] = field(default_factory=list)
 
 
 class BatteryProcessor:
@@ -250,7 +263,28 @@ class BatteryProcessor:
                 self.flight_log, self.instance, self.flight_window,
             ),
             battery_load_response=self._load_response(all_instance),
+            pilot_controlled_takeoffs=self._pilot_takeoff_measurements(all_instance),
         )
+
+    def _pilot_takeoff_measurements(
+        self, all_instance: pd.DataFrame
+    ) -> list[PilotTakeoffMeasurement]:
+        """Attach BAT evidence without changing legacy bounded events/history."""
+        scan = detect_pilot_takeoffs(self.flight_log)
+        measurements = []
+        for event in scan.events:
+            if event.flight_start_us != self.flight_window.start_us:
+                continue
+            search_start = event.time_us - 4_000_000
+            search_end = event.time_us
+            t0 = detect_load_onset(
+                all_instance, self.instance, search_start, search_end
+            )
+            response = evaluate_load_response(
+                all_instance, self.instance, t0, self.flight_window.end_us
+            )
+            measurements.append(PilotTakeoffMeasurement(event, response))
+        return measurements
 
     def _load_response(self, all_instance: pd.DataFrame) -> BatteryLoadResponse | None:
         """Evaluate only independently identified AUTO takeoffs with BAT onset."""

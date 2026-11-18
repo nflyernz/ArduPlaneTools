@@ -100,10 +100,10 @@ def _smoothed(rows):
     return values
 
 
-def detect_auto_load_onset(
+def detect_load_onset(
     bat: pd.DataFrame, instance: int, trigger_us: int, anchor_us: int
 ) -> int | None:
-    """Find a confirmed current ramp between AUTO trigger and flight boundary.
+    """Find a confirmed current ramp inside an independently established context.
 
     A stable low-current baseline and sustained ramp samples within 0.5 s are
     required. The onset threshold uses baseline current, never eventual peak.
@@ -157,6 +157,13 @@ def detect_auto_load_onset(
                 return None  # transient/repeated pre-boundary bursts are ambiguous
             candidates.append(row[0])
     return candidates[0] if len(candidates) == 1 else None
+
+
+def detect_auto_load_onset(
+    bat: pd.DataFrame, instance: int, trigger_us: int, anchor_us: int
+) -> int | None:
+    """Keep the Slice 1 AUTO onset contract and algorithm unchanged."""
+    return detect_load_onset(bat, instance, trigger_us, anchor_us)
 
 
 def _baseline(rows, invalid_intervals, t0_us, reference):
