@@ -397,12 +397,39 @@ def format_battery_report(
                 (f"STAT.isFlying before event: "
                  f"{evidence.stat_flying_before if evidence.stat_flying_before is not None else 'Unavailable'} "
                  "(supporting only)."),
+                f"Ground-state basis: {evidence.ground_evidence}",
+                measurement.onset.status if measurement.onset is not None else
+                "Pilot BAT onset evidence unavailable.",
                 "Takeoff confirmation is independent of BAT T0; "
                 "no T0-based load response is inferred when onset is unavailable."
                 if measurement.response.t0_us is None else
                 "BAT T0 established separately from takeoff confirmation.",
                 format_load_response_measurement(measurement.response),
             ))
+            onset = measurement.onset
+            if onset is not None and onset.t0_us is not None:
+                lines.extend((
+                    ("Pilot onset evidence: BAT current "
+                     f"{_format_value(onset.baseline_current_a, ' A')} at "
+                     f"{format_time_us(onset.baseline_start_us)}–"
+                     f"{format_time_us(onset.baseline_end_us)}; "
+                     f"crossed {_format_value(onset.onset_threshold_a, ' A')} "
+                     f"at {format_time_us(onset.t0_us)}; "
+                     f"median {_format_value(onset.confirmed_current_a, ' A')} "
+                     f"through {format_time_us(onset.confirmation_end_us)}; "
+                     f"CTUN throttle {_format_value(onset.throttle_pct, '%')}."),
+                ))
+            observation = measurement.gps_observation
+            if observation is not None:
+                lines.extend((
+                    "GPS-ANCHORED BAT OBSERVATION (separate from T0-based response)",
+                    (f"Interval: {format_time_us(observation.start_us)} to "
+                     f"{format_time_us(observation.end_us)}; "
+                     f"raw peak current {_format_value(observation.raw_peak_current_a, ' A')}; "
+                     f"minimum voltage {_format_value(observation.minimum_voltage_v, ' V')} "
+                     f"at {_format_value(observation.current_at_minimum_a, ' A')}."),
+                    observation.status,
+                ))
     lines.extend((
         "", format_voltage_failsafe_assessment(
             getattr(analysis, "voltage_failsafe", None)

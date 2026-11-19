@@ -16,12 +16,17 @@ from .battery_failsafe import VoltageFailsafeAssessment, assess_voltage_failsafe
 from .battery_load_response import (
     BatteryLoadResponse,
     detect_auto_load_onset,
-    detect_load_onset,
     evaluate_load_response,
 )
 from .config import Config
 from .flight_data import FlightLog
 from .flight_window import FlightWindow
+from .pilot_battery_onset import (
+    GpsAnchoredBatteryObservation,
+    PilotLoadOnset,
+    detect_pilot_load_onset,
+    observe_gps_anchored_bat,
+)
 from .pilot_takeoff import PilotTakeoffEvent, detect_pilot_takeoffs
 from .scope import filter_telemetry, validate_flight_window
 
@@ -61,6 +66,8 @@ class PilotTakeoffMeasurement:
     event: PilotTakeoffEvent
     response: BatteryLoadResponse
     takeoff_type: TakeoffType = TakeoffType.PILOT_CONTROLLED
+    onset: PilotLoadOnset | None = None
+    gps_observation: GpsAnchoredBatteryObservation | None = None
 
 
 @dataclass(frozen=True)
@@ -275,15 +282,19 @@ class BatteryProcessor:
         for event in scan.events:
             if event.flight_start_us != self.flight_window.start_us:
                 continue
-            search_start = event.time_us - 4_000_000
-            search_end = event.time_us
-            t0 = detect_load_onset(
-                all_instance, self.instance, search_start, search_end
+            onset = detect_pilot_load_onset(
+                all_instance, self.instance, event.time_us,
+                self.flight_log.get("CTUN"),
             )
             response = evaluate_load_response(
-                all_instance, self.instance, t0, self.flight_window.end_us
+                all_instance, self.instance, onset.t0_us, self.flight_window.end_us
             )
-            measurements.append(PilotTakeoffMeasurement(event, response))
+            observation = (observe_gps_anchored_bat(
+                all_instance, self.instance, event.time_us, self.flight_window.end_us
+            ) if onset.t0_us is None else None)
+            measurements.append(PilotTakeoffMeasurement(
+                event, response, onset=onset, gps_observation=observation,
+            ))
         return measurements
 
     def _load_response(self, all_instance: pd.DataFrame) -> BatteryLoadResponse | None:
