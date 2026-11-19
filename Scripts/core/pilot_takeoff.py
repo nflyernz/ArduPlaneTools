@@ -20,6 +20,9 @@ FLIGHT_CONFIRM_US = 2_000_000
 CLIMB_CONFIRM_M = 10.0
 CLIMB_FOLLOW_THROUGH_US = 2_000_000
 LAUNCH_POWER_END_US = 1_000_000
+LANDING_GROUND_DWELL_US = 5_000_000
+LANDING_PLATEAU_US = 2_000_000
+LANDING_DESCENT_M = 10.0
 
 
 @dataclass(frozen=True)
@@ -35,6 +38,7 @@ class PilotTakeoffEvent:
     ground_speed_m_s: float
     throttle_pct: float
     stat_flying_before: bool | None
+    ground_evidence: str = ""
 
 
 @dataclass(frozen=True)
@@ -98,9 +102,76 @@ def _continuous(rows, maximum_gap=GPS_GAP_US):
     )
 
 
+def _returned_to_ground_speed(gps, start_us, end_us):
+    """A sustained slow interval separates a later launch from this roll."""
+    run_start = None
+    last = None
+    for stamp, speed in gps:
+        if stamp < start_us or stamp > end_us:
+            continue
+        if speed > GROUND_SPEED_M_S:
+            run_start = last = None
+            continue
+        if last is None or stamp - last > GPS_GAP_US:
+            run_start = stamp
+        last = stamp
+        if stamp - run_start >= GROUND_CONFIRM_US:
+            return True
+    return False
+
+
 def _mode_at(modes, stamp):
     prior = [row for row in modes if row[0] <= stamp]
     return int(prior[-1][1]) if prior else None
+
+
+def _landing_evidence(pos, gps, ctun, ground, ground_alt, prior_start_us, stamp,
+                      pos_invalid, gps_invalid, ctun_invalid):
+    """Require a descent into a settled, low-speed, reduced-power plateau."""
+    if ground[-1][0] - ground[0][0] < LANDING_GROUND_DWELL_US:
+        return None
+    plateau_rows = _near(pos, max(prior_start_us, stamp - 30_000_000), ground[-1][0])
+    for endpoint in reversed(plateau_rows):
+        segment = _near(plateau_rows, endpoint[0] - LANDING_PLATEAU_US, endpoint[0])
+        if (len(segment) < 5
+                or segment[-1][0] - segment[0][0] < LANDING_PLATEAU_US - 100_000
+                or not _continuous(segment)
+                or max(row[1] for row in segment) - min(row[1] for row in segment) > 1.5):
+            continue
+        plateau_alt = float(median(row[1] for row in segment))
+        if abs(plateau_alt - ground_alt) > 5:
+            continue
+        low_speed = _near(gps, segment[0][0], segment[-1][0])
+        if (len(low_speed) < 5 or not _continuous(low_speed)
+                or any(row[1] > GROUND_SPEED_M_S for row in low_speed)
+                or _corrupt_near(gps_invalid, segment[0][0], segment[-1][0])):
+            continue
+        reduced = _near(ctun, segment[0][0] - 500_000, segment[-1][0] + 500_000)
+        if (not any(row[1] <= 20 for row in reduced)
+                or _corrupt_near(ctun_invalid, segment[0][0] - 500_000,
+                                 segment[-1][0] + 500_000)):
+            continue
+        high = [row for row in pos
+                if prior_start_us <= row[0] < segment[0][0]
+                and row[1] >= plateau_alt + LANDING_DESCENT_M]
+        if not high:
+            continue
+        settled = next((row for row in pos
+                        if high[-1][0] < row[0] <= high[-1][0] + 60_000_000
+                        and row[1] <= plateau_alt + 2), None)
+        if settled is None or settled[0] > segment[0][0]:
+            continue
+        descent = _near(pos, high[-1][0], settled[0])
+        middle = [row for row in descent
+                  if plateau_alt + 2 <= row[1] <= plateau_alt + 8]
+        if (not middle or not _continuous(descent)
+                or _corrupt_near(pos_invalid, high[-1][0], segment[-1][0])):
+            continue
+        since_settled = _near(pos, settled[0], segment[0][0])
+        if any(row[1] > plateau_alt + 5 for row in since_settled):
+            continue
+        return float(high[-1][1] - plateau_alt)
+    return None
 
 
 def detect_pilot_takeoffs(flight_log) -> PilotTakeoffScan:
@@ -162,27 +233,20 @@ def detect_pilot_takeoffs(flight_log) -> PilotTakeoffScan:
         if ground is None:
             rejected.append(TakeoffCandidate(stamp, "No recent persistent low-speed ground state."))
             continue
-        # A speed dip while power remains on can occur in flight. Once
-        # high-speed flight has preceded this low-speed run, require a
-        # sustained reduced-power phase before treating it as a landing.
-        previously_fast = any(
-            row[1] > FLIGHT_SPEED_M_S
-            for row in gps if flight.start_us <= row[0] < ground[0][0]
-        )
+        # A speed dip and brief power reduction can occur in flight. A later
+        # launch needs descent into a settled local ground plateau as well.
+        previous_event = events[-1] if events else None
         ground_power = _near(ctun, ground[0][0], ground[-1][0])
         power_confirmed = False
         power_run = []
         for row in ground_power:
             if row[1] <= 20 and (not power_run or row[0] - power_run[-1][0] <= GPS_GAP_US):
                 power_run.append(row)
-                if row[0] - power_run[0][0] >= 400_000:
+                if row[0] - power_run[0][0] >= 1_000_000:
                     power_confirmed = True
                     break
             else:
                 power_run = [row] if row[1] <= 20 else []
-        if previously_fast and not power_confirmed:
-            rejected.append(TakeoffCandidate(stamp, "No established landing before renewed acceleration."))
-            continue
         # Use a stable ground segment before acceleration. A pressure-derived
         # POS dip during the ground roll must not erase earlier ground proof.
         pre_pos = _near(pos, stamp - 8_000_000, stamp - 500_000)
@@ -199,6 +263,35 @@ def detect_pilot_takeoffs(flight_log) -> PilotTakeoffScan:
         if ground_alt is None:
             rejected.append(TakeoffCandidate(stamp, "No stable near-ground altitude before acceleration."))
             continue
+        # Earlier speed alone may be a taxi or aborted roll. A sustained
+        # reduced-power ground episode supports a renewed initial launch;
+        # continuous thrust through a speed dip does not.
+        prior_fast = any(
+            row[1] > FLIGHT_SPEED_M_S
+            for row in gps if flight.start_us <= row[0] < ground[0][0]
+        )
+        needs_landing_proof = previous_event is not None or any(
+            row[1] >= ground_alt + CLIMB_CONFIRM_M
+            for row in pos if flight.start_us <= row[0] < ground[0][0]
+        ) or (prior_fast and not power_confirmed)
+        ground_evidence = (
+            "Initial ground launch; stable preflight altitude and low speed; "
+            "physical contact inferred, not directly sensed."
+        )
+        if needs_landing_proof:
+            prior_start = previous_event.time_us if previous_event else flight.start_us
+            descent_m = (_landing_evidence(pos, gps, ctun, ground, ground_alt,
+                                           prior_start, stamp, pos_invalid,
+                                           gps_invalid, ctun_invalid)
+                         if power_confirmed else None)
+            if descent_m is None:
+                rejected.append(TakeoffCandidate(
+                    stamp, "No confirmed descent into a settled ground plateau before renewed acceleration."))
+                continue
+            ground_evidence = (
+                f"Relaunch after at least {descent_m:.1f} m descent into a stable low-speed, "
+                "reduced-power local plateau; physical contact inferred, not directly sensed."
+            )
         future_pos = _near(pos, stamp, stamp + 20_000_000 + CLIMB_FOLLOW_THROUGH_US)
         climb = None
         for row in future_pos:
@@ -220,6 +313,10 @@ def detect_pilot_takeoffs(flight_log) -> PilotTakeoffScan:
         if climb is None:
             rejected.append(TakeoffCandidate(stamp, "No continuous sustained climb of 10 m within 20 s."))
             continue
+        if _returned_to_ground_speed(gps, stamp + FLIGHT_CONFIRM_US, climb[0]):
+            rejected.append(TakeoffCandidate(
+                stamp, "Groundspeed returned to a persistent ground state before climb proof."))
+            continue
         demand = _near(ctun, stamp - 4_000_000, stamp + LAUNCH_POWER_END_US)
         high_throttle = [row[1] for row in demand if row[1] >= 20]
         launch_power = [row for row in demand
@@ -236,6 +333,6 @@ def detect_pilot_takeoffs(flight_log) -> PilotTakeoffScan:
             stamp, flight.start_us, mode, "MANUAL" if mode == 0 else "FBWA",
             int(ground[-1][0]), int(climb[0]), ground_alt,
             float(climb[1] - ground_alt), float(speed), float(max(high_throttle)),
-            stat_flying,
+            stat_flying, ground_evidence,
         ))
     return PilotTakeoffScan(tuple(events), tuple(rejected))
