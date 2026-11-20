@@ -420,6 +420,29 @@ def format_battery_report(
                      f"CTUN throttle {_format_value(onset.throttle_pct, '%')}."),
                 ))
             observation = measurement.gps_observation
+            comparison = measurement.plateau_comparison
+            if comparison is not None:
+                lines.extend(("", "OBSERVED PLATEAU VOLTAGE COMPARISON"))
+                if comparison.voltage_change_v is None:
+                    lines.append(comparison.status)
+                else:
+                    lines.extend((
+                        (f"Pre-onset: {_format_value(comparison.pre_voltage_v, ' V')} at "
+                         f"{_format_value(comparison.pre_current_a, ' A')}; "
+                         f"{format_time_us(comparison.pre_start_us)}–"
+                         f"{format_time_us(comparison.pre_end_us)}."),
+                        (f"Loaded: {_format_value(comparison.loaded_voltage_v, ' V')} at "
+                         f"{_format_value(comparison.loaded_current_a, ' A')}; "
+                         f"{format_time_us(comparison.loaded_start_us)}–"
+                         f"{format_time_us(comparison.loaded_end_us)}."),
+                        (f"Observed plateau voltage change: "
+                         f"{_format_value(comparison.voltage_change_v, ' V')}; "
+                         f"median current change: "
+                         f"{_format_value(comparison.current_change_a, ' A')}."),
+                        (f"Pre-onset interval to T0: {comparison.pre_to_t0_us / 1_000_000:.2f} s; "
+                         f"T0 to loaded interval: {comparison.t0_to_loaded_us / 1_000_000:.2f} s."),
+                        comparison.status,
+                    ))
             if observation is not None:
                 lines.extend((
                     "GPS-ANCHORED BAT OBSERVATION (separate from T0-based response)",
