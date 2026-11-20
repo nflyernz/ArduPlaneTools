@@ -27,6 +27,10 @@ from .pilot_battery_onset import (
     detect_pilot_load_onset,
     observe_gps_anchored_bat,
 )
+from .pilot_plateau_voltage import (
+    ObservedPlateauVoltageComparison,
+    evaluate_observed_plateau_voltage,
+)
 from .pilot_takeoff import PilotTakeoffEvent, detect_pilot_takeoffs
 from .scope import filter_telemetry, validate_flight_window
 
@@ -68,6 +72,7 @@ class PilotTakeoffMeasurement:
     takeoff_type: TakeoffType = TakeoffType.PILOT_CONTROLLED
     onset: PilotLoadOnset | None = None
     gps_observation: GpsAnchoredBatteryObservation | None = None
+    plateau_comparison: ObservedPlateauVoltageComparison | None = None
 
 
 @dataclass(frozen=True)
@@ -292,8 +297,13 @@ class BatteryProcessor:
             observation = (observe_gps_anchored_bat(
                 all_instance, self.instance, event.time_us, self.flight_window.end_us
             ) if onset.t0_us is None else None)
+            comparison = evaluate_observed_plateau_voltage(
+                all_instance, self.instance, onset, response.t1_us,
+                self.flight_window.end_us,
+            )
             measurements.append(PilotTakeoffMeasurement(
                 event, response, onset=onset, gps_observation=observation,
+                plateau_comparison=comparison,
             ))
         return measurements
 
