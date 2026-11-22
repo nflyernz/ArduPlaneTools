@@ -197,6 +197,63 @@ def test_qualified_recovery_requires_a_later_qualified_t1():
                                           t1_status="unavailable", t1_us=None)).validate()
 
 
+def _onset_boundary_observation(t0_us, mode="FBWA"):
+    original = _observation(mode=mode)
+    takeoff_us = 12_000_000
+    flight_end_us = 20_000_000
+    event_id = physical_event_id_for(
+        source_sha256=original.source_sha256,
+        battery_instance=original.battery_instance,
+        flight_start_us=original.flight_start_us,
+        flight_end_us=flight_end_us,
+        logged_takeoff_us=takeoff_us,
+    )
+    load = LoadEvidenceV2(
+        "qualified", t0_us, "unavailable", None, None,
+        "unavailable", None, 25.0, 14.0, 22.0,
+        "unavailable", None, None, None,
+        "unavailable", None, None, None,
+        ("Current reference and strict baseline unavailable.",),
+    )
+    return replace(original, physical_event_id=event_id,
+                   observation_id=v2_observation_id_for(event_id),
+                   flight_end_us=flight_end_us, logged_takeoff_us=takeoff_us,
+                   load=load, plateau=_plateau(qualified=False))
+
+
+@pytest.mark.parametrize("mode", ["MANUAL", "FBWA"])
+@pytest.mark.parametrize("t0_us", [4_000_000, 16_000_000])
+def test_pilot_t0_search_boundaries_are_inclusive(mode, t0_us):
+    _onset_boundary_observation(t0_us, mode).validate()
+
+
+@pytest.mark.parametrize("mode", ["MANUAL", "FBWA"])
+@pytest.mark.parametrize("t0_us", [3_999_999, 16_000_001])
+def test_pilot_t0_outside_search_window_rejected(mode, t0_us):
+    with pytest.raises(BatteryPackHistoryFormatError, match="Pilot T0"):
+        _onset_boundary_observation(t0_us, mode).validate()
+
+
+def test_auto_onset_does_not_inherit_pilot_search_window():
+    _onset_boundary_observation(17_000_000, "AUTO").validate()
+
+
+@pytest.mark.parametrize("values", [
+    {"pre_voltage_v": -1.0, "loaded_voltage_v": -2.0,
+     "observed_voltage_change_v": 1.0},
+    {"pre_voltage_v": 0.0, "loaded_voltage_v": 1.0,
+     "observed_voltage_change_v": -1.0},
+    {"pre_voltage_v": 1.0, "loaded_voltage_v": 0.0,
+     "observed_voltage_change_v": 1.0},
+    {"pre_current_a": -1.0, "current_change_a": 22.0},
+    {"pre_current_a": -10.0, "loaded_current_a": -1.0,
+     "current_change_a": 9.0},
+])
+def test_qualified_plateau_rejects_nonphysical_voltage_and_current(values):
+    with pytest.raises(BatteryPackHistoryFormatError, match="nonphysical"):
+        replace(_plateau(), **values).validate()
+
+
 def test_partial_load_can_keep_raw_extrema_without_inventing_t0_or_drop():
     load = LoadEvidenceV2(
         "unavailable", None, "unavailable", None, None, "unavailable", None,

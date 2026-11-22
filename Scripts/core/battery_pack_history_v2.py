@@ -196,6 +196,9 @@ class PlateauEvidenceV2:
         if self.status == "qualified":
             if any(value is None for value in values) or self.limitation is not None:
                 raise BatteryPackHistoryFormatError("Qualified plateau evidence is incomplete.")
+            if (self.pre_voltage_v <= 0 or self.loaded_voltage_v <= 0
+                    or self.pre_current_a < 0 or self.loaded_current_a < 0):
+                raise BatteryPackHistoryFormatError("Qualified plateau voltage/current is nonphysical.")
             if not (self.pre_start_us < self.pre_end_us < self.loaded_start_us
                     < self.loaded_end_us):
                 raise BatteryPackHistoryFormatError("Plateau intervals overlap or reverse.")
@@ -283,6 +286,11 @@ class BatteryPackObservationV2:
             raise BatteryPackHistoryFormatError("Telemetry contact inference must be explicit.")
         self.load.validate()
         self.plateau.validate()
+        if (self.takeoff_type == "PILOT_CONTROLLED"
+                and self.load.onset_status == "qualified"
+                and not self.logged_takeoff_us - 8_000_000 <= self.load.t0_us
+                <= self.logged_takeoff_us + 4_000_000):
+            raise BatteryPackHistoryFormatError("Pilot T0 is outside takeoff search window.")
         if self.load.t0_us is not None and not (self.flight_start_us - 8_000_000
                 <= self.load.t0_us <= self.flight_end_us):
             raise BatteryPackHistoryFormatError("T0 outside supported event context.")

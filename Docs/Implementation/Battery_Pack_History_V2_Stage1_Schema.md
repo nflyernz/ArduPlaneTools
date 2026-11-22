@@ -62,6 +62,11 @@ the loaded end to fall within T0 + 6 s, and loaded median current to reach
 both pre-onset + 5 A and 70% of the qualified launch reference. Raw-sample
 continuity remains an evaluator responsibility, since medians cannot prove it.
 Qualified recovery requires a qualified T1 and a later recovery timestamp.
+For MANUAL and FBWA, qualified T0 must fall within the pilot detector's
+inclusive logged-takeoff −8 s to +4 s search window. This pilot-specific
+bound is not imposed on AUTO. Qualified plateau medians require positive
+voltages and nonnegative currents; arithmetic consistency alone is
+insufficient to validate physical measurements.
 
 JSON uses sorted observation IDs and keys, rejects NaN, and is written by
 temporary-file replacement. Duplicate identical records are idempotent;
