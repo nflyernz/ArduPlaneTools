@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from analyses.log_selector import select_log_input
 from core.battery import (
     BatteryAnalysis,
@@ -6,11 +8,18 @@ from core.battery import (
 )
 from core.battery_failsafe import VoltageFailsafeAssessment
 from core.battery_pack_history import (
+    DEFAULT_HISTORY_PATH,
     BatteryPackHistoryError,
     BatteryPackHistoryStore,
 )
+from core.battery_pack_history_protection import (
+    DEFAULT_V2_HISTORY_PATH,
+    CoordinatedHistory,
+    recover_pending_deletion,
+)
 from core.battery_pack_history_recorder import BatteryPackHistoryRecorder
 from core.battery_pack_store import (
+    DEFAULT_STORE_PATH,
     BatteryPackStore,
     BatteryPackStoreError,
     LogPackState,
@@ -468,13 +477,24 @@ def format_battery_report(
 class BatteryPackManagementPresentation:
     """Manage persistent physical battery Pack IDs."""
 
-    def __init__(self, pack_store=None):
+    def __init__(self, pack_store=None, history_store_path=None, v2_history_store_path=None):
         self.pack_store = pack_store
+        self.history_store_path = (history_store_path or DEFAULT_HISTORY_PATH)
+        self.v2_history_store_path = (v2_history_store_path or
+                                      (DEFAULT_V2_HISTORY_PATH if history_store_path is None else
+                                       Path(history_store_path).with_name("battery_pack_history_v2.json")))
 
     def run(self):
         try:
+            pack_path = self.pack_store.path if self.pack_store is not None else DEFAULT_STORE_PATH
+            recovered = recover_pending_deletion(pack_path, self.history_store_path,
+                                                 self.v2_history_store_path)
+            if recovered and self.pack_store is not None:
+                self.pack_store._load()
             store = self.pack_store or BatteryPackStore()
-        except (BatteryPackStoreError, OSError) as exc:
+            CoordinatedHistory(store.path, self.history_store_path,
+                               self.v2_history_store_path)
+        except (BatteryPackStoreError, BatteryPackHistoryError, OSError) as exc:
             print()
             print(f"Battery pack management unavailable: {exc}")
             return
@@ -519,13 +539,18 @@ class BatteryPackManagementPresentation:
                     elif choice == "4":
                         store.restore_pack(pack_id)
                     else:
-                        history = BatteryPackHistoryStore()
+                        history = CoordinatedHistory(
+                            store.path,
+                            self.history_store_path,
+                            self.v2_history_store_path,
+                        )
                         plan = store.deletion_plan(pack_id, history)
                         confirmation = input(
                             f"Permanently delete Pack ID {pack_id}, change "
                             f"{len(plan.log_fingerprints)} associated BIN logs to "
                             "Not tracked, and delete "
-                            f"{len(plan.observation_ids)} history observations? "
+                            f"{len(plan.observation_ids)} v1 and "
+                            f"{len(plan.v2_observation_ids)} v2 history observations? "
                             "Original BIN files remain untouched. (yes/no): "
                         ).strip()
                         if confirmation != "yes":

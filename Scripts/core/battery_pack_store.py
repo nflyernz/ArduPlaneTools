@@ -10,7 +10,11 @@ from enum import Enum
 from pathlib import Path
 
 from .application_data import application_data_directory
-from .battery_pack_history import BatteryPackObservation
+from .battery_pack_history import (
+    DEFAULT_HISTORY_PATH,
+    BatteryPackHistoryStore,
+    BatteryPackObservation,
+)
 
 SCHEMA_VERSION = 5
 DEFAULT_STORE_PATH = application_data_directory() / "battery_packs.json"
@@ -48,6 +52,8 @@ class PackDeletionPlan:
     log_fingerprints: tuple[str, ...]
     observation_ids: tuple[str, ...]
     retained_history_owners: tuple[tuple[str, str], ...] = ()
+    v2_observation_ids: tuple[str, ...] = ()
+    store_revisions: tuple[str, str, str] | None = None
 
 
 def fingerprint_log(log_path: str | Path) -> str:
@@ -71,6 +77,13 @@ class BatteryPackStore:
         self._pack_aliases: dict[str, str] = {}
         self._log_filenames: dict[str, tuple[str, ...]] = {}
         self._load()
+        self._loaded_revision = self._file_revision()
+
+    def _file_revision(self) -> str:
+        try:
+            return hashlib.sha256(self.path.read_bytes()).hexdigest()
+        except FileNotFoundError:
+            return "missing"
 
     @property
     def pack_ids(self) -> tuple[str, ...]:
@@ -89,6 +102,7 @@ class BatteryPackStore:
 
     def unused_pack_ids(self, history_store: object) -> tuple[str, ...]:
         """Return active and archived packs with no saved evidence."""
+        history_store = self._protected_history(history_store)
         return tuple(
             pack for pack in self._pack_ids
             if self._deletion_blocker(pack, history_store) is None
@@ -250,31 +264,52 @@ class BatteryPackStore:
 
     def deletion_plan(self, pack_id: str, history_store: object) -> PackDeletionPlan:
         """Resolve observation ownership from durable ingest or retained provenance."""
+        history_store = self._protected_history(history_store)
         pack = self._require_pack(pack_id)
         fingerprints = tuple(sorted(
             fingerprint for fingerprint, association in self._associations.items()
             if association.pack_id == pack
         ))
+        from .battery_pack_history_protection import CoordinatedHistory, revision
+
+        coordinated = isinstance(history_store, CoordinatedHistory)
+        if coordinated and (self._loaded_revision != self._file_revision()
+                            or history_store.revisions != (
+                                revision(history_store.v1.path),
+                                revision(history_store.v2.path))):
+            raise BatteryPackStoreError("Pack or history changed after loading; refresh and retry.")
+        v1 = history_store.v1 if coordinated else history_store
+        v2 = history_store.v2 if coordinated else None
         observations = []
+        v2_observations = []
         retained_owners = []
-        for observation in history_store.observations:
-            association = self.association_for(observation.source_sha256)
-            owner = self.history_owner_for(observation)
-            if owner == pack:
-                observations.append(observation.observation_id)
-            elif association.pack_id == pack:
-                if owner not in self._pack_ids:
-                    raise BatteryPackStoreError(
-                        f"Cannot delete Pack ID {pack}: observation "
-                        f"{observation.observation_id} records Pack ID "
-                        f"{observation.pack_id_at_ingest}, "
-                        "which no longer exists. Restore that Pack ID or resolve "
-                        "the historical record, then retry."
+        for version, rows in (("v1", v1.observations),
+                              ("v2", v2.observations if v2 else ())):
+            for observation in rows:
+                association = self.association_for(observation.source_sha256)
+                owner = self.history_owner_for(observation)
+                if owner == pack:
+                    (v2_observations if version == "v2" else observations).append(
+                        observation.observation_id
                     )
-                retained_owners.append((observation.observation_id, owner))
+                elif association.pack_id == pack:
+                    if owner not in self._pack_ids:
+                        raise BatteryPackStoreError(
+                            f"Cannot delete Pack ID {pack}: observation "
+                            f"{observation.observation_id} records Pack ID "
+                            f"{observation.pack_id_at_ingest}, "
+                            "which no longer exists. Restore that Pack ID or resolve "
+                            "the historical record, then retry."
+                        )
+                    retained_owners.append((observation.observation_id, owner))
+                elif owner is None:
+                    raise BatteryPackStoreError(
+                        f"Observation {observation.observation_id} has no surviving Pack ID owner."
+                    )
         return PackDeletionPlan(
             pack, fingerprints, tuple(sorted(observations)),
-            tuple(sorted(retained_owners)),
+            tuple(sorted(retained_owners)), tuple(sorted(v2_observations)),
+            (revision(self.path), revision(v1.path), revision(v2.path)) if coordinated else None,
         )
 
     def delete_pack(
@@ -282,6 +317,14 @@ class BatteryPackStore:
         expected_plan: PackDeletionPlan | None = None,
     ) -> PackDeletionPlan:
         """Delete a pack and its history, rolling back if either write fails."""
+        from .battery_pack_history_protection import (
+            CoordinatedHistory,
+            delete_coordinated,
+        )
+
+        history_store = self._protected_history(history_store)
+        if isinstance(history_store, CoordinatedHistory):
+            return delete_coordinated(self, history_store, pack_id, expected_plan)
         plan = self.deletion_plan(pack_id, history_store)
         if expected_plan is not None and plan != expected_plan:
             raise BatteryPackStoreError(
@@ -354,6 +397,39 @@ class BatteryPackStore:
                     backup.unlink(missing_ok=True)
         return plan
 
+    def _protected_history(self, history_store: object) -> object:
+        """Require both stores for application data or an existing sibling v2 store."""
+        from .battery_pack_history_protection import (
+            DEFAULT_V2_HISTORY_PATH,
+            CoordinatedHistory,
+            journal_path,
+        )
+        from .battery_pack_history_v2 import BatteryPackHistoryV2Store
+
+        if isinstance(history_store, CoordinatedHistory):
+            if history_store.pack_path.resolve() != self.path.resolve():
+                raise BatteryPackStoreError(
+                    "Coordinated history belongs to a different Pack Store."
+                )
+            return history_store
+        if isinstance(history_store, BatteryPackHistoryV2Store):
+            v1_path = history_store.path.with_name("battery_pack_history.json")
+            if (v1_path.exists() or v1_path.is_symlink()
+                    or journal_path(self.path).exists()
+                    or self.path == DEFAULT_STORE_PATH
+                    or history_store.path == DEFAULT_V2_HISTORY_PATH):
+                return CoordinatedHistory(self.path, v1_path, history_store.path)
+            return history_store
+        if not isinstance(history_store, BatteryPackHistoryStore):
+            raise BatteryPackStoreError("A Battery Pack History store is required.")
+        v2_path = history_store.path.with_name("battery_pack_history_v2.json")
+        if (v2_path.exists() or v2_path.is_symlink()
+                or journal_path(self.path).exists()
+                or self.path == DEFAULT_STORE_PATH
+                or history_store.path == DEFAULT_HISTORY_PATH):
+            return CoordinatedHistory(self.path, history_store.path, v2_path)
+        return history_store
+
     def _deletion_blocker(self, pack_id: str, history_store: object) -> str | None:
         if any(a.pack_id == pack_id for a in self._associations.values()):
             return "Pack ID has log associations and cannot be deleted."
@@ -376,6 +452,7 @@ class BatteryPackStore:
 
     def _load(self) -> None:
         if not self.path.exists():
+            self._loaded_revision = "missing"
             return
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
@@ -386,6 +463,7 @@ class BatteryPackStore:
         (self._pack_ids, self._associations, self._archived_pack_ids,
          self._history_owners, self._log_filenames,
          self._pack_aliases) = self._validate_data(data)
+        self._loaded_revision = self._file_revision()
 
     def _save(
         self,
@@ -443,6 +521,7 @@ class BatteryPackStore:
         self._history_owners = history_owners
         self._log_filenames = log_filenames
         self._pack_aliases = pack_aliases
+        self._loaded_revision = self._file_revision()
 
     @classmethod
     def _validate_data(
