@@ -302,10 +302,6 @@ class BatteryPackStore:
                             "the historical record, then retry."
                         )
                     retained_owners.append((observation.observation_id, owner))
-                elif owner is None:
-                    raise BatteryPackStoreError(
-                        f"Observation {observation.observation_id} has no surviving Pack ID owner."
-                    )
         return PackDeletionPlan(
             pack, fingerprints, tuple(sorted(observations)),
             tuple(sorted(retained_owners)), tuple(sorted(v2_observations)),

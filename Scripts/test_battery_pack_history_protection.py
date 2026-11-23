@@ -151,6 +151,69 @@ def test_legacy_v1_delete_blocks_corrupt_sibling_v2(tmp_path):
     assert "Original" in BatteryPackStore(pack.path).pack_ids
 
 
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_unrelated_orphan_does_not_block_deletion_or_change_its_evidence(tmp_path, version):
+    pack, v1_path, v2_path, _, _, _ = _setup(tmp_path)
+    orphan = (v1_observation(source_sha256="c" * 64, pack_id="Missing")
+              if version == "v1" else v2_observation(source="c" * 64, pack="Missing"))
+    history_store = (BatteryPackHistoryStore(v1_path) if version == "v1"
+                     else BatteryPackHistoryV2Store(v2_path))
+    history_store.add_observations([orphan])
+    original_evidence = orphan.to_dict()
+    original_history_bytes = history_store.path.read_bytes()
+    history = CoordinatedHistory(pack.path, v1_path, v2_path)
+    plan = pack.deletion_plan("Original", history)
+    assert plan.observation_ids == plan.v2_observation_ids == ()
+    assert plan.retained_history_owners == ()
+
+    pack.delete_pack("Original", history, plan)
+
+    reloaded = type(history_store)(history_store.path)
+    assert reloaded.observations[0].to_dict() == original_evidence
+    assert history_store.path.read_bytes() == original_history_bytes
+    assert BatteryPackStore(pack.path).pack_ids == ("Other",)
+    assert BatteryPackStore(pack.path).history_owner_for(orphan) is None
+
+
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_orphan_on_bin_being_untracked_blocks_deletion(tmp_path, version):
+    pack, v1_path, v2_path, _, _, _ = _setup(tmp_path)
+    orphan = (v1_observation(source_sha256="c" * 64, pack_id="Missing")
+              if version == "v1" else v2_observation(source="c" * 64, pack="Missing"))
+    history_store = (BatteryPackHistoryStore(v1_path) if version == "v1"
+                     else BatteryPackHistoryV2Store(v2_path))
+    history_store.add_observations([orphan])
+    pack.associate("c" * 64, "Original")
+    paths = (pack.path, history_store.path)
+    before = tuple(path.read_bytes() for path in paths)
+
+    with pytest.raises(BatteryPackStoreError, match="no longer exists"):
+        pack.delete_pack("Original", CoordinatedHistory(pack.path, v1_path, v2_path))
+
+    assert tuple(path.read_bytes() for path in paths) == before
+    assert pack.pack_ids == ("Original", "Other")
+
+
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_deleting_owned_row_preserves_unrelated_orphan_record_bytes(tmp_path, version):
+    pack, v1_path, v2_path, owned_v1, owned_v2, _ = _setup(tmp_path)
+    orphan = (v1_observation(source_sha256="c" * 64, pack_id="Missing")
+              if version == "v1" else v2_observation(source="c" * 64, pack="Missing"))
+    owned = owned_v1 if version == "v1" else owned_v2
+    store = (BatteryPackHistoryStore(v1_path) if version == "v1"
+             else BatteryPackHistoryV2Store(v2_path))
+    store.add_observations([owned, orphan])
+    original = json.loads(store.path.read_text())["observations"][orphan.observation_id]
+    original_bytes = json.dumps(original, sort_keys=True).encode()
+
+    pack.delete_pack("Original", CoordinatedHistory(pack.path, v1_path, v2_path))
+
+    records = json.loads(store.path.read_text())["observations"]
+    assert owned.observation_id not in records
+    assert json.dumps(records[orphan.observation_id], sort_keys=True).encode() == original_bytes
+    assert BatteryPackStore(pack.path).history_owner_for(orphan) is None
+
+
 @pytest.mark.parametrize("which", ["v1", "v2"])
 def test_stale_history_revision_blocks_confirmed_deletion(tmp_path, which):
     pack, v1_path, v2_path, _, _, _ = _setup(tmp_path, v1=True, v2=True)
