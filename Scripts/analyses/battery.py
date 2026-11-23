@@ -946,13 +946,92 @@ def format_pack_performance_report(pack_store, history_store, pack_id=None,
         return original
     labelled_v1 = original.replace(
         f"Pack ID: {pack_id}",
-        f"Pack ID: {pack_id}\n\nV1 — EXISTING AUTO TAKEOFF HISTORY", 1,
+        f"Pack ID: {pack_id}\n\nEXISTING AUTO TAKEOFF HISTORY", 1,
     )
-    section = [labelled_v1, "", "V2 — TAKEOFF LOAD EVIDENCE",
-               "Separate analytical records; v1/v2 AUTO entries are not added as physical takeoffs."]
+    section = [labelled_v1, "", "TAKEOFF LOAD EVIDENCE",
+               ("Separate analytical records; AUTO entries across these sections "
+                "are not added as physical takeoffs.")]
     for index, row in enumerate(rows, 1):
-        section.extend(("", f"{index}. V2 observation", format_v2_pack_performance_observation(row)))
+        section.extend(("", f"{index}. Takeoff observation", format_v2_pack_performance_observation(row)))
     return "\n".join(section)
+
+
+def format_pack_performance_summary(pack_store, history_store, v2_history_store, pack_id):
+    """Four compact lines; keep existing and new AUTO records separate."""
+    v1 = pack_performance_observations(pack_store, history_store, pack_id)
+    v2 = sorted((row for row in v2_history_store.observations
+                 if pack_store.history_owner_for(row) == pack_id), key=_v2_sort_key)
+    sources = {row.source_sha256 for row in (*v1, *v2)}
+    modes = {mode: [row for row in v2 if row.flight_mode == mode]
+             for mode in ("AUTO", "MANUAL", "FBWA")}
+    bin_word = "BIN" if len(sources) == 1 else "BINs"
+    first = (f"Pack ID: {pack_id} | {len(sources)} source {bin_word} | "
+             f"MANUAL {len(modes['MANUAL'])}, FBWA {len(modes['FBWA'])}, "
+             f"AUTO {len(modes['AUTO'])}")
+    if v1:
+        first += f" | existing AUTO {len(v1)} (separate)"
+
+    def label(row):
+        return f"{row.flight_mode[:3]} F{row.flight_number}"
+
+    def measurement(value, unit):
+        return f"{value:.2f} {unit}" if value is not None else "—"
+
+    def span(values, unit):
+        if not values:
+            return "—"
+        if len(values) == 1:
+            return f"{values[0]:.2f} {unit}"
+        return f"{min(values):.2f}–{max(values):.2f} {unit}"
+
+    if v2 and len(v2) <= 2:
+        second = "Peak / min loaded: " + "; ".join(
+            f"{label(row)} {measurement(row.load.peak_current_a, 'A')} / "
+            f"{measurement(row.load.minimum_loaded_voltage_v, 'V')}"
+            for row in v2)
+    elif v2:
+        peaks = [row.load.peak_current_a for row in v2
+                 if row.load.peak_current_a is not None]
+        minima = [row.load.minimum_loaded_voltage_v for row in v2
+                  if row.load.minimum_loaded_voltage_v is not None]
+        second = (f"Peak / min loaded ({len(v2)} records): "
+                  f"{span(peaks, 'A')} / {span(minima, 'V')}")
+    else:
+        second = "Peak / min loaded: unavailable"
+    if v1:
+        historical = [row for row in v1 if row.peak_current_a is not None
+                      or row.minimum_loaded_voltage_v is not None]
+        peaks = [row.peak_current_a for row in historical if row.peak_current_a is not None]
+        minima = [row.minimum_loaded_voltage_v for row in historical
+                  if row.minimum_loaded_voltage_v is not None]
+        existing = f"{span(peaks, 'A')} / {span(minima, 'V')}"
+        second += f" | existing AUTO: {existing}"
+
+    compared = [row for row in v2 if row.plateau.status == "qualified"]
+    if compared and len(v2) <= 2:
+        third = "Qualified sustained-load ΔV: " + "; ".join(
+            f"{label(row)} {measurement(row.plateau.observed_voltage_change_v, 'V')}"
+            for row in compared)
+    elif compared:
+        values = [row.plateau.observed_voltage_change_v for row in compared]
+        third = f"Qualified sustained-load ΔV ({len(compared)}): {span(values, 'V')}"
+    else:
+        third = "Qualified sustained-load ΔV: unavailable"
+
+    if v2:
+        def tally(values):
+            return "/".join(str(sum(value == status for value in values))
+                            for status in ("qualified", "partial", "unavailable"))
+
+        onset = tally([row.load.onset_status for row in v2])
+        drop = tally([row.load.voltage_drop_status for row in v2])
+        unavailable_plateau = sum(row.plateau.status != "qualified" for row in v2)
+        fourth = (f"Evidence Q/P/U: T0 {onset}; strict drop {drop}; "
+                  f"plateau {len(compared)}/0/{unavailable_plateau}; "
+                  "recovery unavailable")
+    else:
+        fourth = "Evidence: T0, strict drop and sustained-load comparison unavailable"
+    return f"{first}\n{second}\n{third}\n{fourth}"
 
 
 def open_pack_performance_histories(pack_path, v1_path, v2_path,

@@ -84,9 +84,9 @@ def test_v2_only_modes_quality_and_distinct_voltage_values(tmp_path):
     # A partial onset can retain raw extrema but cannot retain qualified T0 evidence.
     v2.add_observations([rows[0], rows[1], unavailable])
     text = _service(tmp_path).report("Pack A").text
-    assert "V1 — EXISTING AUTO TAKEOFF HISTORY" in text
+    assert "EXISTING AUTO TAKEOFF HISTORY" in text
     assert "No stored AUTO takeoff observations" in text
-    assert text.count("V2 observation") == 3
+    assert text.count("Takeoff observation") == 3
     assert "Takeoff: AUTO" in text and "Takeoff: MANUAL" in text and "Takeoff: FBWA" in text
     assert "Qualified low-current voltage drop: Qualified | 2.00 V" in text
     assert "Observed voltage difference: 1.50 V" in text
@@ -109,9 +109,9 @@ def test_mixed_overlap_ownership_reassignment_and_no_persistent_writes(tmp_path)
     before = tuple(path.read_bytes() for path in (pack.path, v1.path, v2.path))
     report = _service(tmp_path).report("Pack A").text
     assert "ALL AUTO TAKEOFFS" in report
-    assert report.count("V2 observation") == 1
+    assert report.count("Takeoff observation") == 1
     assert "Takeoff: AUTO" in report and "Takeoff: MANUAL" not in report
-    assert "not added as physical takeoffs" in report
+    assert "are not added as physical takeoffs" in report
     assert tuple(path.read_bytes() for path in (pack.path, v1.path, v2.path)) == before
     pack.rename_pack("Pack A", "Renamed")
     assert "Takeoff: AUTO" in _service(tmp_path).report("Renamed").text

@@ -250,7 +250,7 @@ class BatteryPackManagementService:
         noun = "observation" if added == 1 else "observations"
         return PackManagementResult(
             self._state(path, fingerprint, self._pack_store()),
-            f"Recorded {added} new v2 takeoff {noun} from {path.name} "
+            f"Recorded {added} new takeoff {noun} from {path.name} "
             f"for Pack ID {association.pack_id}.",
             added > 0, observations_added=added,
         )
@@ -312,8 +312,9 @@ class BatteryPackManagementService:
         plan = store.delete_pack(pack_id, history, current.plan)
         return PackManagementResult(self._state(expected.log_path, expected.fingerprint, self._pack_store()),
                                     f"Deleted Pack ID {pack_id}; marked {len(plan.log_fingerprints)} "
-                                    f"BIN logs Not tracked and removed {len(plan.observation_ids)} v1 and "
-                                    f"{len(plan.v2_observation_ids)} v2 history observations.", True)
+                                    f"BIN logs Not tracked and removed {len(plan.observation_ids)} "
+                                    f"existing AUTO and {len(plan.v2_observation_ids)} "
+                                    "takeoff load history observations.", True)
 
     @staticmethod
     def _revision(path: Path) -> str:

@@ -80,10 +80,34 @@ def test_gui_views_v2_history_without_original_bin(qt_app, tmp_path, make_window
     widget.pack_selector.setCurrentText("Pack A")
     widget.view_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None
-                and "V2 — TAKEOFF LOAD EVIDENCE" in widget.report.toPlainText())
+                and "TAKEOFF LOAD EVIDENCE" in widget.report.toPlainText())
     assert "Takeoff: FBWA" in widget.report.toPlainText()
     assert not (tmp_path / "history.json").exists()
     assert (pack.path.read_bytes(), v2.path.read_bytes()) == before
+
+
+def test_summary_panel_changes_with_selected_pack_and_detail_stays_scrollable(
+    qt_app, tmp_path, make_window,
+):
+    pack = BatteryPackStore(tmp_path / "packs.json")
+    pack.create_and_associate("a" * 64, "Pack A")
+    pack.create_and_associate("b" * 64, "Pack B")
+    v2 = BatteryPackHistoryV2Store(tmp_path / "battery_pack_history_v2.json")
+    v2.add_observations([v2_observation(source="a" * 64, pack="Pack A"),
+                         v2_observation(source="b" * 64, pack="Pack B", mode="MANUAL")])
+    window = make_window(_service(tmp_path))
+    widget = _open_and_wait(qt_app, window)
+    assert widget.summary.isReadOnly() and widget.report.isReadOnly()
+    assert widget.summary.maximumHeight() <= 120
+    widget.pack_selector.setCurrentText("Pack A")
+    assert "Pack ID: Pack A | 1 source BIN" in widget.summary.toPlainText()
+    widget.pack_selector.setCurrentText("Pack B")
+    assert "Pack ID: Pack B | 1 source BIN" in widget.summary.toPlainText()
+    assert "MANUAL 1" in widget.summary.toPlainText()
+    widget.view_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None
+                and "TAKEOFF LOAD EVIDENCE" in widget.report.toPlainText())
+    assert "Pack ID: Pack B" in widget.report.toPlainText()
 
 
 def test_empty_refresh_needs_no_bin_and_creates_no_persistence(

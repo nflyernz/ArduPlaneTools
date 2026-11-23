@@ -169,7 +169,6 @@ class MainWindow(QMainWindow):
         self.pack_delete_button: QPushButton | None = None
         self.pack_delete_preview_text: QPlainTextEdit | None = None
         self.pack_record_history_button: QPushButton | None = None
-        self.pack_record_history_v2_button: QPushButton | None = None
         self.pack_controls_scroll: QScrollArea | None = None
 
         self.setWindowTitle("ArduPlaneTools")
@@ -627,7 +626,7 @@ class MainWindow(QMainWindow):
             lifecycle_layout.addWidget(button, row, 2)
         self.pack_delete_preview_text = QPlainTextEdit()
         self.pack_delete_preview_text.setReadOnly(True)
-        self.pack_delete_preview_text.setMaximumHeight(130)
+        self.pack_delete_preview_text.setMaximumHeight(80)
         self.pack_delete_preview_text.setPlainText(
             "Select a Pack ID to preview associated BIN logs and history."
         )
@@ -669,29 +668,19 @@ class MainWindow(QMainWindow):
         rename_layout.addWidget(self.pack_rename_button, 2, 2)
         layout.addWidget(rename_group)
 
-        history_group = QGroupBox("Record AUTO takeoff history")
+        history_group = QGroupBox("Record takeoff history")
         history_layout = QHBoxLayout(history_group)
         history_layout.addWidget(
             QLabel(
-                "<b>Effect:</b> Adds supported AUTO takeoff data from this BIN "
-                "to the assigned pack's history."
+                "Adds supported AUTO, MANUAL and FBWA takeoff observations "
+                "from the selected BIN to its assigned pack's history."
             ),
             1,
         )
-        self.pack_record_history_button = QPushButton("Record history")
-        self.pack_record_history_button.clicked.connect(self.record_pack_history)
+        self.pack_record_history_button = QPushButton("Record takeoff history")
+        self.pack_record_history_button.clicked.connect(self.record_pack_history_v2)
         history_layout.addWidget(self.pack_record_history_button)
         layout.addWidget(history_group)
-
-        v2_group = QGroupBox("Record v2 takeoff history")
-        v2_layout = QHBoxLayout(v2_group)
-        v2_layout.addWidget(QLabel(
-            "<b>Effect:</b> Adds supported AUTO, MANUAL and FBWA takeoff "
-            "observations to Battery Pack History v2."), 1)
-        self.pack_record_history_v2_button = QPushButton("Record v2 takeoff history")
-        self.pack_record_history_v2_button.clicked.connect(self.record_pack_history_v2)
-        v2_layout.addWidget(self.pack_record_history_v2_button)
-        layout.addWidget(v2_group)
 
     def _request_pack_lookup(self) -> None:
         """Load pack state and optionally resolve the selected BIN."""
@@ -819,42 +808,20 @@ class MainWindow(QMainWindow):
             ),
         )
 
-    def record_pack_history(self) -> None:
-        """Confirm explicit whole-BIN AUTO takeoff history recording."""
-        state = self._current_pack_state()
-        if (
-            state is None
-            or state.association.state is not LogPackState.TRACKED
-            or state.association.pack_id is None
-        ):
-            return
-        if not self._confirm_pack_action(
-            "Record Battery History",
-            f"Source BIN: {state.log_path.name}\n"
-            f"Tracked Pack ID: {state.association.pack_id}\n\n"
-            "Record all supported AUTO takeoff observations from this BIN?",
-        ):
-            return
-        self._start_pack_mutation(
-            "history",
-            state,
-            lambda _path: self._pack_management_service.record_history(state),
-        )
-
     def record_pack_history_v2(self) -> None:
-        """Confirm the distinct v2 recording action before starting its worker."""
+        """Confirm takeoff recording before starting its worker."""
         state = self._current_pack_state()
         if (state is None or state.log_path is None
                 or state.association.state is not LogPackState.TRACKED
                 or state.association.pack_id is None):
             return
         if not self._confirm_pack_action(
-            "Record Battery History v2",
+            "Record takeoff history",
             "Record supported AUTO, MANUAL and FBWA takeoff observations "
-            "from this BIN into Battery Pack History v2?\n\n"
+            "from this BIN into its assigned pack's history?\n\n"
             f"Source BIN: {state.log_path.name}\n"
             f"Assigned Pack ID: {state.association.pack_id}\n\n"
-            "Existing v2 observations will be preserved. Matching observations "
+            "Existing observations will be preserved. Matching observations "
             "will not be duplicated. Conflicting evidence will stop recording.",
         ):
             return
@@ -922,8 +889,8 @@ class MainWindow(QMainWindow):
             "This Pack ID has:\n\n"
             f"• {log_count} associated BIN {'log' if log_count == 1 else 'logs'}\n"
             f"• {history_count} battery history observations "
-            f"(v1: {len(plan.observation_ids)}, "
-            f"v2: {len(plan.v2_observation_ids)})\n\n"
+            f"(existing AUTO: {len(plan.observation_ids)}, "
+            f"takeoff load: {len(plan.v2_observation_ids)})\n\n"
             "Associated BIN logs:\n"
             f"{self._associated_log_lines(preview)}\n\n"
             "Deleting this Pack ID will:\n\n"
@@ -991,8 +958,8 @@ class MainWindow(QMainWindow):
                     f"Associated BIN logs: {len(preview.associated_logs)}\n"
                     f"{self._associated_log_lines(preview)}\n"
                     f"Battery history observations to delete: {count} "
-                    f"(v1: {len(preview.plan.observation_ids)}, "
-                    f"v2: {len(preview.plan.v2_observation_ids)})\n"
+                    f"(existing AUTO: {len(preview.plan.observation_ids)}, "
+                    f"takeoff load: {len(preview.plan.v2_observation_ids)})\n"
                     "Other Pack ID observations retained: "
                     f"{len(preview.plan.retained_history_owners)}"
                 )
@@ -1196,11 +1163,6 @@ class MainWindow(QMainWindow):
                 and association is not None
                 and association.state is LogPackState.TRACKED
             )
-            if self.pack_record_history_v2_button is not None:
-                self.pack_record_history_v2_button.setEnabled(
-                    source_ready and association is not None
-                    and association.state is LogPackState.TRACKED
-                )
         for combo, button, ids in (
             (self.pack_archive_combo, self.pack_archive_button, pack_ids),
             (self.pack_restore_combo, self.pack_restore_button,
