@@ -877,7 +877,7 @@ class MainWindow(QMainWindow):
     def _confirm_pack_deletion(self, preview) -> bool:
         plan = preview.plan
         log_count = len(plan.log_fingerprints)
-        history_count = len(plan.observation_ids)
+        history_count = len(plan.observation_ids) + len(plan.v2_observation_ids)
         retained_count = len(plan.retained_history_owners)
         dialog = QMessageBox(self)
         dialog.setWindowTitle(f"Delete Pack ID — {plan.pack_id}?")
@@ -885,8 +885,9 @@ class MainWindow(QMainWindow):
             f"Delete Pack ID — {plan.pack_id}?\n\n"
             "This Pack ID has:\n\n"
             f"• {log_count} associated BIN {'log' if log_count == 1 else 'logs'}\n"
-            f"• {history_count} battery history "
-            f"{'observation' if history_count == 1 else 'observations'}\n\n"
+            f"• {history_count} battery history observations "
+            f"(v1: {len(plan.observation_ids)}, "
+            f"v2: {len(plan.v2_observation_ids)})\n\n"
             "Associated BIN logs:\n"
             f"{self._associated_log_lines(preview)}\n\n"
             "Deleting this Pack ID will:\n\n"
@@ -948,12 +949,14 @@ class MainWindow(QMainWindow):
                 message = f"Deletion blocked for {pack_id}: {exc}"
             else:
                 self._pack_delete_preview = preview
-                count = len(preview.plan.observation_ids)
+                count = len(preview.plan.observation_ids) + len(preview.plan.v2_observation_ids)
                 message = (
                     f"Pack ID: {pack_id}\n"
                     f"Associated BIN logs: {len(preview.associated_logs)}\n"
                     f"{self._associated_log_lines(preview)}\n"
-                    f"Battery history observations to delete: {count}\n"
+                    f"Battery history observations to delete: {count} "
+                    f"(v1: {len(preview.plan.observation_ids)}, "
+                    f"v2: {len(preview.plan.v2_observation_ids)})\n"
                     "Other Pack ID observations retained: "
                     f"{len(preview.plan.retained_history_owners)}"
                 )

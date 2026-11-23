@@ -8,7 +8,13 @@ from core.battery_pack_history import (
     DEFAULT_HISTORY_PATH,
     BatteryPackHistoryStore,
 )
+from core.battery_pack_history_protection import (
+    DEFAULT_V2_HISTORY_PATH,
+    CoordinatedHistory,
+    recover_pending_deletion,
+)
 from core.battery_pack_history_recorder import BatteryPackHistoryRecorder
+from core.battery_pack_history_v2 import BatteryPackHistoryV2Store
 from core.battery_pack_store import (
     DEFAULT_STORE_PATH,
     BatteryPackStore,
@@ -57,6 +63,7 @@ class PackDeletionPreview:
     pack_revision: str
     history_revision: str
     associated_logs: tuple["AssociatedLogDisplay", ...] = ()
+    v2_history_revision: str = ""
 
 
 @dataclass(frozen=True)
@@ -76,16 +83,23 @@ class BatteryPackManagementService:
         *,
         pack_store_path: str | Path = DEFAULT_STORE_PATH,
         history_store_path: str | Path = DEFAULT_HISTORY_PATH,
+        v2_history_store_path: str | Path | None = None,
         pack_store_factory=BatteryPackStore,
         history_store_factory=BatteryPackHistoryStore,
+        v2_history_store_factory=BatteryPackHistoryV2Store,
         config_factory=Config,
         reader_factory=FlightReader,
         recorder_factory=BatteryPackHistoryRecorder,
     ):
         self._pack_store_path = Path(pack_store_path)
         self._history_store_path = Path(history_store_path)
+        self._v2_history_store_path = Path(v2_history_store_path) if v2_history_store_path is not None else (
+            DEFAULT_V2_HISTORY_PATH if self._history_store_path == DEFAULT_HISTORY_PATH
+            else self._history_store_path.with_name("battery_pack_history_v2.json")
+        )
         self._pack_store_factory = pack_store_factory
         self._history_store_factory = history_store_factory
+        self._v2_history_store_factory = v2_history_store_factory
         self._config_factory = config_factory
         self._reader_factory = reader_factory
         self._recorder_factory = recorder_factory
@@ -217,7 +231,7 @@ class BatteryPackManagementService:
     def preview_delete(self, expected: PackManagementState, pack_id: str) -> PackDeletionPreview:
         """Read the impact of deletion without changing either store."""
         store = self._validated_pack_context(expected)
-        history = self._history_store_factory(self._history_store_path)
+        history = self._history_context()
         plan = store.deletion_plan(pack_id, history)
         associated_logs = []
         for fingerprint in plan.log_fingerprints:
@@ -231,7 +245,7 @@ class BatteryPackManagementService:
             associated_logs.append(AssociatedLogDisplay(
                 fingerprint, tuple(names),
                 sum(observation.source_sha256 == fingerprint
-                    and observation.observation_id in plan.observation_ids
+                    and observation.observation_id in (*plan.observation_ids, *plan.v2_observation_ids)
                     for observation in history.observations),
             ))
         return PackDeletionPreview(
@@ -239,6 +253,7 @@ class BatteryPackManagementService:
             self._revision(self._pack_store_path),
             self._revision(self._history_store_path),
             tuple(associated_logs),
+            self._revision(self._v2_history_store_path),
         )
 
     def delete(
@@ -252,12 +267,12 @@ class BatteryPackManagementService:
                 "Pack associations or history changed after confirmation; refresh and try again."
             )
         store = self._validated_pack_context(expected)
-        history = self._history_store_factory(self._history_store_path)
+        history = self._history_context()
         plan = store.delete_pack(pack_id, history, current.plan)
         return PackManagementResult(self._state(expected.log_path, expected.fingerprint, self._pack_store()),
                                     f"Deleted Pack ID {pack_id}; marked {len(plan.log_fingerprints)} "
-                                    f"BIN logs Not tracked and removed {len(plan.observation_ids)} "
-                                    "history observations.", True)
+                                    f"BIN logs Not tracked and removed {len(plan.observation_ids)} v1 and "
+                                    f"{len(plan.v2_observation_ids)} v2 history observations.", True)
 
     @staticmethod
     def _revision(path: Path) -> str:
@@ -277,7 +292,7 @@ class BatteryPackManagementService:
             raise StalePackManagementStateError(
                 "The selected BIN content changed after confirmation."
             )
-        store = self._pack_store()
+        store = self._validated_pack_context(expected)
         if store.association_for(fingerprint) != expected.association:
             raise StalePackManagementStateError(
                 "The selected BIN association changed after confirmation."
@@ -292,10 +307,23 @@ class BatteryPackManagementService:
             raise StalePackManagementStateError(
                 "Pack IDs or associations changed; refresh and try again."
             )
+        self._history_context()
+        if self._revision(self._pack_store_path) != expected.pack_revision:
+            raise StalePackManagementStateError(
+                "Pack data changed during history recovery; refresh and try again."
+            )
         return store
 
     def _pack_store(self) -> BatteryPackStore:
+        recover_pending_deletion(self._pack_store_path, self._history_store_path,
+                                 self._v2_history_store_path)
         return self._pack_store_factory(self._pack_store_path)
+
+    def _history_context(self) -> CoordinatedHistory:
+        return CoordinatedHistory(
+            self._pack_store_path, self._history_store_path, self._v2_history_store_path,
+            self._history_store_factory, self._v2_history_store_factory,
+        )
 
     def _state(
         self,
@@ -303,7 +331,7 @@ class BatteryPackManagementService:
         fingerprint: str | None,
         store: BatteryPackStore,
     ) -> PackManagementState:
-        history_store = self._history_store_factory(self._history_store_path)
+        history_store = self._history_context()
         return PackManagementState(
             log_path=path,
             fingerprint=fingerprint,
