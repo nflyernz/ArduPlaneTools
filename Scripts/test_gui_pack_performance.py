@@ -13,6 +13,7 @@ pytest.importorskip("PySide6")
 from analyses.battery import BatteryPackPerformancePresentation
 from core import battery_pack_history
 from core.battery_pack_history import BatteryPackHistoryStore
+from core.battery_pack_history_v2 import BatteryPackHistoryV2Store
 from core.battery_pack_store import BatteryPackStore
 from gui import MainWindow
 from gui.pack_performance_adapter import (
@@ -21,6 +22,7 @@ from gui.pack_performance_adapter import (
 )
 from PySide6.QtWidgets import QPushButton
 from test_battery_pack_history import _observation
+from test_battery_pack_history_v2 import _observation as v2_observation
 from test_battery_pack_performance import _event, _inputs
 
 
@@ -64,6 +66,24 @@ def _open_and_wait(qt_app, window):
     window.show_analysis_tab("Pack Performance")
     _wait_until(qt_app, lambda: window._analysis_thread is None)
     return window._pack_performance.widget
+
+
+def test_gui_views_v2_history_without_original_bin(qt_app, tmp_path, make_window):
+    pack = BatteryPackStore(tmp_path / "packs.json")
+    pack.create_and_associate("a" * 64, "Pack A")
+    v2 = BatteryPackHistoryV2Store(tmp_path / "battery_pack_history_v2.json")
+    v2.add_observations([v2_observation(source="a" * 64)])
+    before = pack.path.read_bytes(), v2.path.read_bytes()
+    window = make_window(_service(tmp_path))
+    widget = _open_and_wait(qt_app, window)
+    assert window.selected_log is None
+    widget.pack_selector.setCurrentText("Pack A")
+    widget.view_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None
+                and "V2 — TAKEOFF LOAD EVIDENCE" in widget.report.toPlainText())
+    assert "Takeoff: FBWA" in widget.report.toPlainText()
+    assert not (tmp_path / "history.json").exists()
+    assert (pack.path.read_bytes(), v2.path.read_bytes()) == before
 
 
 def test_empty_refresh_needs_no_bin_and_creates_no_persistence(
