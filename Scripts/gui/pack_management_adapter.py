@@ -15,6 +15,7 @@ from core.battery_pack_history_protection import (
 )
 from core.battery_pack_history_recorder import BatteryPackHistoryRecorder
 from core.battery_pack_history_v2 import BatteryPackHistoryV2Store
+from core.battery_pack_history_v2_recorder import BatteryPackHistoryV2Recorder
 from core.battery_pack_store import (
     DEFAULT_STORE_PATH,
     BatteryPackStore,
@@ -90,6 +91,7 @@ class BatteryPackManagementService:
         config_factory=Config,
         reader_factory=FlightReader,
         recorder_factory=BatteryPackHistoryRecorder,
+        v2_recorder_factory=BatteryPackHistoryV2Recorder,
     ):
         self._pack_store_path = Path(pack_store_path)
         self._history_store_path = Path(history_store_path)
@@ -103,6 +105,7 @@ class BatteryPackManagementService:
         self._config_factory = config_factory
         self._reader_factory = reader_factory
         self._recorder_factory = recorder_factory
+        self._v2_recorder_factory = v2_recorder_factory
 
     def lookup(self, log_path: Path) -> PackManagementState:
         """Hash one BIN and resolve its association without writing."""
@@ -212,6 +215,44 @@ class BatteryPackManagementService:
             f"Recorded {added} new AUTO takeoff {noun} from {path.name}.",
             added > 0,
             observations_added=added,
+        )
+
+    def record_history_v2(self, expected: PackManagementState) -> PackManagementResult:
+        """Explicitly record supported v2 takeoffs from one confirmed tracked BIN."""
+        path, fingerprint, store = self._validated_context(expected)
+        association = store.association_for(fingerprint)
+        if association.state is not LogPackState.TRACKED or association.pack_id is None:
+            raise StalePackManagementStateError(
+                "The selected BIN no longer has a tracked Pack ID."
+            )
+        history_revisions = (self._revision(self._history_store_path),
+                             self._revision(self._v2_history_store_path))
+        config = self._config_factory("Config/battery.yaml")
+        flight_log = self._reader_factory(path, config=config).read()
+
+        def pre_write():
+            current_path, current_fingerprint, current_store = self._validated_context(expected)
+            current = current_store.association_for(current_fingerprint)
+            if (current_path != path or current_fingerprint != fingerprint
+                    or current != association
+                    or current.state is not LogPackState.TRACKED
+                    or (self._revision(self._history_store_path),
+                        self._revision(self._v2_history_store_path)) != history_revisions):
+                raise StalePackManagementStateError(
+                    "BIN, Pack assignment or history changed during analysis; refresh and try again."
+                )
+
+        added = self._v2_recorder_factory(config).record(
+            flight_log, path, fingerprint, association.pack_id,
+            self._v2_history_store_factory(self._v2_history_store_path),
+            pre_write=pre_write,
+        )
+        noun = "observation" if added == 1 else "observations"
+        return PackManagementResult(
+            self._state(path, fingerprint, self._pack_store()),
+            f"Recorded {added} new v2 takeoff {noun} from {path.name} "
+            f"for Pack ID {association.pack_id}.",
+            added > 0, observations_added=added,
         )
 
     def archive(self, expected: PackManagementState, pack_id: str) -> PackManagementResult:

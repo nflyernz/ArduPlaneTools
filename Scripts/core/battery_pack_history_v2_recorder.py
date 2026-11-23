@@ -23,7 +23,8 @@ class BatteryPackHistoryV2Recorder:
     def __init__(self, config):
         self.config = config
 
-    def record(self, flight_log, log_path, source_sha256, pack_id, store):
+    def record(self, flight_log, log_path, source_sha256, pack_id, store,
+               pre_write=None):
         if not isinstance(store, BatteryPackHistoryV2Store):
             raise BatteryPackHistoryError("An explicit v2 history store is required.")
         path = Path(log_path)
@@ -31,9 +32,8 @@ class BatteryPackHistoryV2Recorder:
             raise BatteryPackHistoryError("Source BIN SHA-256 does not match its contents.")
         if not isinstance(pack_id, str) or not pack_id.strip() or pack_id != pack_id.strip():
             raise BatteryPackHistoryError("A normalized Pack ID is required.")
-        if not flight_log.flights:
-            return 0
-        probe = BatteryProcessor(flight_log, flight_log.flights[0], 0, config=self.config)
+        probe = (BatteryProcessor(flight_log, flight_log.flights[0], 0,
+                                  config=self.config) if flight_log.flights else None)
         candidates = []
         for flight_number, window in enumerate(flight_log.flights, 1):
             for instance in probe.available_instances():
@@ -65,6 +65,8 @@ class BatteryPackHistoryV2Recorder:
         # A caller may have retained this store while its file changed on disk.
         # Reject malformed or unsupported existing history before any write.
         store._load()
+        if pre_write is not None:
+            pre_write()
         return store.add_observations(candidates)
 
 

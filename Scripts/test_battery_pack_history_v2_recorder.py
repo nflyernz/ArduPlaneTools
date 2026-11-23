@@ -138,6 +138,23 @@ def test_auto_without_logged_window_start_is_excluded(tmp_path, monkeypatch):
     assert not store.path.exists()
 
 
+def test_empty_flights_still_run_pre_write_validation(tmp_path):
+    source = tmp_path / "flight.bin"
+    source.write_bytes(b"no FlightWindows")
+    store = BatteryPackHistoryV2Store(tmp_path / "v2.json")
+    calls = []
+    recorder = BatteryPackHistoryV2Recorder(None)
+    assert recorder.record(FlightLog(flights=[]), source, fingerprint_log(source),
+                           "Pack A", store, pre_write=lambda: calls.append("validated")) == 0
+    assert calls == ["validated"]
+    assert not store.path.exists()
+    with pytest.raises(RuntimeError, match="stale empty flight"):
+        recorder.record(FlightLog(flights=[]), source, fingerprint_log(source),
+                        "Pack A", store,
+                        pre_write=lambda: (_ for _ in ()).throw(RuntimeError("stale empty flight")))
+    assert not store.path.exists()
+
+
 def test_conflicting_batch_does_not_rewrite_valid_v1_or_v2(tmp_path, monkeypatch):
     source = tmp_path / "flight.bin"
     source.write_bytes(b"batch")

@@ -14,6 +14,7 @@ pytest.importorskip("PySide6")
 import core.battery_pack_store as pack_store_module
 from analyses.battery import pack_performance_observations
 from core.battery_pack_history import BatteryPackHistoryStore
+from core.battery_pack_history_v2 import BatteryPackHistoryV2Store
 from core.battery_pack_store import (
     BatteryPackStore,
     BatteryPackStoreError,
@@ -45,6 +46,139 @@ def _bin(tmp_path, name, content=b"BIN evidence"):
     path = tmp_path / name
     path.write_bytes(content)
     return path.resolve()
+
+
+def test_v2_record_control_is_separate_confirmed_and_uses_worker(
+    tmp_path, qt_app, make_window, monkeypatch,
+):
+    from test_pilot_takeoff import _log as pilot_log
+
+    class Reader:
+        def __init__(self, _path, config=None):
+            pass
+
+        def read(self):
+            return pilot_log()
+
+    service = _service(tmp_path, reader_factory=Reader)
+    source = _bin(tmp_path, "flight.bin")
+    service.create_and_assign(service.lookup(source), "Pack A")
+    window = make_window(service)
+    window.show_analysis_tab("Battery Pack Management")
+    window.set_selected_log(source)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert window.pack_record_history_button.isEnabled()
+    assert window.pack_record_history_v2_button.isEnabled()
+    confirmations = []
+    monkeypatch.setattr(window, "_confirm_pack_action",
+                        lambda title, message: confirmations.append((title, message)) or False)
+    window.pack_record_history_v2_button.click()
+    assert not (tmp_path / "battery_pack_history_v2.json").exists()
+    assert "MANUAL and FBWA" in confirmations[0][1]
+    assert "Assigned Pack ID: Pack A" in confirmations[0][1]
+    monkeypatch.setattr(window, "_confirm_pack_action", lambda *_args: True)
+    window.pack_record_history_v2_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None
+                and "2 new v2 takeoff observations" in
+                window.report_for("Battery Pack Management").toPlainText())
+    assert "2 new v2 takeoff observations from flight.bin for Pack ID Pack A" in (
+        window.report_for("Battery Pack Management").toPlainText()
+    )
+    v2_path = tmp_path / "battery_pack_history_v2.json"
+    assert v2_path.exists()
+    observations = BatteryPackHistoryV2Store(v2_path).observations
+    assert len(observations) == 2
+    assert {row.flight_mode for row in observations} == {"MANUAL", "FBWA"}
+    assert all(row.takeoff_type == "PILOT_CONTROLLED"
+               and row.pack_id_at_ingest == "Pack A" for row in observations)
+    assert not (tmp_path / "history.json").exists()
+
+
+def test_v2_record_worker_error_is_reported_without_history_write(
+    tmp_path, qt_app, make_window, monkeypatch,
+):
+    service = _service(tmp_path)
+    source = _bin(tmp_path, "flight.bin")
+    service.create_and_assign(service.lookup(source), "Pack A")
+    window = make_window(service)
+    window.show_analysis_tab("Battery Pack Management")
+    window.set_selected_log(source)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    monkeypatch.setattr(window, "_confirm_pack_action", lambda *_args: True)
+    monkeypatch.setattr(service, "record_history_v2",
+                        lambda _state: (_ for _ in ()).throw(ValueError("invalid v2 history")))
+    window.pack_record_history_v2_button.click()
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert "invalid v2 history" in window.report_for("Battery Pack Management").toPlainText()
+    assert not (tmp_path / "battery_pack_history_v2.json").exists()
+
+
+def test_v2_button_tracks_selection_and_busy_state(tmp_path, qt_app, make_window):
+    service = _service(tmp_path)
+    tracked = _bin(tmp_path, "tracked.bin", b"tracked")
+    unseen = _bin(tmp_path, "unseen.bin", b"unseen")
+    service.create_and_assign(service.lookup(tracked), "Pack A")
+    window = make_window(service)
+    window.show_analysis_tab("Battery Pack Management")
+    window.set_selected_log(unseen)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert not window.pack_record_history_v2_button.isEnabled()
+    BatteryPackStore(tmp_path / "packs.json").mark_not_tracked(fingerprint_log(tracked))
+    window.set_selected_log(tracked)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert not window.pack_record_history_v2_button.isEnabled()
+    service.assign_existing(service.lookup(tracked), "Pack A")
+    window.set_selected_log(unseen)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    window.set_selected_log(tracked)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    assert window.pack_record_history_v2_button.isEnabled()
+    assert window.pack_record_history_button.isEnabled()
+    window._analysis_thread = object()
+    window._update_analysis_controls()
+    assert not window.pack_record_history_v2_button.isEnabled()
+    window._analysis_thread = None
+    window._update_analysis_controls()
+
+
+def test_v2_confirmation_selection_change_and_repeat_activation_do_not_start_twice(
+    tmp_path, qt_app, make_window, monkeypatch,
+):
+    service = _service(tmp_path)
+    selected = _bin(tmp_path, "selected.bin", b"selected")
+    other = _bin(tmp_path, "other.bin", b"other")
+    service.create_and_assign(service.lookup(selected), "Pack A")
+    window = make_window(service)
+    window.show_analysis_tab("Battery Pack Management")
+    window.set_selected_log(selected)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    calls = []
+    monkeypatch.setattr(window, "_start_pack_mutation",
+                        lambda *args: calls.append(args))
+
+    def change_selection(*_args):
+        window.set_selected_log(other)
+        return True
+
+    monkeypatch.setattr(window, "_confirm_pack_action", change_selection)
+    window.record_pack_history_v2()
+    assert calls == []
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    window.set_selected_log(selected)
+    _wait_until(qt_app, lambda: window._analysis_thread is None)
+    monkeypatch.setattr(window, "_confirm_pack_action", lambda *_args: True)
+
+    def start_once(*args):
+        calls.append(args)
+        window._analysis_thread = object()
+
+    monkeypatch.setattr(window, "_start_pack_mutation", start_once)
+    window.record_pack_history_v2()
+    window.record_pack_history_v2()
+    assert len(calls) == 1 and calls[0][0] == "history_v2"
+    window._analysis_thread = None
+    assert window.pack_record_history_button.isEnabled()
+    assert not (tmp_path / "battery_pack_history_v2.json").exists()
 
 
 def test_service_archive_restore_and_delete_survive_restart(tmp_path):
