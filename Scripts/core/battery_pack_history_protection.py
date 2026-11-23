@@ -13,6 +13,7 @@ from .battery_pack_history_v2 import BatteryPackHistoryV2Store
 from .battery_pack_store import BatteryPackStoreError
 
 DEFAULT_V2_HISTORY_PATH = DEFAULT_HISTORY_PATH.with_name("battery_pack_history_v2.json")
+WINDOWS_DIRECTORY_SYNC_UNAVAILABLE = os.name == "nt"
 
 
 class DeletionOutcomeUncertain(BatteryPackStoreError):
@@ -28,6 +29,10 @@ def revision(path):
 
 
 def _directory_sync(path):
+    if WINDOWS_DIRECTORY_SYNC_UNAVAILABLE:
+        # Windows cannot fsync a directory through os.open. File contents are
+        # fsynced separately; process-interruption recovery remains available.
+        return
     descriptor = os.open(path, os.O_RDONLY)
     try:
         os.fsync(descriptor)

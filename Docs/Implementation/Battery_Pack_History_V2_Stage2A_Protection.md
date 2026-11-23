@@ -56,6 +56,15 @@ no stores have yet been mutated. Filesystem or hardware failure that violates
 that ignore the journal are outside this transaction protocol; management checks
 loaded and confirmed revisions but cannot lock unrelated processes.
 
+On Windows, Python cannot open a directory with `os.open`, and Windows does not
+document `FlushFileBuffers` for directory handles. File and journal contents are
+still flushed, and ordinary write failures and process interruptions recover
+through the journal. Windows directory-entry persistence across sudden power loss
+is **not guaranteed**: a rename or journal creation may be lost even after file
+contents were flushed. A resulting incomplete active journal blocks management
+for manual investigation. The directory fsync behavior above applies to macOS
+and Linux only.
+
 Stage 2A does not record v2 observations, migrate history or change measurement
 or reporting semantics. Production pack deletion must continue to coordinate
 both stores before v2 ingestion can be enabled.

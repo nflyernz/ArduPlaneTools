@@ -292,7 +292,7 @@ class BatteryPackManagementService:
             raise StalePackManagementStateError(
                 "The selected BIN content changed after confirmation."
             )
-        store = self._pack_store()
+        store = self._validated_pack_context(expected)
         if store.association_for(fingerprint) != expected.association:
             raise StalePackManagementStateError(
                 "The selected BIN association changed after confirmation."
@@ -306,6 +306,11 @@ class BatteryPackManagementService:
                 or self._revision(self._pack_store_path) != expected.pack_revision):
             raise StalePackManagementStateError(
                 "Pack IDs or associations changed; refresh and try again."
+            )
+        self._history_context()
+        if self._revision(self._pack_store_path) != expected.pack_revision:
+            raise StalePackManagementStateError(
+                "Pack data changed during history recovery; refresh and try again."
             )
         return store
 

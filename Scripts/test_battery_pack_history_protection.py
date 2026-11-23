@@ -511,3 +511,55 @@ def test_terminal_blocks_rename_when_v2_is_malformed(tmp_path, monkeypatch, caps
     BatteryPackManagementPresentation(pack, v1_path, v2_path).run()
     assert "management unavailable" in capsys.readouterr().out
     assert BatteryPackStore(pack.path).pack_ids == ("Original", "Other")
+
+
+def test_windows_directory_sync_avoids_unsupported_directory_open(tmp_path, monkeypatch):
+    import core.battery_pack_history_protection as protection
+
+    monkeypatch.setattr(protection, "WINDOWS_DIRECTORY_SYNC_UNAVAILABLE", True)
+    monkeypatch.setattr(protection.os, "open", lambda *_args: pytest.fail("directory opened"))
+    protection._directory_sync(tmp_path)
+
+
+@pytest.mark.parametrize("operation", ["assign", "create", "rename", "archive", "restore"])
+def test_gui_mutation_rejects_v2_corrupted_after_lookup(tmp_path, operation):
+    service_type = _gui_adapter().BatteryPackManagementService
+    pack, v1_path, v2_path, _, _, _ = _setup(tmp_path, v1=True, v2=True)
+    if operation == "restore":
+        pack.archive_pack("Original")
+    selected = tmp_path / "selected.bin"
+    selected.write_bytes(b"selected source")
+    service = service_type(pack_store_path=pack.path, history_store_path=v1_path,
+                           v2_history_store_path=v2_path)
+    state = service.lookup(selected)
+    v2_path.write_text("{")
+    paths = (pack.path, v1_path, v2_path)
+    before = tuple(path.read_bytes() for path in paths)
+    actions = {
+        "assign": lambda: service.assign_existing(state, "Other"),
+        "create": lambda: service.create_and_assign(state, "New"),
+        "rename": lambda: service.rename(state, "Original", "Renamed"),
+        "archive": lambda: service.archive(state, "Original"),
+        "restore": lambda: service.restore(state, "Original"),
+    }
+    with pytest.raises(ValueError):
+        actions[operation]()
+    assert tuple(path.read_bytes() for path in paths) == before
+
+
+def test_terminal_rename_rejects_v2_corrupted_after_initial_preflight(tmp_path, monkeypatch):
+    pack, v1_path, v2_path, _, _, _ = _setup(tmp_path, v1=True, v2=True)
+    before = (pack.path.read_bytes(), v1_path.read_bytes())
+    responses = iter(["1", "1", "Renamed", "0"])
+
+    def answer(_prompt=""):
+        value = next(responses)
+        if value == "Renamed":
+            v2_path.write_text("{")
+        return value
+
+    monkeypatch.setattr("builtins.input", answer)
+    BatteryPackManagementPresentation(pack, v1_path, v2_path).run()
+    assert BatteryPackStore(pack.path).pack_ids == ("Original", "Other")
+    assert (pack.path.read_bytes(), v1_path.read_bytes()) == before
+    assert v2_path.read_text() == "{"

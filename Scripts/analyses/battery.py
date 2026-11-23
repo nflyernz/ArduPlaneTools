@@ -535,8 +535,10 @@ class BatteryPackManagementPresentation:
                     continue
                 try:
                     if choice == "3":
+                        self._preflight_mutation(store)
                         store.archive_pack(pack_id)
                     elif choice == "4":
+                        self._preflight_mutation(store)
                         store.restore_pack(pack_id)
                     else:
                         history = CoordinatedHistory(
@@ -562,6 +564,13 @@ class BatteryPackManagementPresentation:
 
             print("Invalid selection.")
 
+    def _preflight_mutation(self, store):
+        """Reject changed or invalid history before writing Pack metadata."""
+        CoordinatedHistory(store.path, self.history_store_path,
+                           self.v2_history_store_path)
+        if store._loaded_revision != store._file_revision():
+            raise BatteryPackStoreError("Pack data changed during history recovery; retry.")
+
     def _rename_pack(self, store):
         if not store.pack_ids:
             print()
@@ -582,8 +591,9 @@ class BatteryPackManagementPresentation:
             return
 
         try:
+            self._preflight_mutation(store)
             store.rename_pack(pack_id, new_pack_id)
-        except BatteryPackStoreError as exc:
+        except (BatteryPackStoreError, BatteryPackHistoryError) as exc:
             print()
             print(exc)
             return
@@ -650,8 +660,9 @@ class BatteryPackManagementPresentation:
                     return
 
                 try:
+                    self._preflight_mutation(store)
                     store.associate(fingerprint, pack_id, log_path.name)
-                except BatteryPackStoreError as exc:
+                except (BatteryPackStoreError, BatteryPackHistoryError) as exc:
                     print()
                     print(exc)
                     return
@@ -669,8 +680,9 @@ class BatteryPackManagementPresentation:
                 pack_id = input("\nNew Pack ID: ").strip()
 
                 try:
+                    self._preflight_mutation(store)
                     store.create_and_associate(fingerprint, pack_id, log_path.name)
-                except BatteryPackStoreError as exc:
+                except (BatteryPackStoreError, BatteryPackHistoryError) as exc:
                     print()
                     print(exc)
                     continue
