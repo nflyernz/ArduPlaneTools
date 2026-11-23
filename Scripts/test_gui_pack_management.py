@@ -14,6 +14,7 @@ pytest.importorskip("PySide6")
 import core.battery_pack_store as pack_store_module
 from analyses.battery import pack_performance_observations
 from core.battery_pack_history import BatteryPackHistoryStore
+from core.battery_pack_history_v2 import BatteryPackHistoryV2Store
 from core.battery_pack_store import (
     BatteryPackStore,
     BatteryPackStoreError,
@@ -77,9 +78,19 @@ def test_v2_record_control_is_separate_confirmed_and_uses_worker(
     assert "Assigned Pack ID: Pack A" in confirmations[0][1]
     monkeypatch.setattr(window, "_confirm_pack_action", lambda *_args: True)
     window.pack_record_history_v2_button.click()
-    _wait_until(qt_app, lambda: window._analysis_thread is None)
-    assert "2 new v2 takeoff observations" in window.statusBar().currentMessage()
-    assert (tmp_path / "battery_pack_history_v2.json").exists()
+    _wait_until(qt_app, lambda: window._analysis_thread is None
+                and "2 new v2 takeoff observations" in
+                window.report_for("Battery Pack Management").toPlainText())
+    assert "2 new v2 takeoff observations from flight.bin for Pack ID Pack A" in (
+        window.report_for("Battery Pack Management").toPlainText()
+    )
+    v2_path = tmp_path / "battery_pack_history_v2.json"
+    assert v2_path.exists()
+    observations = BatteryPackHistoryV2Store(v2_path).observations
+    assert len(observations) == 2
+    assert {row.flight_mode for row in observations} == {"MANUAL", "FBWA"}
+    assert all(row.takeoff_type == "PILOT_CONTROLLED"
+               and row.pack_id_at_ingest == "Pack A" for row in observations)
     assert not (tmp_path / "history.json").exists()
 
 
