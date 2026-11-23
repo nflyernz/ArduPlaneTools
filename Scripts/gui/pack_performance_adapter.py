@@ -5,6 +5,7 @@ from pathlib import Path
 
 from analyses.battery import (
     format_pack_performance_report,
+    format_pack_performance_summary,
     open_pack_performance_histories,
 )
 from core.battery_pack_history import (
@@ -21,6 +22,7 @@ class PackPerformanceIndex:
     """Known physical packs loaded from persistent storage."""
 
     pack_ids: tuple[str, ...]
+    summaries: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,7 @@ class PackPerformanceReport:
 
     pack_id: str
     text: str
+    summary: str = ""
 
 
 class BatteryPackPerformanceService:
@@ -57,8 +60,13 @@ class BatteryPackPerformanceService:
     def refresh(self) -> PackPerformanceIndex:
         """Reload known packs and validate that stored history is readable."""
         pack_store = self._pack_store()
-        self._histories()
-        return PackPerformanceIndex(pack_store.pack_ids)
+        history_store, v2_history_store = self._histories()
+        return PackPerformanceIndex(
+            pack_store.pack_ids,
+            tuple((pack_id, format_pack_performance_summary(
+                pack_store, history_store, v2_history_store, pack_id,
+            )) for pack_id in pack_store.pack_ids),
+        )
 
     def report(self, pack_id: str) -> PackPerformanceReport:
         """Return the shared CLI report for one currently known Pack ID."""
@@ -71,6 +79,9 @@ class BatteryPackPerformanceService:
                 history_store,
                 pack_id,
                 v2_history_store,
+            ),
+            format_pack_performance_summary(
+                pack_store, history_store, v2_history_store, pack_id,
             ),
         )
 

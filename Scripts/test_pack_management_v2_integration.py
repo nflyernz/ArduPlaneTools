@@ -56,6 +56,7 @@ def test_explicit_recording_replays_without_pack_or_v1_write(tmp_path):
     first = service.record_history_v2(state)
     assert first.observations_added == 2
     assert "flight.bin" in first.message and "Pack A" in first.message
+    assert "v2" not in first.message
     v2_before = (tmp_path / "v2.json").read_bytes()
     second = service.record_history_v2(first.state)
     assert second.observations_added == 0

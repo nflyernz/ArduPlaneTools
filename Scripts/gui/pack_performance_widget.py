@@ -11,12 +11,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .module_catalog import PACK_ID_PLACEHOLDER
 from .pack_performance_adapter import (
     BatteryPackPerformanceService,
     PackPerformanceIndex,
     PackPerformanceReport,
 )
-from .module_catalog import PACK_ID_PLACEHOLDER
 
 
 class PackPerformanceWidget(QWidget):
@@ -28,6 +28,7 @@ class PackPerformanceWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._busy = False
+        self._summaries: dict[str, str] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -48,6 +49,14 @@ class PackPerformanceWidget(QWidget):
         controls.addWidget(self.view_button)
         layout.addLayout(controls)
 
+        self.summary = QPlainTextEdit()
+        self.summary.setObjectName("pack_performance_summary")
+        self.summary.setReadOnly(True)
+        self.summary.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.summary.setMaximumHeight(112)
+        self.summary.setPlainText("Select a Pack ID and view its summary.")
+        layout.addWidget(self.summary)
+
         self.report = QPlainTextEdit()
         self.report.setObjectName("pack_performance_report")
         self.report.setReadOnly(True)
@@ -62,9 +71,11 @@ class PackPerformanceWidget(QWidget):
         selected = self.pack_selector.currentData()
         return selected if isinstance(selected, str) else None
 
-    def set_pack_ids(self, pack_ids: tuple[str, ...]) -> str:
+    def set_pack_ids(self, pack_ids: tuple[str, ...],
+                     summaries: tuple[tuple[str, str], ...] = ()) -> str:
         """Replace known IDs while retaining a still-valid selection."""
         previous = self.selected_pack_id
+        self._summaries = dict(summaries)
         self.pack_selector.blockSignals(True)
         self.pack_selector.clear()
         self.pack_selector.addItem(PACK_ID_PLACEHOLDER, None)
@@ -78,12 +89,14 @@ class PackPerformanceWidget(QWidget):
         if not pack_ids:
             message = "No known Battery Pack IDs."
             self.report.setPlainText(message)
+            self.summary.setPlainText(message)
         elif previous is not None and not retained:
             message = (
                 f"Pack ID {previous} is no longer registered. "
                 "No Pack ID is selected."
             )
             self.report.setPlainText(message)
+            self.summary.setPlainText("Select a Pack ID and view its summary.")
         else:
             message = "Pack IDs and stored history refreshed."
         return message
@@ -105,6 +118,13 @@ class PackPerformanceWidget(QWidget):
         self.view_button.setEnabled(
             not self._busy and self.selected_pack_id is not None
         )
+        if self.selected_pack_id is None:
+            self.summary.setPlainText("Select a Pack ID and view its summary.")
+        else:
+            self.summary.setPlainText(
+                self._summaries.get(self.selected_pack_id,
+                                    "Select View report to load this summary.")
+            )
 
     def _request_report(self) -> None:
         pack_id = self.selected_pack_id
@@ -152,14 +172,18 @@ class PackPerformanceController:
     def handle_success(self, result: object) -> bool:
         """Consume Pack Performance results from the shared worker."""
         if isinstance(result, PackPerformanceIndex):
-            message = self._require_widget().set_pack_ids(result.pack_ids)
+            message = self._require_widget().set_pack_ids(
+                result.pack_ids, result.summaries,
+            )
         elif isinstance(result, PackPerformanceReport):
             widget = self._require_widget()
             if result.pack_id != widget.selected_pack_id:
                 message = "The selected Pack ID changed; refresh and try again."
                 widget.report.setPlainText(message)
+                widget.summary.setPlainText(message)
             else:
                 widget.report.setPlainText(result.text)
+                widget.summary.setPlainText(result.summary)
                 message = f"Pack Performance report loaded for {result.pack_id}."
         else:
             return False
@@ -169,11 +193,13 @@ class PackPerformanceController:
     def handle_failure(self, exc: Exception) -> None:
         """Display a storage failure without changing persistent state."""
         message = f"Unable to load Pack Performance data: {exc}"
-        self._require_widget().report.setPlainText(
+        widget = self._require_widget()
+        widget.report.setPlainText(
             "Pack Performance Error\n"
             "======================\n"
             f"{message}"
         )
+        widget.summary.setPlainText(message)
         self.show_status(message)
 
     def set_busy(self, busy: bool) -> None:

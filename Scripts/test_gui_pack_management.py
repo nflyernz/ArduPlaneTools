@@ -48,7 +48,7 @@ def _bin(tmp_path, name, content=b"BIN evidence"):
     return path.resolve()
 
 
-def test_v2_record_control_is_separate_confirmed_and_uses_worker(
+def test_single_takeoff_record_control_is_confirmed_and_uses_worker(
     tmp_path, qt_app, make_window, monkeypatch,
 ):
     from test_pilot_takeoff import _log as pilot_log
@@ -68,20 +68,27 @@ def test_v2_record_control_is_separate_confirmed_and_uses_worker(
     window.set_selected_log(source)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
     assert window.pack_record_history_button.isEnabled()
-    assert window.pack_record_history_v2_button.isEnabled()
+    assert window.pack_record_history_button.text() == "Record takeoff history"
+    history_group = window.pack_record_history_button.parentWidget()
+    assert history_group.title() == "Record takeoff history"
+    assert len(history_group.findChildren(QPushButton)) == 1
+    assert "Adds supported AUTO, MANUAL and FBWA takeoff observations" in (
+        history_group.findChild(QLabel).text()
+    )
+    assert window.pack_delete_preview_text.maximumHeight() == 80
     confirmations = []
     monkeypatch.setattr(window, "_confirm_pack_action",
                         lambda title, message: confirmations.append((title, message)) or False)
-    window.pack_record_history_v2_button.click()
+    window.pack_record_history_button.click()
     assert not (tmp_path / "battery_pack_history_v2.json").exists()
     assert "MANUAL and FBWA" in confirmations[0][1]
     assert "Assigned Pack ID: Pack A" in confirmations[0][1]
     monkeypatch.setattr(window, "_confirm_pack_action", lambda *_args: True)
-    window.pack_record_history_v2_button.click()
+    window.pack_record_history_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None
-                and "2 new v2 takeoff observations" in
+                and "2 new takeoff observations" in
                 window.report_for("Battery Pack Management").toPlainText())
-    assert "2 new v2 takeoff observations from flight.bin for Pack ID Pack A" in (
+    assert "2 new takeoff observations from flight.bin for Pack ID Pack A" in (
         window.report_for("Battery Pack Management").toPlainText()
     )
     v2_path = tmp_path / "battery_pack_history_v2.json"
@@ -107,7 +114,7 @@ def test_v2_record_worker_error_is_reported_without_history_write(
     monkeypatch.setattr(window, "_confirm_pack_action", lambda *_args: True)
     monkeypatch.setattr(service, "record_history_v2",
                         lambda _state: (_ for _ in ()).throw(ValueError("invalid v2 history")))
-    window.pack_record_history_v2_button.click()
+    window.pack_record_history_button.click()
     _wait_until(qt_app, lambda: window._analysis_thread is None)
     assert "invalid v2 history" in window.report_for("Battery Pack Management").toPlainText()
     assert not (tmp_path / "battery_pack_history_v2.json").exists()
@@ -122,21 +129,20 @@ def test_v2_button_tracks_selection_and_busy_state(tmp_path, qt_app, make_window
     window.show_analysis_tab("Battery Pack Management")
     window.set_selected_log(unseen)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
-    assert not window.pack_record_history_v2_button.isEnabled()
+    assert not window.pack_record_history_button.isEnabled()
     BatteryPackStore(tmp_path / "packs.json").mark_not_tracked(fingerprint_log(tracked))
     window.set_selected_log(tracked)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
-    assert not window.pack_record_history_v2_button.isEnabled()
+    assert not window.pack_record_history_button.isEnabled()
     service.assign_existing(service.lookup(tracked), "Pack A")
     window.set_selected_log(unseen)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
     window.set_selected_log(tracked)
     _wait_until(qt_app, lambda: window._analysis_thread is None)
-    assert window.pack_record_history_v2_button.isEnabled()
     assert window.pack_record_history_button.isEnabled()
     window._analysis_thread = object()
     window._update_analysis_controls()
-    assert not window.pack_record_history_v2_button.isEnabled()
+    assert not window.pack_record_history_button.isEnabled()
     window._analysis_thread = None
     window._update_analysis_controls()
 
@@ -846,8 +852,8 @@ def test_management_starts_read_only_without_packs_or_selected_bin(
         in page_text
     )
     assert (
-        "Adds supported AUTO takeoff data from this BIN to the assigned pack's "
-        "history."
+        "Adds supported AUTO, MANUAL and FBWA takeoff observations from the selected "
+        "BIN to its assigned pack's history."
         in page_text
     )
     assert "Explicitly record supported AUTO takeoff evidence" not in page_text
@@ -1065,7 +1071,7 @@ def test_confirmation_cancellation_leaves_persistent_bytes_unchanged(
     assert "New Pack ID: Pack B" in confirmation_text
     assert "every saved BIN association" in confirmation_text
     assert "Source BIN: seed.bin" in confirmation_text
-    assert "Tracked Pack ID: Pack A" in confirmation_text
+    assert "Assigned Pack ID: Pack A" in confirmation_text
 
 
 def test_pack_selectors_reject_placeholder_and_retain_intentional_selection(
