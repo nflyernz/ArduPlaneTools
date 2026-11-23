@@ -15,9 +15,11 @@ from core.battery_pack_history import (
 from core.battery_pack_history_protection import (
     DEFAULT_V2_HISTORY_PATH,
     CoordinatedHistory,
+    journal_path,
     recover_pending_deletion,
 )
 from core.battery_pack_history_recorder import BatteryPackHistoryRecorder
+from core.battery_pack_history_v2 import BatteryPackHistoryV2Store
 from core.battery_pack_store import (
     DEFAULT_STORE_PATH,
     BatteryPackStore,
@@ -827,7 +829,7 @@ def format_pack_performance_table(observations):
     return "\n".join(lines)
 
 
-def format_pack_performance_report(pack_store, history_store, pack_id=None):
+def _format_v1_pack_performance_report(pack_store, history_store, pack_id=None):
     """Format the complete existing Pack Performance report."""
     lines = ["PACK PERFORMANCE REPORT", "=" * 70]
     if not pack_store.pack_ids:
@@ -861,18 +863,131 @@ def format_pack_performance_report(pack_store, history_store, pack_id=None):
     return "\n".join(lines)
 
 
+def _v2_sort_key(observation):
+    return (
+        observation.recorded_at_utc is None,
+        observation.recorded_at_utc or "",
+        observation.source_sha256,
+        observation.flight_number,
+        observation.battery_instance,
+        observation.logged_takeoff_us,
+        observation.physical_event_id,
+        observation.observation_id,
+    )
+
+
+def _v2_measure(value, unit):
+    return f"{value:.2f} {unit}" if value is not None else "Unavailable"
+
+
+def _v2_time(value):
+    return f"{value} us" if value is not None else "Unavailable"
+
+
+def format_v2_pack_performance_observation(observation):
+    """Explain v2 qualifications without combining them with v1 AUTO counts."""
+    load = observation.load
+    plateau = observation.plateau
+    lines = [
+        f"Date/time (GPS UTC): {observation.recorded_at_utc or 'Unavailable'}",
+        f"Source BIN: {observation.source_filename}",
+        f"Flight: {observation.flight_number} | BAT instance: {observation.battery_instance}",
+        f"Takeoff: {observation.flight_mode} ({observation.takeoff_type})",
+        (f"Logged takeoff: {_v2_time(observation.logged_takeoff_us)}; "
+         "physical ground contact inferred from telemetry"),
+        f"BAT onset T0: {load.onset_status.title()} | {_v2_time(load.t0_us)}",
+        (f"High-load current reference: {load.reference_status.title()} | "
+         f"{_v2_measure(load.reference_current_a, 'A')} | "
+         f"80% threshold {_v2_measure(load.threshold_current_a, 'A')}"),
+        f"Current reduction T1: {load.t1_status.title()} | {_v2_time(load.t1_us)}",
+        f"Raw observed peak current: {_v2_measure(load.peak_current_a, 'A')}",
+        ("Raw observed minimum loaded voltage: "
+         f"{_v2_measure(load.minimum_loaded_voltage_v, 'V')} | concurrent current "
+         f"{_v2_measure(load.current_at_minimum_voltage_a, 'A')}"),
+        (f"Qualified low-current voltage drop: {load.voltage_drop_status.title()} | "
+         f"{_v2_measure(load.qualified_voltage_drop_v, 'V')}"),
+        (f"Low-load recovery: {load.recovery_status.title()} | "
+         f"{_v2_time(load.recovery_time_us)} | "
+         f"{_v2_measure(load.recovery_voltage_v, 'V')} at "
+         f"{_v2_measure(load.recovery_current_a, 'A')}"),
+        "Observed voltage under sustained load: " + plateau.status.title(),
+    ]
+    if plateau.status == "qualified":
+        lines.extend((
+            (f"  Pre-load median: {_v2_measure(plateau.pre_voltage_v, 'V')} at "
+             f"{_v2_measure(plateau.pre_current_a, 'A')} "
+             f"({_v2_time(plateau.pre_start_us)} to {_v2_time(plateau.pre_end_us)})"),
+            (f"  Loaded median: {_v2_measure(plateau.loaded_voltage_v, 'V')} at "
+             f"{_v2_measure(plateau.loaded_current_a, 'A')} "
+             f"({_v2_time(plateau.loaded_start_us)} to {_v2_time(plateau.loaded_end_us)})"),
+            ("  Observed voltage difference: "
+             f"{_v2_measure(plateau.observed_voltage_change_v, 'V')}"),
+            f"  Observed current difference: {_v2_measure(plateau.current_change_a, 'A')}",
+            ("  These are median observations over two qualifying periods, "
+             "not instantaneous sag or battery internal resistance."),
+        ))
+    else:
+        lines.append(f"  Reason: {plateau.limitation}")
+    lines.append("Evidence limitations: " + (
+        "; ".join(load.limitations) if load.limitations else "None recorded."
+    ))
+    return "\n".join(lines)
+
+
+def format_pack_performance_report(pack_store, history_store, pack_id=None,
+                                   v2_history_store=None):
+    """Keep the v1 report exact when no owned v2 evidence is present."""
+    original = _format_v1_pack_performance_report(pack_store, history_store, pack_id)
+    if v2_history_store is None or pack_id is None:
+        return original
+    rows = sorted((row for row in v2_history_store.observations
+                   if pack_store.history_owner_for(row) == pack_id), key=_v2_sort_key)
+    if not rows:
+        return original
+    labelled_v1 = original.replace(
+        f"Pack ID: {pack_id}",
+        f"Pack ID: {pack_id}\n\nV1 — EXISTING AUTO TAKEOFF HISTORY", 1,
+    )
+    section = [labelled_v1, "", "V2 — TAKEOFF LOAD EVIDENCE",
+               "Separate analytical records; v1/v2 AUTO entries are not added as physical takeoffs."]
+    for index, row in enumerate(rows, 1):
+        section.extend(("", f"{index}. V2 observation", format_v2_pack_performance_observation(row)))
+    return "\n".join(section)
+
+
+def open_pack_performance_histories(pack_path, v1_path, v2_path,
+                                    v1_factory=BatteryPackHistoryStore,
+                                    v2_factory=BatteryPackHistoryV2Store):
+    """Open both formats read-only; leave deletion recovery to management."""
+    if journal_path(pack_path).exists():
+        raise BatteryPackStoreError(
+            "Pending Pack deletion recovery; open Pack Management before viewing history."
+        )
+    return v1_factory(v1_path), v2_factory(v2_path)
+
+
 class BatteryPackPerformancePresentation:
     """Present durable AUTO takeoff evidence for one physical battery pack."""
 
-    def __init__(self, pack_store=None, history_store=None):
+    def __init__(self, pack_store=None, history_store=None, v2_history_store=None):
         self.pack_store = pack_store
         self.history_store = history_store
+        self.v2_history_store = v2_history_store
 
     def run(self):
         """Select a known Pack ID and render its current owned history."""
         try:
             pack_store = self.pack_store or BatteryPackStore()
-            history_store = self.history_store or BatteryPackHistoryStore()
+            v1_path = getattr(self.history_store, "path", DEFAULT_HISTORY_PATH)
+            v2_path = (v1_path.with_name("battery_pack_history_v2.json")
+                       if v1_path != DEFAULT_HISTORY_PATH else DEFAULT_V2_HISTORY_PATH)
+            history_store, v2_history_store = open_pack_performance_histories(
+                getattr(pack_store, "path", DEFAULT_STORE_PATH), v1_path, v2_path,
+                (lambda _path: self.history_store) if self.history_store is not None
+                else BatteryPackHistoryStore,
+                (lambda _path: self.v2_history_store) if self.v2_history_store is not None
+                else BatteryPackHistoryV2Store,
+            )
         except (BatteryPackStoreError, BatteryPackHistoryError, OSError) as exc:
             print()
             print(f"Battery Pack performance data unavailable: {exc}")
@@ -880,7 +995,8 @@ class BatteryPackPerformancePresentation:
 
         if not pack_store.pack_ids:
             print()
-            print(format_pack_performance_report(pack_store, history_store))
+            print(format_pack_performance_report(pack_store, history_store,
+                                                 v2_history_store=v2_history_store))
             return
 
         pack_id = BatteryPackManagementPresentation._select_pack(
@@ -890,7 +1006,8 @@ class BatteryPackPerformancePresentation:
             return
 
         print()
-        print(format_pack_performance_report(pack_store, history_store, pack_id))
+        print(format_pack_performance_report(pack_store, history_store, pack_id,
+                                             v2_history_store))
 
     @classmethod
     def _first_takeoffs_by_session(cls, observations):
